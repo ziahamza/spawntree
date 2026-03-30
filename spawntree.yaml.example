@@ -1,0 +1,47 @@
+# spawntree.yaml - Environment orchestration config
+#
+# Start your environment:   spawntree up
+# Stop your environment:    spawntree down (or Ctrl+C)
+# Check status:             spawntree status
+# View logs:                spawntree logs [service]
+# Remove environment:       spawntree rm <env-name>
+#
+# Generate from existing:   spawntree init --from-compose
+#                           spawntree init --from-package
+
+services:
+  api:
+    type: process
+    command: node src/server.js
+    port: 3000
+    toolchain:
+      node: "22"
+    healthcheck:
+      url: http://localhost:${PORT}/health
+      timeout: 30
+    depends_on:
+      - db
+    environment:
+      API_SECRET: ${API_SECRET}
+
+  worker:
+    type: process
+    command: python src/worker.py
+    toolchain:
+      python: "3.12"
+    depends_on:
+      - db
+      - redis
+
+  db:
+    type: postgres
+    # fork_from: ${PROD_DATABASE_URL}  # seed from another database
+
+  redis:
+    type: redis
+
+  # Use Docker for services that need a real container
+  # legacy:
+  #   type: container
+  #   image: some-legacy:latest
+  #   port: 8080

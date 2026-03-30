@@ -1,0 +1,17 @@
+{
+  "name": "@spawntree/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "spawntree": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@spawntree/core": "workspace:*",
+    "commander": "^13.0.0",
+    "yaml": "^2.7.0"
+  }
+}

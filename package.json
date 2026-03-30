@@ -1,0 +1,23 @@
+{
+  "name": "spawntree",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "oxlint .",
+    "format": "oxfmt --write .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "oxlint": "^0.16.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
+  },
+  "packageManager": "pnpm@10.27.0",
+  "engines": {
+    "node": ">=20"
+  }
+}
