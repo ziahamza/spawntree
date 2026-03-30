@@ -1,9 +1,0 @@
-{
-  "name": "spawntree-example-node-fullstack",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "start:api": "node src/api.js",
-    "start:worker": "node src/worker.js"
-  }
-}

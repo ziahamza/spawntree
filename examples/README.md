@@ -1,33 +1,15 @@
 # Examples
 
-Real-world project structures showing how spawntree fits into different stacks. Each example is a self-contained project you can `spawntree up` in.
+Real-world project configurations for spawntree. Each example is a spawntree.yaml and README showing how spawntree fits into a specific stack.
 
-These also serve as the E2E testing harness. If the examples work, spawntree works.
+| Example | Stack | Services | Status |
+|---------|-------|----------|--------|
+| [project-alpha](./project-alpha/) | Django + Postgres + Redis + Mailpit | 6 services | Requires v0.1.1 (type:postgres, type:redis, type:container) |
+| [project-beta](./project-beta/) | 5-runtime monorepo + Postgres + Redis | 4+ services | Requires v0.1.1 (type:postgres, type:redis) |
+| [project-gamma](./project-gamma/) | CF Workers + Bun + Vite | 2-3 services | Works now (v0.1.0, type:process only) |
 
-| Example | Stack | What it demonstrates |
-|---------|-------|---------------------|
-| [node-fullstack](./node-fullstack/) | Node.js API + worker | `depends_on`, healthchecks, service discovery |
-| [python-fastapi](./python-fastapi/) | Python HTTP + scheduler | Python processes, dependency ordering |
-| [multi-language](./multi-language/) | Node + Python + static | Mixed runtimes, .env files, 3-service chain |
+## Testing status
 
-## Running an example
-
-```bash
-cd examples/node-fullstack
-spawntree up
-```
-
-## Using examples as E2E tests
-
-Each example can be run as an automated test:
-
-```bash
-# Start the example, wait for healthchecks, verify, stop
-cd examples/node-fullstack
-spawntree up &
-sleep 3
-curl -f http://localhost:$(spawntree status --json | jq '.services.api.port')/health
-spawntree down
-```
-
-A formal E2E test harness using these examples is planned for v0.1.1.
+- **project-gamma**: Tested end-to-end. Host (PGlite) + Studio (Vite) start via daemon, healthchecks pass.
+- **project-alpha**: Awaiting Phase 3 (shared Postgres/Redis Docker infrastructure).
+- **project-beta**: Awaiting Phase 3 + pre-resolved .env files.

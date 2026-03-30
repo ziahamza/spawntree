@@ -4,6 +4,7 @@ import { unlinkSync, existsSync } from "node:fs";
 import { getRequestListener } from "@hono/node-server";
 import { createApp } from "./server.js";
 import { EnvManager } from "./managers/env-manager.js";
+import { InfraManager } from "./managers/infra-manager.js";
 import { PortRegistry } from "./managers/port-registry.js";
 import { LogStreamer } from "./managers/log-streamer.js";
 import {
@@ -23,8 +24,9 @@ async function main() {
 
   const portRegistry = new PortRegistry();
   const logStreamer = new LogStreamer();
-  const envManager = new EnvManager(portRegistry, logStreamer);
-  const app = createApp(envManager, logStreamer, portRegistry);
+  const infraManager = new InfraManager(portRegistry);
+  const envManager = new EnvManager(portRegistry, logStreamer, infraManager);
+  const app = createApp(envManager, logStreamer, portRegistry, infraManager);
 
   // Use raw Node http.createServer with Hono's request listener adapter
   // This supports Unix socket binding (serve() from @hono/node-server does not)

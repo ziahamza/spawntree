@@ -19,6 +19,7 @@ import type {
 import { ProcessRunner } from "../runners/process-runner.js";
 import { PortRegistry } from "./port-registry.js";
 import { LogStreamer } from "./log-streamer.js";
+import { InfraManager } from "./infra-manager.js";
 import {
   saveRepoState,
   loadRepoState,
@@ -37,6 +38,10 @@ export interface ManagedEnv {
   services: Map<string, Service>;
   serviceOrder: string[];
   worktreePath: string;
+  /** Redis db indices allocated for this env, keyed by service name */
+  redisDbIndices: Map<string, number>;
+  /** Postgres databases created for this env, keyed by service name */
+  postgresDatabases: Map<string, string>;
 }
 
 /**
@@ -103,10 +108,12 @@ export class EnvManager {
   private envs: Map<string, Map<string, ManagedEnv>> = new Map();
   private readonly portRegistry: PortRegistry;
   private readonly logStreamer: LogStreamer;
+  private readonly infraManager: InfraManager;
 
-  constructor(portRegistry: PortRegistry, logStreamer: LogStreamer) {
+  constructor(portRegistry: PortRegistry, logStreamer: LogStreamer, infraManager: InfraManager) {
     this.portRegistry = portRegistry;
     this.logStreamer = logStreamer;
+    this.infraManager = infraManager;
   }
 
   // ---------------------------------------------------------------------------
@@ -193,21 +200,82 @@ export class EnvManager {
     const serviceOrder = topologicalSort(config);
     const serviceNames = Object.keys(config.services);
     const services = new Map<string, Service>();
+    const redisDbIndices = new Map<string, number>();
+    const postgresDatabases = new Map<string, string>();
 
     // Register log buffers for all services
     for (const name of serviceNames) {
       this.logStreamer.initService(repoId, envId, name);
     }
 
+    // First pass: resolve infra env vars (postgres/redis URLs) so they are available
+    // when building service env vars for process services
+    const infraEnvVars: Record<string, string> = {};
+    for (const name of serviceNames) {
+      const serviceConfig = config.services[name];
+      if (serviceConfig.type === "postgres") {
+        // Skip if DATABASE_URL already provided externally
+        if (!envVars.DATABASE_URL) {
+          const pgVersion = (serviceConfig as ServiceConfig & { version?: string }).version ?? "17";
+          const pgRunner = await this.infraManager.ensurePostgres(pgVersion);
+          const dbName = `spawntree_${repoId}_${envId}_${name}`
+            .toLowerCase()
+            .replace(/[^a-z0-9_]/g, "_")
+            .slice(0, 63);
+          await pgRunner.createDatabase(dbName);
+          postgresDatabases.set(name, dbName);
+
+          // Fork from source if configured
+          const resolvedForkFrom = serviceConfig.fork_from
+            ? substituteVars(serviceConfig.fork_from, { ...envVars, ...infraEnvVars })
+            : undefined;
+          if (resolvedForkFrom) {
+            console.log(`[spawntree-daemon]   Forking database "${dbName}" from ${resolvedForkFrom}...`);
+            await pgRunner.forkFrom(dbName, resolvedForkFrom);
+          }
+
+          infraEnvVars.DATABASE_URL = `postgresql://postgres@localhost:${pgRunner.port}/${dbName}`;
+          infraEnvVars.DB_HOST = "127.0.0.1";
+          infraEnvVars.DB_PORT = String(pgRunner.port);
+          infraEnvVars.DB_NAME = dbName;
+          console.log(`[spawntree-daemon]   Postgres db "${dbName}" ready at port ${pgRunner.port}`);
+        } else {
+          console.log(`[spawntree-daemon]   Skipping Docker Postgres — DATABASE_URL already set externally`);
+        }
+      } else if (serviceConfig.type === "redis") {
+        // Skip if REDIS_URL already provided externally
+        if (!envVars.REDIS_URL) {
+          const redisRunner = await this.infraManager.ensureRedis();
+          const dbIndex = redisRunner.allocateDbIndex(envKey);
+          redisDbIndices.set(name, dbIndex);
+
+          infraEnvVars.REDIS_URL = `redis://localhost:${redisRunner.port}/${dbIndex}`;
+          infraEnvVars.REDIS_HOST = "127.0.0.1";
+          infraEnvVars.REDIS_PORT = String(redisRunner.port);
+          infraEnvVars.REDIS_DB = String(dbIndex);
+          console.log(`[spawntree-daemon]   Redis db index ${dbIndex} ready at port ${redisRunner.port}`);
+        } else {
+          console.log(`[spawntree-daemon]   Skipping Docker Redis — REDIS_URL already set externally`);
+        }
+      }
+    }
+
     for (const name of serviceOrder) {
       const serviceConfig = config.services[name];
+
+      // Infra services (postgres, redis) are managed by InfraManager, not ProcessRunner
+      if (serviceConfig.type === "postgres" || serviceConfig.type === "redis") {
+        console.log(`[spawntree-daemon]   ${name} (${serviceConfig.type}) managed by infra layer — skipping process start`);
+        continue;
+      }
+
       const serviceIndex = serviceNames.indexOf(name);
       const port = this.portRegistry.getPhysicalPort(basePort, serviceIndex);
 
       const serviceEnvVars = this.buildServiceEnvVars(
         name,
         serviceConfig,
-        envVars,
+        { ...envVars, ...infraEnvVars },
         envId,
         serviceCwd,
         basePort,
@@ -242,7 +310,16 @@ export class EnvManager {
         console.log(`[spawntree-daemon]   ${name} started`);
       } catch (err) {
         // Stop already-started services before bubbling
+        // (only process services are in the map)
         await this.stopServices(services, serviceOrder.slice(0, serviceOrder.indexOf(name)));
+        // Free redis db indices
+        for (const [svcName, dbIdx] of redisDbIndices.entries()) {
+          try {
+            const redisRunner = await this.infraManager.ensureRedis();
+            await redisRunner.flushDb(dbIdx);
+          } catch { /* best-effort cleanup */ }
+          void svcName;
+        }
         this.portRegistry.free(envKey);
         if (!isDefaultBranchEnv) {
           const wm = new WorktreeManager(gitRoot);
@@ -263,6 +340,8 @@ export class EnvManager {
       services,
       serviceOrder,
       worktreePath,
+      redisDbIndices,
+      postgresDatabases,
     };
 
     // Store in-memory
@@ -301,6 +380,41 @@ export class EnvManager {
 
     // Stop services
     await this.stopServices(managed.services, [...managed.serviceOrder].reverse());
+
+    // Free Redis db indices (flush and de-allocate)
+    if (managed.redisDbIndices.size > 0) {
+      try {
+        const redisRunner = await this.infraManager.ensureRedis();
+        for (const [, dbIndex] of managed.redisDbIndices.entries()) {
+          try {
+            await redisRunner.flushDb(dbIndex);
+          } catch (err) {
+            console.error(
+              `[spawntree-daemon] Failed to flush redis db ${dbIndex}: ${err instanceof Error ? err.message : err}`,
+            );
+          }
+          redisRunner.freeDbIndex(envKey);
+        }
+      } catch (err) {
+        console.error(
+          `[spawntree-daemon] Failed to access redis for cleanup: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
+    // Drop Postgres databases
+    for (const [svcName, dbName] of managed.postgresDatabases.entries()) {
+      const serviceConfig = managed.config.services[svcName];
+      const pgVersion = (serviceConfig as ServiceConfig & { version?: string }).version ?? "17";
+      try {
+        const pgRunner = await this.infraManager.ensurePostgres(pgVersion);
+        await pgRunner.dropDatabase(dbName);
+      } catch (err) {
+        console.error(
+          `[spawntree-daemon] Failed to drop postgres db "${dbName}": ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
 
     // Close log streams
     this.logStreamer.closeEnv(repoId, envId);
@@ -382,8 +496,12 @@ export class EnvManager {
       STATE_DIR: `${worktreePath}/.spawntree/state/${envId}`,
     };
 
-    // Inject service discovery env vars for all services
+    // Inject service discovery env vars for process services.
+    // Postgres/Redis infra URLs are already in baseEnvVars (injected by the infra layer).
     for (const [otherName, otherConfig] of Object.entries(config.services)) {
+      // Skip infra-managed services — their URLs come from baseEnvVars
+      if (otherConfig.type === "postgres" || otherConfig.type === "redis") continue;
+
       const otherIndex = serviceNames.indexOf(otherName);
       const otherPort = this.portRegistry.getPhysicalPort(basePort, otherIndex);
       const upperName = otherName.toUpperCase().replace(/-/g, "_");
@@ -391,19 +509,6 @@ export class EnvManager {
       vars[`${upperName}_HOST`] = "127.0.0.1";
       vars[`${upperName}_PORT`] = String(otherPort);
       vars[`${upperName}_URL`] = `http://127.0.0.1:${otherPort}`;
-
-      if (otherConfig.type === "postgres") {
-        vars.DATABASE_URL = `postgresql://localhost:${otherPort}/spawntree_${envId}`;
-        vars.DB_HOST = "127.0.0.1";
-        vars.DB_PORT = String(otherPort);
-        vars.DB_NAME = `spawntree_${envId}`;
-      }
-
-      if (otherConfig.type === "redis") {
-        vars.REDIS_URL = `redis://127.0.0.1:${otherPort}`;
-        vars.REDIS_HOST = "127.0.0.1";
-        vars.REDIS_PORT = String(otherPort);
-      }
     }
 
     // Resolve per-service environment overrides using the now-computed vars
@@ -465,11 +570,15 @@ export class EnvManager {
           logStreamer: this.logStreamer,
         });
       case "container":
+        throw new Error(
+          `Service type "container" is not yet supported. Use type: "process" for custom processes, ` +
+            `or type: "postgres" / "redis" for managed infra services.`,
+        );
       case "postgres":
       case "redis":
+        // These are managed by InfraManager and should never reach createService()
         throw new Error(
-          `Service type "${config.type}" is not yet supported in v0.1.0. ` +
-            `Use type: "process" for now.`,
+          `Internal error: infra service "${config.type}" should not reach createService().`,
         );
       default:
         throw new Error(`Unknown service type: ${(config as ServiceConfig).type}`);

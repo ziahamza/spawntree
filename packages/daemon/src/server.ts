@@ -22,6 +22,7 @@ import type { EnvManager } from "./managers/env-manager.js";
 import { NotFoundError } from "./managers/env-manager.js";
 import type { LogStreamer } from "./managers/log-streamer.js";
 import type { PortRegistry } from "./managers/port-registry.js";
+import type { InfraManager } from "./managers/infra-manager.js";
 
 const DAEMON_VERSION = "0.1.0";
 const startTime = Date.now();
@@ -48,6 +49,7 @@ export function createApp(
   envManager: EnvManager,
   logStreamer: LogStreamer,
   portRegistry: PortRegistry,
+  infraManager: InfraManager,
 ): Hono {
   const app = new Hono();
 
@@ -220,18 +222,21 @@ export function createApp(
   });
 
   // -------------------------------------------------------------------------
-  // GET /infra  — infra status (stub)
+  // GET /infra  — infra status
   // -------------------------------------------------------------------------
-  app.get("/api/v1/infra", (c) => {
-    const resp: GetInfraStatusResponse = {
-      postgres: [],
-      redis: null,
-    };
-    return c.json(resp);
+  app.get("/api/v1/infra", async (c) => {
+    try {
+      const status = await infraManager.getStatus();
+      const resp: GetInfraStatusResponse = status;
+      return c.json(resp);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return internalError(msg);
+    }
   });
 
   // -------------------------------------------------------------------------
-  // POST /infra/stop  — stop infra (stub)
+  // POST /infra/stop  — stop infra
   // -------------------------------------------------------------------------
   app.post("/api/v1/infra/stop", async (c) => {
     let body: StopInfraRequest;
@@ -240,22 +245,53 @@ export function createApp(
     } catch {
       return badRequest("Invalid JSON body");
     }
-    // Infra management not yet implemented for v0.1.0
+
     console.log(`[spawntree-daemon] infra/stop requested: target=${body.target}`);
-    const resp: StopInfraResponse = { ok: true };
-    return c.json(resp);
+
+    try {
+      switch (body.target) {
+        case "postgres":
+          await infraManager.stopPostgres(body.version);
+          break;
+        case "redis":
+          await infraManager.stopRedis();
+          break;
+        case "all":
+          await infraManager.stopAll();
+          break;
+        default:
+          return badRequest(`Unknown target: ${(body as StopInfraRequest).target}`);
+      }
+      const resp: StopInfraResponse = { ok: true };
+      return c.json(resp);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[spawntree-daemon] infra/stop error: ${msg}`);
+      return internalError(msg);
+    }
   });
 
   // -------------------------------------------------------------------------
-  // GET /db/templates  — list DB templates (stub)
+  // GET /db/templates  — list DB templates
   // -------------------------------------------------------------------------
-  app.get("/api/v1/db/templates", (c) => {
-    const resp: ListDbTemplatesResponse = { templates: [] };
-    return c.json(resp);
+  app.get("/api/v1/db/templates", async (c) => {
+    try {
+      const pgRunner = await infraManager.ensurePostgres();
+      const templates = pgRunner.listTemplates().map((t) => ({
+        name: t.name,
+        size: t.size,
+        createdAt: t.createdAt,
+      }));
+      const resp: ListDbTemplatesResponse = { templates };
+      return c.json(resp);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return internalError(msg);
+    }
   });
 
   // -------------------------------------------------------------------------
-  // POST /db/dump  — dump DB (stub)
+  // POST /db/dump  — dump DB to template
   // -------------------------------------------------------------------------
   app.post("/api/v1/db/dump", async (c) => {
     let body: DumpDbRequest;
@@ -264,11 +300,36 @@ export function createApp(
     } catch {
       return badRequest("Invalid JSON body");
     }
-    return internalError(`DB dump not yet implemented (requested: ${body.templateName})`);
+
+    if (!body.dbName || !body.templateName) {
+      return badRequest("dbName and templateName are required");
+    }
+
+    try {
+      const pgRunner = await infraManager.ensurePostgres();
+      await pgRunner.dumpToTemplate(body.dbName, body.templateName);
+      const templates = pgRunner.listTemplates();
+      const template = templates.find((t) => t.name === body.templateName);
+      if (!template) {
+        return internalError("Dump succeeded but template not found");
+      }
+      const resp: DumpDbResponse = {
+        template: {
+          name: template.name,
+          size: template.size,
+          createdAt: template.createdAt,
+        },
+      };
+      return c.json(resp);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[spawntree-daemon] db/dump error: ${msg}`);
+      return internalError(msg);
+    }
   });
 
   // -------------------------------------------------------------------------
-  // POST /db/restore  — restore DB (stub)
+  // POST /db/restore  — restore DB from template
   // -------------------------------------------------------------------------
   app.post("/api/v1/db/restore", async (c) => {
     let body: RestoreDbRequest;
@@ -277,7 +338,21 @@ export function createApp(
     } catch {
       return badRequest("Invalid JSON body");
     }
-    return internalError(`DB restore not yet implemented (requested: ${body.templateName})`);
+
+    if (!body.dbName || !body.templateName) {
+      return badRequest("dbName and templateName are required");
+    }
+
+    try {
+      const pgRunner = await infraManager.ensurePostgres();
+      await pgRunner.restoreFromTemplate(body.dbName, body.templateName);
+      const resp: RestoreDbResponse = { ok: true };
+      return c.json(resp);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[spawntree-daemon] db/restore error: ${msg}`);
+      return internalError(msg);
+    }
   });
 
   return app;

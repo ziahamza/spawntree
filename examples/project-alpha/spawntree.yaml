@@ -1,0 +1,62 @@
+# Project Alpha — Django health app
+# Django API + Vite frontend + Postgres (pgvector) + Redis + Mailpit
+#
+# Prerequisites:
+#   mise install  (provides uv, node, bun)
+#   Docker running (for Postgres, Redis, Mailpit)
+#   cp .envs/.local/.django.dist .envs/.local/.django  (fill in secrets)
+#
+# Requires spawntree v0.1.1+ for type:postgres, type:redis, type:container
+
+services:
+  db:
+    type: postgres
+    environment:
+      POSTGRES_DB: sasha
+      POSTGRES_USER: devuser
+      POSTGRES_PASSWORD: devpassword
+
+  dbos-db:
+    type: postgres
+    environment:
+      POSTGRES_DB: sasha_dbos
+      POSTGRES_USER: devuser
+      POSTGRES_PASSWORD: devpassword
+
+  redis:
+    type: redis
+
+  mailpit:
+    type: container
+    image: axllent/mailpit:latest
+    port: 8025
+
+  django:
+    type: process
+    command: uv run --env-file .envs/.local/.django python manage.py runserver 0.0.0.0:${PORT}
+    port: 8000
+    depends_on:
+      - db
+      - dbos-db
+      - redis
+    healthcheck:
+      url: http://localhost:${PORT}/healthz/
+      timeout: 30
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.local
+      DATABASE_URL: ${DATABASE_URL}
+      DBOS_DATABASE_URL: ${DBOS_DB_DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      EMAIL_HOST: localhost
+      EMAIL_PORT: "1025"
+      USE_DOCKER: "no"
+      PHONE_VERIFICATION_CODE_OVERRIDE: "000000"
+
+  vite:
+    type: process
+    command: bun dev:vite
+    port: 5173
+    depends_on:
+      - django
+    environment:
+      VITE_ORIGIN: http://localhost:${PORT}

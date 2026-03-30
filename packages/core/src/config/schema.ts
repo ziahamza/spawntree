@@ -64,6 +64,44 @@ export function validateConfig(
       });
     }
 
+    if (service.volumes !== undefined) {
+      if (!Array.isArray(service.volumes)) {
+        errors.push({
+          path: `services.${name}.volumes`,
+          message: "volumes must be an array",
+        });
+      } else {
+        for (let i = 0; i < service.volumes.length; i++) {
+          const vol = service.volumes[i] as Record<string, unknown>;
+          if (vol === null || typeof vol !== "object") {
+            errors.push({
+              path: `services.${name}.volumes[${i}]`,
+              message: "Each volume entry must be an object",
+            });
+            continue;
+          }
+          if (typeof vol.host !== "string" || !vol.host) {
+            errors.push({
+              path: `services.${name}.volumes[${i}].host`,
+              message: "host is required and must be a string",
+            });
+          }
+          if (typeof vol.container !== "string" || !vol.container) {
+            errors.push({
+              path: `services.${name}.volumes[${i}].container`,
+              message: "container is required and must be a string",
+            });
+          }
+          if (vol.mode !== undefined && vol.mode !== "ro" && vol.mode !== "rw") {
+            errors.push({
+              path: `services.${name}.volumes[${i}].mode`,
+              message: 'mode must be "ro" or "rw"',
+            });
+          }
+        }
+      }
+    }
+
     if (service.depends_on) {
       if (!Array.isArray(service.depends_on)) {
         errors.push({

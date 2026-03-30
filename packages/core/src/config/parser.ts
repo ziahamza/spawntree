@@ -15,6 +15,11 @@ export interface ServiceConfig {
   depends_on?: string[];
   environment?: Record<string, string>;
   fork_from?: string;
+  volumes?: Array<{
+    host: string;
+    container: string;
+    mode?: "ro" | "rw";
+  }>;
 }
 
 export interface ProxyConfig {
