@@ -1,0 +1,21 @@
+# Node.js full-stack app: API server + background worker
+# Run: cd examples/node-fullstack && spawntree up
+
+services:
+  api:
+    type: process
+    command: node src/api.js
+    port: 3000
+    healthcheck:
+      url: http://localhost:${PORT}/health
+      timeout: 10
+    environment:
+      NODE_ENV: development
+
+  worker:
+    type: process
+    command: node src/worker.js
+    depends_on:
+      - api
+    environment:
+      API_URL: ${API_URL}

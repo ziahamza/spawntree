@@ -1,0 +1,22 @@
+# Python FastAPI app with a Celery-style background task runner
+# Run: cd examples/python-fastapi && pip install -r requirements.txt && spawntree up
+
+services:
+  api:
+    type: process
+    command: python src/api.py
+    port: 8000
+    healthcheck:
+      url: http://localhost:${PORT}/health
+      timeout: 15
+    environment:
+      PYTHONUNBUFFERED: "1"
+
+  scheduler:
+    type: process
+    command: python src/scheduler.py
+    depends_on:
+      - api
+    environment:
+      PYTHONUNBUFFERED: "1"
+      API_URL: ${API_URL}

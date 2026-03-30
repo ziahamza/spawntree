@@ -1,0 +1,34 @@
+# Multi-language stack: Node.js API gateway + Python ML service + static file server
+# Demonstrates: mixed runtimes, 3-service dependency chain, .env usage
+# Run: cd examples/multi-language && spawntree up
+
+services:
+  gateway:
+    type: process
+    command: node src/gateway.js
+    port: 4000
+    healthcheck:
+      url: http://localhost:${PORT}/health
+      timeout: 10
+    depends_on:
+      - ml-service
+    environment:
+      ML_SERVICE_URL: ${ML_SERVICE_URL}
+
+  ml-service:
+    type: process
+    command: python src/ml_service.py
+    port: 5000
+    healthcheck:
+      url: http://localhost:${PORT}/health
+      timeout: 15
+    environment:
+      PYTHONUNBUFFERED: "1"
+      MODEL_NAME: ${MODEL_NAME}
+
+  static:
+    type: process
+    command: node src/static.js
+    port: 8080
+    environment:
+      GATEWAY_URL: ${GATEWAY_URL}
