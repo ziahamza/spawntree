@@ -9,7 +9,7 @@ import {
   PortAllocator,
   StateManager,
   Orchestrator,
-} from "@spawntree/core";
+} from "spawntree-core";
 
 export function registerUpCommand(program: Command): void {
   program

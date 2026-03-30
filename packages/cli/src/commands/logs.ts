@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { resolve } from "node:path";
 import { existsSync, readdirSync, createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import { WorktreeManager } from "@spawntree/core";
+import { WorktreeManager } from "spawntree-core";
 
 export function registerLogsCommand(program: Command): void {
   program

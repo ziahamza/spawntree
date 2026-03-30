@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { resolve } from "node:path";
-import { WorktreeManager, StateManager } from "@spawntree/core";
+import { WorktreeManager, StateManager } from "spawntree-core";
 
 export function registerDownCommand(program: Command): void {
   program

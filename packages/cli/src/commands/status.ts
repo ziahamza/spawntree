@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { resolve } from "node:path";
-import { WorktreeManager, StateManager, PortAllocator } from "@spawntree/core";
+import { WorktreeManager, StateManager, PortAllocator } from "spawntree-core";
 
 export function registerStatusCommand(program: Command): void {
   program

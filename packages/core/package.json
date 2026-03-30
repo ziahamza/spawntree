@@ -1,6 +1,7 @@
 {
-  "name": "@spawntree/core",
+  "name": "spawntree-core",
   "version": "0.1.0",
+  "description": "Core orchestration logic for spawntree",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,9 +11,19 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "pnpm build"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ziahamza/spawntree.git",
+    "directory": "packages/core"
   },
   "dependencies": {
     "dotenv": "^16.5.0",
