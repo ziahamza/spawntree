@@ -20,7 +20,7 @@ Ship the lifecycle model: start, stop, crash recovery, signal handling.
 
 ## v0.1.1 — Shared Infrastructure + Real Projects
 
-The goal: onboard mirae, gitstart, and gitenv. Every feature here is driven by what those projects actually need.
+The goal: onboard project-alpha, project-beta, and project-gamma. Every feature here is driven by what those projects actually need.
 
 ### Shared Global Postgres
 
@@ -57,14 +57,14 @@ Same pattern as Postgres.
 
 ### Toolchain + Environment
 
-- [ ] **Mise integration**: run `mise install` and activate toolchains before starting `process` services. Critical for multi-runtime monorepos (gitstart: node + bun + deno + erlang + elixir).
+- [ ] **Mise integration**: run `mise install` and activate toolchains before starting `process` services. Critical for multi-runtime monorepos (project-beta: node + bun + deno + erlang + elixir).
 - [ ] **`cwd` per service**: already works (v0.1.0 fix), but document and test with monorepo layouts.
 
 ### Other
 
 - [ ] **GlobalRegistry**: `~/.spawntree/registry.json`, `spawntree status --global` across repos
 - [ ] **`--detach` mode**: daemon with PID file, parent waits for healthchecks before returning
-- [ ] **E2E tests against all 3 target projects**: mirae, gitstart, gitenv example configs in `examples/`
+- [ ] **E2E tests against all 3 target projects**: project-alpha, project-beta, project-gamma example configs in `examples/`
 - [ ] **Integration tests**: Docker Postgres lifecycle, Redis lifecycle, container runner, proxy routing
 
 ## v0.2 — Polish + Tunnels
@@ -103,9 +103,9 @@ These three projects must work with spawntree before v0.1.1 ships:
 
 | Project | Stack | Key needs |
 |---------|-------|-----------|
-| **mirae** | Django + Expo, Postgres w/ pgvector, Redis, Mailpit | Shared PG w/ pgvector, Redis, `type: container` for Mailpit, Mise (uv, bun) |
-| **gitstart** | 5-runtime monorepo (Node, Bun, Deno, Elixir, CF Workers), Postgres w/ pg_cron + pgvector, Redis, portless | Shared PG w/ extensions, Redis, reverse proxy (replaces portless), Mise (5 runtimes), `type: container` for Equanimity |
-| **gitenv** | Hono/CF Workers, Bun, Vite, Postgres (Supabase/PGlite), SQLite, PowerSync | Shared PG (replaces PGlite dev path), reverse proxy (replaces portless), Mise, `type: container` for PowerSync E2E |
+| **project-alpha** | Django + Expo, Postgres w/ pgvector, Redis, Mailpit | Shared PG w/ pgvector, Redis, `type: container` for Mailpit, Mise (uv, bun) |
+| **project-beta** | 5-runtime monorepo (Node, Bun, Deno, Elixir, CF Workers), Postgres w/ pg_cron + pgvector, Redis, portless | Shared PG w/ extensions, Redis, reverse proxy (replaces portless), Mise (5 runtimes), `type: container` for Equanimity |
+| **project-gamma** | Hono/CF Workers, Bun, Vite, Postgres (Supabase/PGlite), SQLite, PowerSync | Shared PG (replaces PGlite dev path), reverse proxy (replaces portless), Mise, `type: container` for PowerSync E2E |
 
 ## Design Decisions
 

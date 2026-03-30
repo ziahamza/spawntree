@@ -1,54 +1,9 @@
 import type { Command } from "commander";
-import { resolve } from "node:path";
-import { existsSync, readdirSync, createReadStream } from "node:fs";
-import { createInterface } from "node:readline";
-import { WorktreeManager } from "spawntree-core";
+import { getClient, getCurrentRepoId, getCurrentEnvId } from "../daemon-bridge.js";
+import type { LogLine } from "spawntree-core";
 
-export function registerLogsCommand(program: Command): void {
-  program
-    .command("logs")
-    .description("Tail service logs")
-    .argument("[service]", "Service name (omit for all services)")
-    .option("-f, --follow", "Follow log output", false)
-    .action(async (service?: string, options?: { follow: boolean }) => {
-      let repoRoot: string;
-      try {
-        repoRoot = WorktreeManager.validateGitRepo(process.cwd());
-      } catch (err) {
-        console.error(err instanceof Error ? err.message : err);
-        process.exit(1);
-      }
-
-      const envName = WorktreeManager.currentBranch(repoRoot).replace(/\//g, "-");
-      const logDir = resolve(repoRoot, ".spawntree", "logs", envName);
-
-      if (!existsSync(logDir)) {
-        console.error(`No logs found for environment "${envName}".`);
-        process.exit(1);
-      }
-
-      if (service) {
-        const logFile = resolve(logDir, `${service}.log`);
-        if (!existsSync(logFile)) {
-          console.error(`No log file found for service "${service}".`);
-          process.exit(1);
-        }
-        await tailFile(logFile, service);
-      } else {
-        const files = readdirSync(logDir).filter((f) => f.endsWith(".log"));
-        if (files.length === 0) {
-          console.log("No log files found.");
-          return;
-        }
-        for (const file of files) {
-          const svcName = file.replace(".log", "");
-          await tailFile(resolve(logDir, file), svcName);
-        }
-      }
-    });
-}
-
-const COLORS = [
+const SERVICE_COLORS: Record<string, string> = {};
+const COLOR_PALETTE = [
   "\x1b[36m", // cyan
   "\x1b[33m", // yellow
   "\x1b[32m", // green
@@ -58,12 +13,55 @@ const COLORS = [
 const RESET = "\x1b[0m";
 let colorIndex = 0;
 
-async function tailFile(path: string, serviceName: string): Promise<void> {
-  const color = COLORS[colorIndex++ % COLORS.length];
-  const stream = createReadStream(path, { encoding: "utf-8" });
-  const rl = createInterface({ input: stream });
-
-  for await (const line of rl) {
-    console.log(`${color}[${serviceName}]${RESET} ${line}`);
+function colorForService(service: string): string {
+  if (!SERVICE_COLORS[service]) {
+    SERVICE_COLORS[service] = COLOR_PALETTE[colorIndex++ % COLOR_PALETTE.length];
   }
+  return SERVICE_COLORS[service];
+}
+
+export function registerLogsCommand(program: Command): void {
+  program
+    .command("logs")
+    .description("Stream service logs")
+    .argument("[service]", "Service name (omit for all services)")
+    .option("-f, --follow", "Follow log output (default: true when no service filter)", false)
+    .option("--prefix <name>", "Named prefix for the environment")
+    .action(async (service?: string, options?: { follow: boolean; prefix?: string }) => {
+      let repoId: string;
+      let envId: string;
+
+      try {
+        repoId = getCurrentRepoId();
+        envId = getCurrentEnvId(options?.prefix);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : err);
+        process.exit(1);
+      }
+
+      let client;
+      try {
+        client = await getClient();
+      } catch (err) {
+        console.error("Failed to connect to daemon:", err instanceof Error ? err.message : err);
+        process.exit(1);
+      }
+
+      const services = service ? [service] : undefined;
+
+      try {
+        for await (const line of client.streamLogs(repoId, envId, services)) {
+          printLogLine(line);
+        }
+      } catch (err) {
+        console.error("Log stream error:", err instanceof Error ? err.message : err);
+        process.exit(1);
+      }
+    });
+}
+
+function printLogLine(line: LogLine): void {
+  const color = colorForService(line.service);
+  const prefix = `${color}[${line.service}]${RESET}`;
+  process.stdout.write(`${prefix} ${line.line}\n`);
 }

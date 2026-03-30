@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm --filter spawntree-core run build && pnpm --filter spawntree run build",
+    "build": "pnpm --filter spawntree-core run build && pnpm --filter spawntree-daemon run build && pnpm --filter spawntree run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "oxlint .",

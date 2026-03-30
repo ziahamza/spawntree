@@ -1,58 +1,38 @@
 import type { Command } from "commander";
-import { resolve } from "node:path";
-import { WorktreeManager, StateManager } from "spawntree-core";
+import { getClient, getCurrentRepoId, getCurrentEnvId } from "../daemon-bridge.js";
 
 export function registerDownCommand(program: Command): void {
   program
     .command("down")
     .description("Stop the environment")
-    .argument("[env-name]", "Environment name (default: current branch)")
-    .action(async (envNameArg?: string) => {
-      let repoRoot: string;
+    .argument("[env-id]", "Environment ID (default: current branch)")
+    .option("--prefix <name>", "Named prefix for the environment")
+    .action(async (envIdArg?: string, options?: { prefix?: string }) => {
+      let repoId: string;
+      let envId: string;
+
       try {
-        repoRoot = WorktreeManager.validateGitRepo(process.cwd());
+        repoId = getCurrentRepoId();
+        envId = envIdArg ?? getCurrentEnvId(options?.prefix);
       } catch (err) {
         console.error(err instanceof Error ? err.message : err);
         process.exit(1);
       }
 
-      const envName = envNameArg || WorktreeManager.currentBranch(repoRoot).replace(/\//g, "-");
-      const spawntreeDir = resolve(repoRoot, ".spawntree");
-      const stateManager = new StateManager(spawntreeDir);
-
-      const state = stateManager.readState(envName);
-      if (!state) {
-        console.error(`No running environment found: ${envName}`);
+      let client;
+      try {
+        client = await getClient();
+      } catch (err) {
+        console.error("Failed to connect to daemon:", err instanceof Error ? err.message : err);
         process.exit(1);
       }
 
-      // Kill all tracked processes
-      const pids = stateManager.readPids(envName);
-      for (const [serviceName, pid] of Object.entries(pids)) {
-        console.log(`Stopping ${serviceName} (pid ${pid})...`);
-        try {
-          process.kill(pid, "SIGTERM");
-        } catch {
-          // already dead
-        }
+      try {
+        await client.downEnv(repoId, envId);
+        console.log("Environment stopped.");
+      } catch (err) {
+        console.error("Failed to stop environment:", err instanceof Error ? err.message : err);
+        process.exit(1);
       }
-
-      // Wait a moment for graceful shutdown, then force kill
-      await new Promise((r) => setTimeout(r, 2000));
-
-      for (const [serviceName, pid] of Object.entries(pids)) {
-        try {
-          process.kill(pid, 0); // check if alive
-          console.log(`  Force killing ${serviceName}...`);
-          process.kill(pid, "SIGKILL");
-        } catch {
-          // already dead
-        }
-      }
-
-      // Clean up PID files
-      stateManager.cleanStalePids(envName);
-
-      console.log(`Environment "${envName}" stopped.`);
     });
 }

@@ -1,50 +1,35 @@
 import type { Command } from "commander";
-import { resolve } from "node:path";
-import { WorktreeManager, StateManager, PortAllocator } from "spawntree-core";
+import { getClient, getCurrentRepoId } from "../daemon-bridge.js";
 
 export function registerRmCommand(program: Command): void {
   program
     .command("rm")
     .description("Remove an environment (full teardown)")
-    .argument("<env-name>", "Environment name to remove")
-    .option("--force", "Skip confirmation", false)
-    .action(async (envName: string) => {
-      let repoRoot: string;
+    .argument("<env-id>", "Environment ID to remove")
+    .action(async (envId: string) => {
+      let repoId: string;
+
       try {
-        repoRoot = WorktreeManager.validateGitRepo(process.cwd());
+        repoId = getCurrentRepoId();
       } catch (err) {
         console.error(err instanceof Error ? err.message : err);
         process.exit(1);
       }
 
-      const spawntreeDir = resolve(repoRoot, ".spawntree");
-      const stateManager = new StateManager(spawntreeDir);
-      const portAllocator = new PortAllocator(spawntreeDir);
-      const worktreeManager = new WorktreeManager(repoRoot);
-
-      // Kill any running processes first
-      const pids = stateManager.readPids(envName);
-      for (const [serviceName, pid] of Object.entries(pids)) {
-        console.log(`Killing ${serviceName} (pid ${pid})...`);
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {
-          // already dead
-        }
+      let client;
+      try {
+        client = await getClient();
+      } catch (err) {
+        console.error("Failed to connect to daemon:", err instanceof Error ? err.message : err);
+        process.exit(1);
       }
 
-      // Free port allocation
-      portAllocator.free(envName);
-      console.log("Freed port allocation.");
-
-      // Remove git worktree
-      worktreeManager.remove(envName);
-      console.log("Removed git worktree.");
-
-      // Remove all state
-      stateManager.removeAll(envName);
-      console.log("Cleaned state, logs, and PIDs.");
-
-      console.log(`\nEnvironment "${envName}" removed.`);
+      try {
+        await client.deleteEnv(repoId, envId);
+        console.log("Environment removed.");
+      } catch (err) {
+        console.error("Failed to remove environment:", err instanceof Error ? err.message : err);
+        process.exit(1);
+      }
     });
 }

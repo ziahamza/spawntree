@@ -1,15 +1,26 @@
 import type { Command } from "commander";
-import { readFileSync, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import {
-  parseConfig,
-  loadEnv,
-  validateConfig,
-  WorktreeManager,
-  PortAllocator,
-  StateManager,
-  Orchestrator,
-} from "spawntree-core";
+import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { getClient, getCurrentRepoId, getCurrentEnvId, getRepoPath } from "../daemon-bridge.js";
+import type { LogLine } from "spawntree-core";
+
+const COLORS: Record<string, string> = {};
+const COLOR_PALETTE = [
+  "\x1b[36m", // cyan
+  "\x1b[33m", // yellow
+  "\x1b[32m", // green
+  "\x1b[35m", // magenta
+  "\x1b[34m", // blue
+];
+const RESET = "\x1b[0m";
+let colorIndex = 0;
+
+function colorForService(service: string): string {
+  if (!COLORS[service]) {
+    COLORS[service] = COLOR_PALETTE[colorIndex++ % COLOR_PALETTE.length];
+  }
+  return COLORS[service];
+}
 
 export function registerUpCommand(program: Command): void {
   program
@@ -18,8 +29,7 @@ export function registerUpCommand(program: Command): void {
     .option("--prefix <name>", "Named prefix for additional environments")
     .option("--env <vars...>", "Override environment variables (KEY=VALUE)")
     .action(async (options) => {
-      const configFile = resolve(process.cwd(), program.opts().configFile);
-      const lockFile = program.opts().lockFile;
+      const configFile = resolve(process.cwd(), program.opts().configFile ?? "spawntree.yaml");
 
       if (!existsSync(configFile)) {
         console.error(`Config file not found: ${configFile}`);
@@ -27,28 +37,21 @@ export function registerUpCommand(program: Command): void {
         process.exit(1);
       }
 
-      const configDir = dirname(configFile);
+      let repoId: string;
+      let repoPath: string;
+      let envId: string;
 
-      // Validate git repo
-      let repoRoot: string;
       try {
-        repoRoot = WorktreeManager.validateGitRepo(configDir);
+        repoId = getCurrentRepoId();
+        repoPath = getRepoPath();
+        envId = getCurrentEnvId(options.prefix);
       } catch (err) {
         console.error(err instanceof Error ? err.message : err);
         process.exit(1);
       }
 
-      // Resolve env name (sanitize slashes in branch names)
-      const branch = WorktreeManager.currentBranch(repoRoot);
-      const safeBranch = branch.replace(/\//g, "-");
-      const envName = options.prefix
-        ? `${safeBranch}-${options.prefix}`
-        : safeBranch;
-
-      console.log(`Environment: ${envName}`);
-
       // Parse CLI env overrides
-      const cliOverrides: Record<string, string> = {};
+      const envOverrides: Record<string, string> = {};
       if (options.env) {
         for (const entry of options.env as string[]) {
           const eqIdx = entry.indexOf("=");
@@ -56,136 +59,71 @@ export function registerUpCommand(program: Command): void {
             console.error(`Invalid --env format: "${entry}". Use KEY=VALUE.`);
             process.exit(1);
           }
-          cliOverrides[entry.slice(0, eqIdx)] = entry.slice(eqIdx + 1);
+          envOverrides[entry.slice(0, eqIdx)] = entry.slice(eqIdx + 1);
         }
       }
 
-      // Load env vars
-      const envVars = loadEnv({
-        envName,
-        configDir,
-        cliOverrides,
-      });
+      console.log(`Environment: ${envId}`);
+      console.log("Starting daemon...");
 
-      // Parse config
-      const yamlContent = readFileSync(configFile, "utf-8");
-      const config = parseConfig(yamlContent, envVars);
-
-      // Validate
-      const result = validateConfig(config);
-      if ("errors" in result) {
-        console.error("Config validation errors:");
-        for (const err of result.errors) {
-          console.error(`  ${err.path}: ${err.message}`);
-        }
+      let client;
+      try {
+        client = await getClient();
+      } catch (err) {
+        console.error("Failed to connect to daemon:", err instanceof Error ? err.message : err);
         process.exit(1);
       }
 
-      const spawntreeDir = resolve(repoRoot, ".spawntree");
-
-      // Set up environment
-      const worktreeManager = new WorktreeManager(repoRoot);
-      const portAllocator = new PortAllocator(spawntreeDir, lockFile);
-      const stateManager = new StateManager(spawntreeDir);
-
-      // Ensure .gitignore
-      worktreeManager.ensureGitignore();
-
-      // Clean stale PIDs (crash recovery)
-      const cleaned = stateManager.cleanStalePids(envName);
-      if (cleaned.length > 0) {
-        console.log(`Cleaned up stale processes: ${cleaned.join(", ")}`);
-      }
-
-      // Create worktree
-      const worktreePath = worktreeManager.create(envName);
-
-      // Allocate ports
-      const basePort = portAllocator.allocate(envName, process.pid);
-      console.log(`Port range: ${basePort}-${basePort + 99}`);
-
-      // Create state/log dirs
-      stateManager.createStateDir(envName);
-      const logDir = stateManager.createLogDir(envName);
-
-      // Save state
-      stateManager.saveState(envName, {
-        envName,
-        branch,
-        basePort,
-        pids: {},
-        createdAt: new Date().toISOString(),
-      });
-
-      // Compute the service working directory:
-      // If the config file is in a subdirectory of the repo, services should
-      // run from that same subdirectory within the worktree.
-      const relativeConfigDir = configDir.startsWith(repoRoot)
-        ? configDir.slice(repoRoot.length + 1)
-        : "";
-      const serviceCwd = relativeConfigDir
-        ? resolve(worktreePath, relativeConfigDir)
-        : worktreePath;
-
-      // Start orchestrator
-      const orchestrator = new Orchestrator({
-        config: result.config,
-        envName,
-        envVars,
-        cwd: serviceCwd,
-        logDir,
-        basePort,
-      });
-
-      // Handle Ctrl+C
-      const shutdown = async () => {
-        console.log("\nShutting down...");
-        await orchestrator.stop();
-
-        // Save PIDs (empty after stop)
-        stateManager.saveState(envName, {
-          envName,
-          branch,
-          basePort,
-          pids: {},
-          createdAt: new Date().toISOString(),
+      try {
+        const { env } = await client.createEnv({
+          repoPath,
+          envId,
+          prefix: options.prefix,
+          envOverrides: Object.keys(envOverrides).length > 0 ? envOverrides : undefined,
+          configFile,
         });
 
+        console.log(`Environment "${env.envId}" created. Port range: ${env.basePort}-${env.basePort + 99}`);
+        console.log("Streaming logs (Ctrl+C to stop)...\n");
+      } catch (err) {
+        console.error("Failed to create environment:", err instanceof Error ? err.message : err);
+        process.exit(1);
+      }
+
+      // Set up Ctrl+C handler to stop the environment
+      let stopping = false;
+      const shutdown = async () => {
+        if (stopping) return;
+        stopping = true;
+        console.log("\nShutting down...");
+        try {
+          await client.downEnv(repoId, envId);
+          console.log("Environment stopped.");
+        } catch {
+          // ignore errors on shutdown
+        }
         process.exit(0);
       };
 
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);
 
+      // Stream logs until interrupted
       try {
-        await orchestrator.start();
-
-        // Save PIDs
-        const pids: Record<string, number> = {};
-        for (const name of Object.keys(result.config.services)) {
-          const pid = orchestrator.getPid(name);
-          if (pid !== undefined) {
-            pids[name] = pid;
-            stateManager.savePid(envName, name, pid);
-          }
+        for await (const logLine of client.streamLogs(repoId, envId)) {
+          printLogLine(logLine);
         }
-
-        stateManager.saveState(envName, {
-          envName,
-          branch,
-          basePort,
-          pids,
-          createdAt: new Date().toISOString(),
-        });
-
-        console.log("\nAll services started. Press Ctrl+C to stop.");
-
-        // Keep process alive in foreground
-        await new Promise(() => {});
       } catch (err) {
-        console.error(err instanceof Error ? err.message : err);
-        await orchestrator.stop();
-        process.exit(1);
+        if (!stopping) {
+          console.error("Log stream error:", err instanceof Error ? err.message : err);
+          process.exit(1);
+        }
       }
     });
+}
+
+function printLogLine(line: LogLine): void {
+  const color = colorForService(line.service);
+  const prefix = `${color}[${line.service}]${RESET}`;
+  process.stdout.write(`${prefix} ${line.line}\n`);
 }

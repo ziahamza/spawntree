@@ -30,7 +30,9 @@
   },
   "dependencies": {
     "spawntree-core": "workspace:*",
+    "spawntree-daemon": "workspace:*",
     "commander": "^13.0.0",
+    "undici": "^7.0.0",
     "yaml": "^2.7.0"
   }
 }

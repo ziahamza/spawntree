@@ -1,6 +1,6 @@
 # TODO
 
-## v0.1.1 — Must-have for onboarding mirae, gitstart, gitenv
+## v0.1.1 — Must-have for onboarding project-alpha, project-beta, project-gamma
 
 ### Shared Global Postgres
 
@@ -8,7 +8,7 @@
 - [ ] `~/.spawntree/postgres/<version>/data/` for persistent data across all repos
 - [ ] Auto-start on first `spawntree up` that declares `type: postgres`, keep running after `spawntree down`
 - [ ] `spawntree infra stop` / `spawntree infra status` to manage the shared instances
-- [ ] Multi-database: parse config for multiple `type: postgres` entries, create separate databases (e.g., `sasha` + `sasha_dbos` for mirae)
+- [ ] Multi-database: parse config for multiple `type: postgres` entries, create separate databases (e.g., `sasha` + `sasha_dbos` for project-alpha)
 - [ ] `DATABASE_URL` injection with per-service database name
 - [ ] `fork_from: <url>` — pg_dump from external source into local database on first run
 - [ ] `fork_from: template:<name>` — restore from a saved template snapshot
@@ -28,7 +28,7 @@
 - [ ] `type: container` with `image`, `port`, `environment`, `volumes`, `command` support via dockerode
 - [ ] Port mapping to spawntree-allocated ports
 - [ ] Healthcheck support for containers
-- [ ] Needed for: Mailpit (mirae), Equanimity Docker (gitstart), PowerSync (gitenv)
+- [ ] Needed for: Mailpit (project-alpha), Equanimity Docker (project-beta), PowerSync (project-gamma)
 
 ### Reverse Proxy
 
@@ -36,7 +36,7 @@
 - [ ] Route `<service>-<env>.localhost:<port>` to correct physical port
 - [ ] Startup check for `*.localhost` DNS resolution
 - [ ] Inject `SERVICE_URL` with clean `*.localhost` URLs instead of raw `localhost:<port>`
-- [ ] Solves portless replacement for gitstart/gitenv
+- [ ] Solves portless replacement for project-beta/project-gamma
 - [ ] Solves circular dependency (host needs studio URL, studio needs host URL)
 
 ### Mise Integration
@@ -44,13 +44,13 @@
 - [ ] Detect `.mise.toml` / `mise.toml` in project root
 - [ ] Run `mise install` before starting any services
 - [ ] Activate mise-managed toolchains for `type: process` services
-- [ ] Critical for: mirae (uv, bun, node), gitstart (node, bun, deno, erlang, elixir), gitenv (bun, node)
+- [ ] Critical for: project-alpha (uv, bun, node), project-beta (node, bun, deno, erlang, elixir), project-gamma (bun, node)
 
 ### Real Project Examples
 
-- [ ] `examples/mirae/spawntree.yaml` — Django + Vite + Postgres(pgvector) + Redis + Mailpit
-- [ ] `examples/gitstart/spawntree.yaml` — Gateway + Studio + Amazon + GitEnv + Equanimity + Postgres + Redis
-- [ ] `examples/gitenv/spawntree.yaml` — Host (dev-local) + Machine + Studio
+- [ ] `examples/project-alpha/spawntree.yaml` — Django + Vite + Postgres(pgvector) + Redis + Mailpit
+- [ ] `examples/project-beta/spawntree.yaml` — Gateway + Studio + Amazon + GitEnv + Equanimity + Postgres + Redis
+- [ ] `examples/project-gamma/spawntree.yaml` — Host (dev-local) + Machine + Studio
 - [ ] E2E test script that starts each example and verifies healthchecks
 
 ## v0.1.0 polish (can be done in parallel)
@@ -94,7 +94,7 @@
 - [ ] Add `spawntree db` commands to CLI reference
 - [ ] CONTRIBUTING.md with dev setup
 - [ ] Architecture diagram (ASCII) in README
-- [ ] examples/ directory with real project configs (mirae, gitstart, gitenv)
+- [ ] examples/ directory with real project configs (project-alpha, project-beta, project-gamma)
 
 ## Future (not blocking v0.1.1)
 

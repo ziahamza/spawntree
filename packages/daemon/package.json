@@ -1,0 +1,36 @@
+{
+  "name": "spawntree-daemon",
+  "version": "0.1.0",
+  "description": "Background daemon for spawntree - manages shared infrastructure and environment lifecycles",
+  "type": "module",
+  "main": "./dist/server-main.js",
+  "bin": {
+    "spawntree-daemon": "./dist/server-main.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "dev": "node --watch dist/server-main.js"
+  },
+  "dependencies": {
+    "spawntree-core": "workspace:*",
+    "@hono/node-server": "^1.14.0",
+    "hono": "^4.7.0",
+    "dockerode": "^4.0.0",
+    "yaml": "^2.7.0",
+    "dotenv": "^16.5.0",
+    "dotenv-expand": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ziahamza/spawntree.git",
+    "directory": "packages/daemon"
+  }
+}
