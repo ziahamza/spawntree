@@ -1,54 +1,108 @@
 # TODO
 
-Small improvements and fixes. Ordered roughly by priority within each section.
+## v0.1.1 — Must-have for onboarding mirae, gitstart, gitenv
 
-## v0.1.0 polish
+### Shared Global Postgres
 
-- [ ] `spawntree up` should print a table with service name, port, status, and URL columns
-- [ ] `spawntree status` should detect and mark dead processes (PID check) rather than trusting PID files
-- [ ] `spawntree logs -f` (follow mode) should use `fs.watch` to tail new log lines in real time
-- [ ] `spawntree init` should detect common stacks (Next.js, Rails, Django, Flask) and generate smarter defaults
-- [ ] Add `--verbose` and `--quiet` flags to control output level
-- [ ] Add `--timeout` flag to `spawntree up` for healthcheck wait time override
-- [ ] Handle branch names with slashes (e.g., `feat/auth`) by replacing `/` with `-` in env names
-- [ ] Validate that allocated ports are actually free before starting services (EADDRINUSE pre-check)
-- [ ] `spawntree down` should also work by killing the foreground process group, not just by PID lookup
-- [ ] Add shell completions (bash, zsh, fish) via commander's built-in support
+- [ ] Custom Docker image with extension superset: pgvector, pg_cron, uuid-ossp, pg_trgm, postgis. Build and cache at `~/.spawntree/postgres/images/`
+- [ ] `~/.spawntree/postgres/<version>/data/` for persistent data across all repos
+- [ ] Auto-start on first `spawntree up` that declares `type: postgres`, keep running after `spawntree down`
+- [ ] `spawntree infra stop` / `spawntree infra status` to manage the shared instances
+- [ ] Multi-database: parse config for multiple `type: postgres` entries, create separate databases (e.g., `sasha` + `sasha_dbos` for mirae)
+- [ ] `DATABASE_URL` injection with per-service database name
+- [ ] `fork_from: <url>` — pg_dump from external source into local database on first run
+- [ ] `fork_from: template:<name>` — restore from a saved template snapshot
+- [ ] `spawntree db dump <name>` / `spawntree db restore <name>` — save/restore database snapshots to `~/.spawntree/postgres/templates/`
+- [ ] Graceful handling when Docker is not installed (clear error, suggest install)
+- [ ] Graceful handling when `DATABASE_URL` is provided in env (skip Docker, connect directly)
 
-## Config & .env
+### Shared Global Redis
 
-- [ ] Support `dotenv-expand` variable references within .env files (e.g., `BASE_URL=http://localhost:${PORT}`)
-- [ ] Add `spawntree validate` command to check spawntree.yaml without starting anything
-- [ ] Support `extends` in spawntree.yaml for sharing common service config across envs
-- [ ] Warn if `.env.local` exists but isn't gitignored
+- [ ] Start shared Redis container at `~/.spawntree/redis/`
+- [ ] Per-env database index allocation (Redis supports DB 0-15 by default, extend with `--databases 512`)
+- [ ] `REDIS_URL` injection with per-env DB index
+- [ ] Graceful handling when `REDIS_URL` is provided in env (skip Docker, connect directly)
+
+### Container Runner
+
+- [ ] `type: container` with `image`, `port`, `environment`, `volumes`, `command` support via dockerode
+- [ ] Port mapping to spawntree-allocated ports
+- [ ] Healthcheck support for containers
+- [ ] Needed for: Mailpit (mirae), Equanimity Docker (gitstart), PowerSync (gitenv)
+
+### Reverse Proxy
+
+- [ ] Node.js HTTP server listening on configurable port
+- [ ] Route `<service>-<env>.localhost:<port>` to correct physical port
+- [ ] Startup check for `*.localhost` DNS resolution
+- [ ] Inject `SERVICE_URL` with clean `*.localhost` URLs instead of raw `localhost:<port>`
+- [ ] Solves portless replacement for gitstart/gitenv
+- [ ] Solves circular dependency (host needs studio URL, studio needs host URL)
+
+### Mise Integration
+
+- [ ] Detect `.mise.toml` / `mise.toml` in project root
+- [ ] Run `mise install` before starting any services
+- [ ] Activate mise-managed toolchains for `type: process` services
+- [ ] Critical for: mirae (uv, bun, node), gitstart (node, bun, deno, erlang, elixir), gitenv (bun, node)
+
+### Real Project Examples
+
+- [ ] `examples/mirae/spawntree.yaml` — Django + Vite + Postgres(pgvector) + Redis + Mailpit
+- [ ] `examples/gitstart/spawntree.yaml` — Gateway + Studio + Amazon + GitEnv + Equanimity + Postgres + Redis
+- [ ] `examples/gitenv/spawntree.yaml` — Host (dev-local) + Machine + Studio
+- [ ] E2E test script that starts each example and verifies healthchecks
+
+## v0.1.0 polish (can be done in parallel)
+
+- [ ] `spawntree up` should print a table with service name, port, status columns
+- [ ] `spawntree status` should detect dead processes via PID check
+- [ ] `spawntree logs -f` follow mode with `fs.watch`
+- [ ] `spawntree init` should detect common stacks (Next.js, Django, Rails) and generate smarter defaults
+- [ ] `--verbose` and `--quiet` flags
+- [ ] `--timeout` flag for healthcheck wait override
+- [ ] Validate ports are free before starting (EADDRINUSE pre-check)
+- [ ] Shell completions (bash, zsh, fish)
 
 ## Error messages
 
-- [ ] When a process exits immediately, show the last 10 lines of its log in the error output
-- [ ] When port allocation fails, suggest `spawntree status --all` to see what's using slots
-- [ ] When git worktree creation fails, check for common issues (detached HEAD, dirty index) and suggest fixes
-- [ ] `spawntree up` in a non-git directory should suggest `git init` first
+- [ ] When a process exits immediately, show last 10 lines of its log
+- [ ] When port allocation fails, suggest `spawntree status --all`
+- [ ] When Docker is not running, print clear install/start instructions
+- [ ] When git worktree fails on detached HEAD, suggest `git checkout <branch>`
+- [ ] `spawntree up` in non-git directory should suggest `git init`
 
 ## Testing
 
-- [ ] Add E2E test that runs the compiled CLI against a sample project with 2 process services
-- [ ] Add test for `.env` resolution order (base < local < env-specific < CLI < shell)
-- [ ] Add test for branch names with special characters as env names
-- [ ] Add test for concurrent `spawntree up` (lock file contention)
-- [ ] Add test for Ctrl+C handling (SIGINT cleanup)
-- [ ] Test that `spawntree rm` fully cleans up (no leftover worktrees, PID files, or state)
-
-## Developer experience
-
-- [ ] Add `spawntree doctor` command that checks prerequisites (git, node version, docker availability)
-- [ ] Colored output for service status (green = running, red = failed, gray = stopped)
-- [ ] Show elapsed time for each service startup in the status output
-- [ ] `spawntree up` should print the exact `spawntree down` or Ctrl+C instruction on startup
-- [ ] Add a `--dry-run` flag that shows what would be started without starting it
+- [ ] E2E test: compiled CLI against sample project with 2 process services
+- [ ] Test `.env` resolution order
+- [ ] Test branch names with special characters
+- [ ] Test concurrent `spawntree up` (lock file contention)
+- [ ] Test Ctrl+C handling (SIGINT cleanup)
+- [ ] Test `spawntree rm` full cleanup
+- [ ] Integration tests for Docker Postgres lifecycle
+- [ ] Integration tests for Docker Redis lifecycle
+- [ ] Integration tests for container runner
+- [ ] Integration tests for reverse proxy routing
 
 ## Documentation
 
-- [ ] Add CONTRIBUTING.md with dev setup instructions
-- [ ] Add architecture diagram to README (ASCII art of the data flow)
-- [ ] Document the `spawntree.yaml` schema formally (JSON Schema or TypeScript types in docs)
-- [ ] Add examples/ directory with sample projects (node app, python worker, mixed stack)
+- [ ] Update docs/configuration.md with `type: postgres`, `type: redis`, `type: container` reference
+- [ ] Document shared global infrastructure model (`~/.spawntree/postgres/`, `~/.spawntree/redis/`)
+- [ ] Document `fork_from` and database templates
+- [ ] Add `spawntree infra` commands to CLI reference
+- [ ] Add `spawntree db` commands to CLI reference
+- [ ] CONTRIBUTING.md with dev setup
+- [ ] Architecture diagram (ASCII) in README
+- [ ] examples/ directory with real project configs (mirae, gitstart, gitenv)
+
+## Future (not blocking v0.1.1)
+
+- [ ] Secret provider integration (1Password `op://`, Wrangler, Vercel, Aptible)
+- [ ] DB version management (separate instances per major PG version)
+- [ ] `spawntree doctor` command (check prerequisites)
+- [ ] Colored output for service status
+- [ ] `--dry-run` flag
+- [ ] Windows support
+- [ ] Homebrew tap
+- [ ] Plugin system for custom service types
