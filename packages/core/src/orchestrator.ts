@@ -1,5 +1,6 @@
 import type { Service, ServiceStatus } from "./services/interface.js";
 import type { SpawntreeConfig, ServiceConfig } from "./config/parser.js";
+import { substituteVars } from "./config/substitution.js";
 import { ProcessRunner } from "./services/process.js";
 import { PortAllocator } from "./env/ports.js";
 
@@ -53,7 +54,7 @@ export class Orchestrator {
       for (const [otherName, otherConfig] of Object.entries(this.config.services)) {
         const otherIndex = serviceNames.indexOf(otherName);
         const otherPort = PortAllocator.physicalPort(this.basePort, otherIndex);
-        const upperName = otherName.toUpperCase();
+        const upperName = otherName.toUpperCase().replace(/-/g, "_");
 
         serviceEnvVars[`${upperName}_HOST`] = "127.0.0.1";
         serviceEnvVars[`${upperName}_PORT`] = String(otherPort);
@@ -73,12 +74,42 @@ export class Orchestrator {
         }
       }
 
-      // Add per-service environment overrides
-      if (serviceConfig.environment) {
-        Object.assign(serviceEnvVars, serviceConfig.environment);
+      // Re-substitute ${VAR} in per-service environment overrides using the
+      // service discovery vars (API_URL, DB_PORT, etc.) that are now computed.
+      // Must happen BEFORE merging into serviceEnvVars so we resolve against
+      // the injected values, not the raw ${} strings.
+      const resolvedEnv: Record<string, string> | undefined = serviceConfig.environment
+        ? Object.fromEntries(
+            Object.entries(serviceConfig.environment).map(([k, v]) => [
+              k,
+              substituteVars(v, serviceEnvVars),
+            ]),
+          )
+        : undefined;
+
+      // Merge resolved environment overrides
+      if (resolvedEnv) {
+        Object.assign(serviceEnvVars, resolvedEnv);
       }
 
-      const service = this.createService(name, serviceConfig, serviceEnvVars);
+      const resolvedConfig: ServiceConfig = {
+        ...serviceConfig,
+        command: serviceConfig.command
+          ? substituteVars(serviceConfig.command, serviceEnvVars)
+          : serviceConfig.command,
+        healthcheck: serviceConfig.healthcheck
+          ? {
+              ...serviceConfig.healthcheck,
+              url: substituteVars(serviceConfig.healthcheck.url, serviceEnvVars),
+            }
+          : serviceConfig.healthcheck,
+        fork_from: serviceConfig.fork_from
+          ? substituteVars(serviceConfig.fork_from, serviceEnvVars)
+          : serviceConfig.fork_from,
+        environment: resolvedEnv,
+      };
+
+      const service = this.createService(name, resolvedConfig, serviceEnvVars);
       this.services.set(name, service);
 
       console.log(`Starting ${name}...`);

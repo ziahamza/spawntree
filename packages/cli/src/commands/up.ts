@@ -38,11 +38,12 @@ export function registerUpCommand(program: Command): void {
         process.exit(1);
       }
 
-      // Resolve env name
+      // Resolve env name (sanitize slashes in branch names)
       const branch = WorktreeManager.currentBranch(repoRoot);
+      const safeBranch = branch.replace(/\//g, "-");
       const envName = options.prefix
-        ? `${branch}-${options.prefix}`
-        : branch;
+        ? `${safeBranch}-${options.prefix}`
+        : safeBranch;
 
       console.log(`Environment: ${envName}`);
 
@@ -116,12 +117,22 @@ export function registerUpCommand(program: Command): void {
         createdAt: new Date().toISOString(),
       });
 
+      // Compute the service working directory:
+      // If the config file is in a subdirectory of the repo, services should
+      // run from that same subdirectory within the worktree.
+      const relativeConfigDir = configDir.startsWith(repoRoot)
+        ? configDir.slice(repoRoot.length + 1)
+        : "";
+      const serviceCwd = relativeConfigDir
+        ? resolve(worktreePath, relativeConfigDir)
+        : worktreePath;
+
       // Start orchestrator
       const orchestrator = new Orchestrator({
         config: result.config,
         envName,
         envVars,
-        cwd: worktreePath,
+        cwd: serviceCwd,
         logDir,
         basePort,
       });

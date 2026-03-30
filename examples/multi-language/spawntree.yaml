@@ -17,7 +17,7 @@ services:
 
   ml-service:
     type: process
-    command: python src/ml_service.py
+    command: python3 src/ml_service.py
     port: 5000
     healthcheck:
       url: http://localhost:${PORT}/health

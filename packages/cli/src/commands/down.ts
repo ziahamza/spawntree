@@ -16,7 +16,7 @@ export function registerDownCommand(program: Command): void {
         process.exit(1);
       }
 
-      const envName = envNameArg || WorktreeManager.currentBranch(repoRoot);
+      const envName = envNameArg || WorktreeManager.currentBranch(repoRoot).replace(/\//g, "-");
       const spawntreeDir = resolve(repoRoot, ".spawntree");
       const stateManager = new StateManager(spawntreeDir);
 

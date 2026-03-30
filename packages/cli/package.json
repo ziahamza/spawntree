@@ -10,7 +10,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "prepublishOnly": "pnpm build"
   },

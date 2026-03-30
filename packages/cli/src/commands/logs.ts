@@ -19,7 +19,7 @@ export function registerLogsCommand(program: Command): void {
         process.exit(1);
       }
 
-      const envName = WorktreeManager.currentBranch(repoRoot);
+      const envName = WorktreeManager.currentBranch(repoRoot).replace(/\//g, "-");
       const logDir = resolve(repoRoot, ".spawntree", "logs", envName);
 
       if (!existsSync(logDir)) {

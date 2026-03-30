@@ -1,14 +1,14 @@
 {
-  "name": "spawntree",
+  "name": "spawntree-monorepo",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm --filter spawntree-core run build && pnpm --filter spawntree run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "oxlint .",
     "format": "oxfmt --write .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p packages/core/tsconfig.json --noEmit && tsc -p packages/cli/tsconfig.json --noEmit",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "pnpm build && changeset publish"

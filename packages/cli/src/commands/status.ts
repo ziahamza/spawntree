@@ -30,7 +30,7 @@ export function registerStatusCommand(program: Command): void {
           printEnvStatus(stateManager, envName);
         }
       } else {
-        const envName = WorktreeManager.currentBranch(repoRoot);
+        const envName = WorktreeManager.currentBranch(repoRoot).replace(/\//g, "-");
         const state = stateManager.readState(envName);
         if (!state) {
           console.log(`No environment running for branch "${envName}".`);
