@@ -165,18 +165,29 @@ export class EnvManager {
     // Allocate ports
     const basePort = this.portRegistry.allocate(envKey);
 
-    // Create worktree
-    const worktreeManager = new WorktreeManager(gitRoot);
-    worktreeManager.ensureGitignore();
-    const worktreePath = worktreeManager.create(envId);
+    // Determine service working directory:
+    // - For the default branch env (no prefix), run from the project root directly.
+    //   Worktrees don't have node_modules, build artifacts, etc.
+    // - For prefixed/additional envs, create a worktree for source isolation.
+    let serviceCwd: string;
+    let worktreePath: string;
 
-    // Compute service working directory (config might be in a subdirectory)
-    const relativeConfigDir = configDir.startsWith(gitRoot)
-      ? configDir.slice(gitRoot.length + 1)
-      : "";
-    const serviceCwd = relativeConfigDir
-      ? resolve(worktreePath, relativeConfigDir)
-      : worktreePath;
+    const isDefaultBranchEnv = envId === safeBranch && !req.prefix;
+    if (isDefaultBranchEnv) {
+      // Run from the actual project directory (has node_modules, deps installed)
+      worktreePath = gitRoot;
+      serviceCwd = configDir;
+    } else {
+      const worktreeManager = new WorktreeManager(gitRoot);
+      worktreeManager.ensureGitignore();
+      worktreePath = worktreeManager.create(envId);
+      const relativeConfigDir = configDir.startsWith(gitRoot)
+        ? configDir.slice(gitRoot.length + 1)
+        : "";
+      serviceCwd = relativeConfigDir
+        ? resolve(worktreePath, relativeConfigDir)
+        : worktreePath;
+    }
 
     // Start services in dependency order
     const serviceOrder = topologicalSort(config);
@@ -233,7 +244,10 @@ export class EnvManager {
         // Stop already-started services before bubbling
         await this.stopServices(services, serviceOrder.slice(0, serviceOrder.indexOf(name)));
         this.portRegistry.free(envKey);
-        worktreeManager.remove(envId);
+        if (!isDefaultBranchEnv) {
+          const wm = new WorktreeManager(gitRoot);
+          wm.remove(envId);
+        }
         throw err;
       }
     }
