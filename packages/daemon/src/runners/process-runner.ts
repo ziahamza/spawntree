@@ -46,11 +46,20 @@ export class ProcessRunner implements Service {
       this.logStreamer.addLine(this.repoId, this.envId, this.name, stream, line);
     };
 
-    const [cmd, ...args] = this.config.command.split(/\s+/);
-    this.process = spawn(cmd, args, {
+    // Build the command with framework-specific port flag injection
+    // (vite, next, etc. ignore the PORT env var and need explicit --port)
+    let command = this.config.command;
+    const port = this.envVars.PORT;
+    if (port && !command.includes("--port")) {
+      command = injectFrameworkFlags(command, port);
+    }
+
+    // Use shell mode to support complex commands (pipes, env vars, sh -c, etc.)
+    this.process = spawn(command, {
       cwd: this.cwd,
       env: { ...globalThis.process.env, ...this.envVars },
       stdio: ["ignore", "pipe", "pipe"],
+      shell: true,
     });
 
     // Stream stdout line by line
@@ -179,4 +188,29 @@ export class ProcessRunner implements Service {
   get pid(): number | undefined {
     return this.process?.pid;
   }
+}
+
+/**
+ * Inject framework-specific port/host flags into a command string.
+ * Frameworks like vite, next.js, astro, etc. ignore the PORT env var
+ * and need explicit CLI flags. This mirrors portless's injectFrameworkFlags.
+ */
+function injectFrameworkFlags(command: string, port: string): string {
+  const cmd = command.toLowerCase();
+
+  if (cmd.includes("vite") || cmd.includes("react-router")) {
+    return `${command} --port ${port} --host 127.0.0.1 --strictPort`;
+  }
+  if (cmd.includes("next")) {
+    return `${command} --port ${port} --hostname 127.0.0.1`;
+  }
+  if (cmd.includes("astro") || cmd.includes("nuxt")) {
+    return `${command} --port ${port} --host 127.0.0.1`;
+  }
+  if (cmd.includes("expo") || cmd.includes("react-native")) {
+    return `${command} --port ${port}`;
+  }
+  // Frameworks that respect PORT env var (express, fastify, hono, django, flask, rails):
+  // no injection needed
+  return command;
 }
