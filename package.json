@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "generate:openapi": "go run ./cmd/openapi-gen",
-    "generate:types": "openapi-ts -f openapi-ts.config.js",
+    "generate:types": "openapi-ts -f openapi-ts.config.ts",
     "check:openapi": "pnpm run generate:openapi && git diff --exit-code -- openapi.yaml",
     "check:types": "pnpm run generate:types && git diff --exit-code -- packages/core/src/generated",
     "format:go": "gofmt -w cmd internal",
