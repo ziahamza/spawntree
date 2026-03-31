@@ -8,17 +8,6 @@ spawntree looks for `spawntree.yaml` in the current directory. Override with `--
 spawntree up --config-file infra/spawntree.yaml
 ```
 
-## Top-Level Fields
-
-```yaml
-proxy:          # (v0.1.1) reverse proxy settings
-  port: 8080
-
-services:       # required: map of service definitions
-  my-service:
-    ...
-```
-
 ## Service Types
 
 ### process
@@ -29,35 +18,44 @@ Run a native command. The primary service type.
 services:
   api:
     type: process
-    command: node src/server.js      # required
-    port: 3000                       # logical port (spawntree allocates the physical port)
-    toolchain:                       # (v0.1.1) mise-managed toolchains
-      node: "22"
+    command: node src/server.js
+    port: 3000
     healthcheck:
       url: http://localhost:${PORT}/health
-      timeout: 30                    # seconds
+      timeout: 30
     depends_on:
       - db
     environment:
       API_KEY: ${API_KEY}
 ```
 
-### postgres (v0.1.1)
+**Framework port injection**: spawntree auto-detects vite, next.js, astro, nuxt, and expo in the command and injects `--port` flags. These frameworks ignore the `PORT` env var, so spawntree handles it for you.
 
-Built-in Postgres. No Docker needed.
+**portless coexistence**: if your command uses `portless run`, spawntree injects `PORTLESS=0` to disable portless. spawntree owns port allocation and proxy.
+
+### postgres
+
+Shared global Postgres. No Docker commands needed.
 
 ```yaml
 services:
   db:
     type: postgres
-    fork_from: ${PROD_DATABASE_URL}  # optional: seed from another database
+    fork_from: ${PROD_DATABASE_URL}   # optional: seed from external source
+
+  dbos-db:
+    type: postgres                     # second database in same instance
 ```
 
-Injects: `DATABASE_URL`, `DB_HOST`, `DB_PORT`, `DB_NAME`
+- Uses a shared Docker Postgres container with extension superset (pgvector, pg_cron, postgis, uuid-ossp, pg_trgm)
+- Each service gets its own database within the shared instance
+- Injects: `DATABASE_URL`, `DB_HOST`, `DB_PORT`, `DB_NAME`
+- Multiple postgres services get per-service vars: `DBOS_DB_DATABASE_URL`, `DBOS_DB_HOST`, etc.
+- If `DATABASE_URL` is already in your environment, Docker is skipped (use external server)
 
-### redis (v0.1.1)
+### redis
 
-Built-in Redis. No Docker needed.
+Shared global Redis. No Docker commands needed.
 
 ```yaml
 services:
@@ -65,18 +63,26 @@ services:
     type: redis
 ```
 
-Injects: `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`
+- Uses a shared Docker Redis container with per-env DB index isolation
+- Injects: `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`
+- If `REDIS_URL` is already in your environment, Docker is skipped
 
-### container (v0.1.1)
+### container
 
-Docker container for anything else.
+Run any Docker container.
 
 ```yaml
 services:
-  legacy:
+  mailpit:
     type: container
-    image: elasticsearch:8.12
-    port: 9200
+    image: axllent/mailpit:latest
+    port: 8025
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+    volumes:
+      - host: ./data
+        container: /data
+        mode: rw
 ```
 
 ## depends_on
@@ -97,13 +103,13 @@ services:
     depends_on: [db, api]
 ```
 
-Start order: db, then api, then worker.
+Start order: db, then api, then worker. Stop order: worker, api, db.
 
 ## Variable Substitution
 
-Use `${VAR_NAME}` in these fields: `command`, `healthcheck.url`, `environment` values, `fork_from`.
+Use `${VAR_NAME}` in: `command`, `healthcheck.url`, `environment` values, `fork_from`.
 
-Variables are resolved from `.env` files and CLI args. See [Environment Variables](./environment-variables.md).
+Variables are resolved from `.env` files, CLI args, and spawntree's auto-injected vars (PORT, HOST_URL, DATABASE_URL, etc.).
 
 ## YAML Anchors
 
@@ -119,7 +125,6 @@ services:
   api:
     <<: *defaults
     command: node api.js
-    port: 3000
   worker:
     <<: *defaults
     command: node worker.js

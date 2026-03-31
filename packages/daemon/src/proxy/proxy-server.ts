@@ -35,13 +35,13 @@ export class ProxyServer {
         },
       });
 
-      proxyReq.on("upgrade", (_proxyRes, proxySocket, proxyHead) => {
-        socket.write(
-          "HTTP/1.1 101 Switching Protocols\r\n" +
-            "Upgrade: websocket\r\n" +
-            "Connection: Upgrade\r\n" +
-            "\r\n",
-        );
+      proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
+        let rawResponse = `HTTP/1.1 101 Switching Protocols\r\n`;
+        for (let i = 0; i < proxyRes.rawHeaders.length; i += 2) {
+          rawResponse += `${proxyRes.rawHeaders[i]}: ${proxyRes.rawHeaders[i + 1]}\r\n`;
+        }
+        rawResponse += "\r\n";
+        socket.write(rawResponse);
         if (proxyHead.length > 0) socket.write(proxyHead);
         proxySocket.pipe(socket);
         socket.pipe(proxySocket);

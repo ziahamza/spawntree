@@ -214,6 +214,7 @@ export class EnvManager {
     // First pass: resolve infra env vars (postgres/redis URLs) so they are available
     // when building service env vars for process services
     const infraEnvVars: Record<string, string> = {};
+    let firstPostgresService = true;
     for (const name of serviceNames) {
       const serviceConfig = config.services[name];
       if (serviceConfig.type === "postgres") {
@@ -237,10 +238,24 @@ export class EnvManager {
             await pgRunner.forkFrom(dbName, resolvedForkFrom);
           }
 
-          infraEnvVars.DATABASE_URL = `postgresql://postgres@localhost:${pgRunner.port}/${dbName}`;
-          infraEnvVars.DB_HOST = "127.0.0.1";
-          infraEnvVars.DB_PORT = String(pgRunner.port);
-          infraEnvVars.DB_NAME = dbName;
+          const pgUrl = `postgresql://postgres@localhost:${pgRunner.port}/${dbName}`;
+          const upperName = name.toUpperCase().replace(/-/g, "_");
+
+          // Only set generic DATABASE_URL for the first postgres service encountered
+          if (firstPostgresService) {
+            infraEnvVars.DATABASE_URL = pgUrl;
+            infraEnvVars.DB_HOST = "127.0.0.1";
+            infraEnvVars.DB_PORT = String(pgRunner.port);
+            infraEnvVars.DB_NAME = dbName;
+            firstPostgresService = false;
+          }
+
+          // Always set per-service-name env vars
+          infraEnvVars[`${upperName}_DATABASE_URL`] = pgUrl;
+          infraEnvVars[`${upperName}_HOST`] = "127.0.0.1";
+          infraEnvVars[`${upperName}_PORT`] = String(pgRunner.port);
+          infraEnvVars[`${upperName}_NAME`] = dbName;
+
           console.log(`[spawntree-daemon]   Postgres db "${dbName}" ready at port ${pgRunner.port}`);
         } else {
           console.log(`[spawntree-daemon]   Skipping Docker Postgres — DATABASE_URL already set externally`);
@@ -526,7 +541,7 @@ export class EnvManager {
       vars[`${upperName}_PORT`] = String(otherPort);
       // Use proxy URL if proxy is running, otherwise fall back to raw port
       const proxyUrl = `http://${otherName}-${envId}.localhost:${this.proxyManager.proxyPort}`;
-      vars[`${upperName}_URL`] = this.proxyManager.proxyPort ? proxyUrl : `http://127.0.0.1:${otherPort}`;
+      vars[`${upperName}_URL`] = this.proxyManager.isRunning ? proxyUrl : `http://127.0.0.1:${otherPort}`;
     }
 
     // Resolve per-service environment overrides using the now-computed vars
@@ -652,7 +667,7 @@ export class EnvManager {
 
       // Use proxy URL for non-infra services
       const isInfra = serviceConfig.type === "postgres" || serviceConfig.type === "redis";
-      const proxyUrl = isInfra ? undefined : `http://${name}-${managed.envId}.localhost:${this.proxyManager.proxyPort}`;
+      const proxyUrl = (isInfra || !this.proxyManager.isRunning) ? undefined : `http://${name}-${managed.envId}.localhost:${this.proxyManager.proxyPort}`;
 
       const info: ServiceInfo = {
         name,

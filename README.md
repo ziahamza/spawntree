@@ -1,6 +1,6 @@
 # spawntree
 
-Isolated environment orchestrator. Think docker-compose, but with native processes, built-in databases, and per-branch environment isolation.
+Isolated environment orchestrator. Native processes + shared Postgres/Redis + Docker containers + per-branch isolation. One command to start everything.
 
 ```bash
 spawntree up        # start your stack
@@ -10,116 +10,116 @@ spawntree down      # stop everything
 
 ## What it does
 
-- **Hybrid orchestration** - run native processes alongside Docker containers in one config
-- **Branch-aware** - current git branch = your environment. Switch branches, switch environments
-- **Port isolation** - automatic port allocation per environment. No conflicts
-- **Built-in databases** - native Postgres (PGlite) and Redis, no Docker needed (v0.1.1)
-- **Clean URLs** - `api-main.localhost:8080` instead of `localhost:3847` (v0.1.1)
-- **`.env` support** - load environment variables with per-env overrides
+- **Hybrid orchestration** — native processes alongside Docker containers in one config
+- **Shared Postgres** — one Docker instance with pgvector + pg_cron + postgis, reused across all your projects. Each environment gets its own database.
+- **Shared Redis** — same pattern. Per-env DB index isolation.
+- **Branch-aware** — current git branch = your environment. Switch branches, switch environments.
+- **Port isolation** — automatic, no conflicts. Supports multiple projects simultaneously.
+- **Clean URLs** — `api-main.localhost:1355` via built-in reverse proxy
+- **Framework-aware** — auto-injects `--port` for vite, next.js, astro, nuxt
+- **portless compatible** — injects `PORTLESS=0` to disable portless cleanly when embedded in dev scripts
+- **Daemon architecture** — background process manages everything. CLI is a thin HTTP client. Same API for future cloud mode.
 
 ## Install
 
 ```bash
-npm i -g @spawntree/cli
+npm i -g spawntree
 ```
-
-Or download a binary from [GitHub Releases](https://github.com/spawntree/spawntree/releases).
 
 ## Quick start
 
 ```bash
-# Generate a config from your existing setup
-spawntree init --from-compose   # from docker-compose.yml
-spawntree init --from-package   # from package.json scripts
-spawntree init                  # blank template
-
-# Start your environment
-spawntree up
-
-# In another terminal
-spawntree status
-spawntree logs api
+spawntree init                  # generate config
+spawntree up                    # start everything
 ```
 
 ## Config
 
-Create a `spawntree.yaml` in your project root:
-
 ```yaml
+# spawntree.yaml
 services:
+  db:
+    type: postgres              # shared Docker PG with pgvector+pg_cron+postgis
+    fork_from: ${PROD_DB_URL}   # optional: seed from production
+
+  cache:
+    type: redis                 # shared Docker Redis, per-env isolation
+
   api:
     type: process
     command: node src/server.js
     port: 3000
+    depends_on: [db, cache]
     healthcheck:
       url: http://localhost:${PORT}/health
-      timeout: 30
 
   worker:
     type: process
     command: python src/worker.py
-    depends_on:
-      - api
+    depends_on: [api]
+    environment:
+      API_URL: ${API_URL}       # auto-injected by spawntree
+
+  mailpit:
+    type: container             # arbitrary Docker containers
+    image: axllent/mailpit
+    port: 8025
 ```
 
-### Service types
+## Service types
 
-| Type | Description | Status |
-|------|-------------|--------|
-| `process` | Native process via `child_process.spawn` | v0.1.0 |
-| `postgres` | Built-in Postgres via PGlite | v0.1.1 |
-| `redis` | Built-in Redis via redjs | v0.1.1 |
-| `container` | Docker container via dockerode | v0.1.1 |
+| Type | What it does |
+|------|-------------|
+| `process` | Native process via `child_process.spawn`. Framework-aware port injection. |
+| `postgres` | Shared Docker Postgres with extension superset. Per-env database. |
+| `redis` | Shared Docker Redis. Per-env DB index. |
+| `container` | Any Docker image. Port mapping, volumes, env injection. |
 
-### Environment variables
+## Auto-injected environment variables
 
-spawntree auto-injects these env vars for each service:
+| Variable | Source |
+|----------|--------|
+| `PORT` | Allocated physical port |
+| `HOST` | Always `127.0.0.1` |
+| `DATABASE_URL` | From shared Postgres (or external if provided) |
+| `REDIS_URL` | From shared Redis (or external if provided) |
+| `<SERVICE>_URL` | Proxy URL for each service (`http://api-main.localhost:1355`) |
+| `<SERVICE>_HOST` | `127.0.0.1` |
+| `<SERVICE>_PORT` | Allocated port |
+| `PORTLESS` | Set to `0` (disables portless) |
 
-- `PORT` - allocated physical port
-- `ENV_NAME` - environment name (branch name)
-- `STATE_DIR` - persistent state directory
-- `<SERVICE>_HOST`, `<SERVICE>_PORT`, `<SERVICE>_URL` - service discovery
-- `DATABASE_URL` - for postgres services
-- `REDIS_URL` - for redis services
-
-### `.env` files
-
-spawntree loads `.env` files automatically:
-
-1. `.env` - base defaults
-2. `.env.local` - local overrides (gitignored)
-3. `.env.<env-name>` - per-environment overrides
-4. `--env KEY=VALUE` - CLI overrides
-5. Shell environment variables
-
-Use `${VAR_NAME}` in `spawntree.yaml` to reference env vars.
-
-## Commands
-
-```
-spawntree up [--prefix <name>]     Start the environment (foreground)
-spawntree down [env-name]          Stop the environment
-spawntree status [--all]           Show environment status
-spawntree logs [service]           Tail service logs
-spawntree rm <env-name>            Remove environment (full teardown)
-spawntree init                     Generate spawntree.yaml
-```
-
-## Multiple environments
-
-By default, spawntree runs one environment per branch. Use `--prefix` for additional environments:
+## Multiple projects simultaneously
 
 ```bash
-spawntree up                    # env: main
-spawntree up --prefix agent-1   # env: main-agent-1
-spawntree up --prefix agent-2   # env: main-agent-2
+cd ~/repos/project-a && spawntree up &
+cd ~/repos/project-b && spawntree up &
+cd ~/repos/project-c && spawntree up &
+# All running, separate ports, shared Postgres/Redis, one daemon
+```
+
+## Infrastructure management
+
+```bash
+spawntree infra status     # see shared Postgres + Redis containers
+spawntree infra stop       # stop shared infrastructure
+spawntree db dump mydata   # snapshot current database
+spawntree db restore mydata
 ```
 
 ## Requirements
 
 - Node.js >= 20
-- Git (for worktree isolation)
-- Docker (only for `type: container` services)
+- Git
+- Docker (for postgres, redis, container services)
+
+## Documentation
+
+- [Getting Started](./docs/getting-started.md)
+- [Configuration](./docs/configuration.md)
+- [Environment Variables](./docs/environment-variables.md)
+- [CLI Reference](./docs/cli-reference.md)
+- [Examples](./examples/)
+- [Roadmap](./ROADMAP.md)
 
 ## License
 

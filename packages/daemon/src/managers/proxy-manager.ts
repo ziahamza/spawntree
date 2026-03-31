@@ -14,6 +14,10 @@ export class ProxyManager {
     return this.proxy.port;
   }
 
+  get isRunning(): boolean {
+    return this.started;
+  }
+
   async ensureRunning(): Promise<void> {
     if (this.started) return;
 

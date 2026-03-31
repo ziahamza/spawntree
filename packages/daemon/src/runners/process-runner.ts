@@ -198,16 +198,16 @@ export class ProcessRunner implements Service {
 function injectFrameworkFlags(command: string, port: string): string {
   const cmd = command.toLowerCase();
 
-  if (cmd.includes("vite") || cmd.includes("react-router")) {
+  if (/\bvite\b/.test(cmd) || /\breact-router\b/.test(cmd)) {
     return `${command} --port ${port} --host 127.0.0.1 --strictPort`;
   }
-  if (cmd.includes("next")) {
+  if (/\bnext\b/.test(cmd)) {
     return `${command} --port ${port} --hostname 127.0.0.1`;
   }
-  if (cmd.includes("astro") || cmd.includes("nuxt")) {
+  if (/\bastro\b/.test(cmd) || /\bnuxt\b/.test(cmd)) {
     return `${command} --port ${port} --host 127.0.0.1`;
   }
-  if (cmd.includes("expo") || cmd.includes("react-native")) {
+  if (/\bexpo\b/.test(cmd) || /\breact-native\b/.test(cmd)) {
     return `${command} --port ${port}`;
   }
   // Frameworks that respect PORT env var (express, fastify, hono, django, flask, rails):

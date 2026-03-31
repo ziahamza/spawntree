@@ -95,7 +95,7 @@ function convertFromCompose(composePath: string): string {
       }
     }
 
-    if (svc.depends_on) {
+    if (svc.depends_on && services[name]) {
       const deps = Array.isArray(svc.depends_on)
         ? svc.depends_on
         : Object.keys(svc.depends_on as Record<string, unknown>);

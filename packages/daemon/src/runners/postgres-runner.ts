@@ -187,9 +187,10 @@ export class PostgresRunner {
 
   async databaseExists(dbName: string): Promise<boolean> {
     const container = this.requireContainer();
+    const safeName = dbName.replace(/'/g, "''");
     const out = await execInContainer(container, [
       "psql", "-U", "postgres", "-tAc",
-      `SELECT 1 FROM pg_database WHERE datname='${dbName}'`,
+      `SELECT 1 FROM pg_database WHERE datname='${safeName}'`,
     ]);
     return out.trim() === "1";
   }
@@ -202,9 +203,10 @@ export class PostgresRunner {
     }
     console.log(`[spawntree-daemon] [postgres:${this.version}] Creating database "${dbName}"...`);
     const container = this.requireContainer();
+    const safeName = dbName.replace(/'/g, "''");
     await execInContainer(container, [
       "psql", "-U", "postgres", "-c",
-      `CREATE DATABASE "${dbName}"`,
+      `CREATE DATABASE "${safeName}"`,
     ]);
   }
 
@@ -213,9 +215,10 @@ export class PostgresRunner {
     if (!exists) return;
     console.log(`[spawntree-daemon] [postgres:${this.version}] Dropping database "${dbName}"...`);
     const container = this.requireContainer();
+    const safeName = dbName.replace(/'/g, "''");
     await execInContainer(container, [
       "psql", "-U", "postgres", "-c",
-      `DROP DATABASE "${dbName}"`,
+      `DROP DATABASE "${safeName}"`,
     ]);
   }
 
