@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -65,8 +66,10 @@ func (w *WorktreeManager) Create(envName string) (string, error) {
 
 func (w *WorktreeManager) Remove(envName string) error {
 	path := filepath.Join(w.RepoRoot, ".spawntree", "envs", envName)
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return nil
+	} else if err != nil {
+		return err
 	}
 	cmd := exec.Command("git", "worktree", "remove", path, "--force")
 	cmd.Dir = w.RepoRoot
@@ -76,7 +79,7 @@ func (w *WorktreeManager) Remove(envName string) error {
 		prune.Dir = w.RepoRoot
 		_, _ = prune.CombinedOutput()
 		if len(output) > 0 {
-			return fmt.Errorf("%s", strings.TrimSpace(string(output)))
+			return errors.New(strings.TrimSpace(string(output)))
 		}
 	}
 	return nil
@@ -87,7 +90,7 @@ func gitOutput(dir string, args ...string) (string, error) {
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf(strings.TrimSpace(string(output)))
+		return "", errors.New(strings.TrimSpace(string(output)))
 	}
 	return strings.TrimSpace(string(output)), nil
 }

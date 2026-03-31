@@ -8,15 +8,16 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 )
 
 type ProxyServer struct {
-	port    int
-	mu      sync.RWMutex
-	routes  map[string]int
-	server  *http.Server
+	port     int
+	mu       sync.RWMutex
+	routes   map[string]int
+	server   *http.Server
 	listener net.Listener
-	started bool
+	started  bool
 }
 
 func NewProxyServer(port int) *ProxyServer {
@@ -53,8 +54,9 @@ func (p *ProxyServer) Start() error {
 	}
 
 	p.server = &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", p.port),
-		Handler: http.HandlerFunc(p.handle),
+		Addr:              fmt.Sprintf("127.0.0.1:%d", p.port),
+		Handler:           http.HandlerFunc(p.handle),
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 	p.listener = listener
 	server := p.server

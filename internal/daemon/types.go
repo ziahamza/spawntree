@@ -48,7 +48,7 @@ type EnvInfo struct {
 	Services  []ServiceInfo `json:"services" yaml:"services"`
 }
 
-type DaemonInfo struct {
+type RuntimeInfo struct {
 	Version    string `json:"version" yaml:"version"`
 	PID        int    `json:"pid" yaml:"pid"`
 	Uptime     int64  `json:"uptime" yaml:"uptime"`
@@ -168,7 +168,7 @@ type ProxySettings struct {
 	Port int `json:"port,omitempty" yaml:"port,omitempty"`
 }
 
-type DaemonConfig struct {
+type RuntimeConfig struct {
 	HTTP  HTTPListenerConfig `json:"http,omitempty" yaml:"http,omitempty"`
 	Proxy ProxySettings      `json:"proxy,omitempty" yaml:"proxy,omitempty"`
 }
@@ -203,7 +203,7 @@ type TunnelStatusInfo struct {
 }
 
 type GlobalConfig struct {
-	Daemon  DaemonConfig                `json:"daemon,omitempty" yaml:"daemon,omitempty"`
+	Daemon  RuntimeConfig               `json:"daemon,omitempty" yaml:"daemon,omitempty"`
 	Repos   map[string]RegisteredRepo   `json:"repos,omitempty" yaml:"repos,omitempty"`
 	Tunnels map[string]TunnelDefinition `json:"tunnels,omitempty" yaml:"tunnels,omitempty"`
 }

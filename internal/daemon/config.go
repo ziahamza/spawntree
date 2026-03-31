@@ -260,9 +260,9 @@ func ResolveServiceConfig(service ServiceConfig, envVars map[string]string) Serv
 		resolved.ForkFrom = substituteVars(resolved.ForkFrom, envVars, nil)
 	}
 	if resolved.Healthcheck != nil && resolved.Healthcheck.URL != "" {
-		copy := *resolved.Healthcheck
-		copy.URL = substituteVars(copy.URL, envVars, nil)
-		resolved.Healthcheck = &copy
+		healthcheck := *resolved.Healthcheck
+		healthcheck.URL = substituteVars(healthcheck.URL, envVars, nil)
+		resolved.Healthcheck = &healthcheck
 	}
 	if len(resolved.Environment) > 0 {
 		env := map[string]string{}

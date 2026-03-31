@@ -10,9 +10,9 @@
     "bin"
   ],
   "scripts": {
-    "build": "node ./scripts/build-native.mjs && tsc -p tsconfig.json",
+    "build": "EXT=''; if [ \"$(go env GOOS)\" = 'windows' ]; then EXT='.exe'; fi; mkdir -p bin && go build -o \"bin/spawntreed-$(go env GOOS)-$(go env GOARCH)$EXT\" ../../cmd/spawntreed && tsc -p tsconfig.json",
     "test": "vitest run",
-    "dev": "node ./scripts/build-native.mjs"
+    "dev": "EXT=''; if [ \"$(go env GOOS)\" = 'windows' ]; then EXT='.exe'; fi; mkdir -p bin && go build -o \"bin/spawntreed-$(go env GOOS)-$(go env GOARCH)$EXT\" ../../cmd/spawntreed"
   },
   "dependencies": {},
   "license": "MIT",

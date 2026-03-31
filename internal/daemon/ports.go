@@ -13,7 +13,7 @@ const (
 )
 
 type PortRegistry struct {
-	mu    sync.Mutex
+	mu    sync.RWMutex
 	slots []PortSlot
 }
 
@@ -78,8 +78,8 @@ func (p *PortRegistry) GetPhysicalPort(basePort, serviceIndex int) (int, error) 
 }
 
 func (p *PortRegistry) GetBasePort(envKey string) *int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	for _, slot := range p.slots {
 		if slot.EnvKey == envKey {
 			value := slot.BasePort
@@ -90,8 +90,8 @@ func (p *PortRegistry) GetBasePort(envKey string) *int {
 }
 
 func (p *PortRegistry) List() []PortSlot {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	out := make([]PortSlot, len(p.slots))
 	copy(out, p.slots)
 	return out

@@ -79,7 +79,7 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleDaemonInfo(w http.ResponseWriter) {
-	writeJSON(w, http.StatusOK, DaemonInfo{
+	writeJSON(w, http.StatusOK, RuntimeInfo{
 		Version:    a.version,
 		PID:        os.Getpid(),
 		Uptime:     int64(time.Since(a.startedAt).Seconds()),

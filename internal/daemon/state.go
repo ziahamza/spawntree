@@ -5,12 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"gopkg.in/yaml.v3"
 )
-
-var globalConfigMu sync.Mutex
 
 func SpawntreeHome() string {
 	home, err := os.UserHomeDir()
@@ -74,15 +71,13 @@ func EnsureRepoDirs(repoID, envID string) error {
 }
 
 func LoadGlobalConfig() (GlobalConfig, error) {
-	globalConfigMu.Lock()
-	defer globalConfigMu.Unlock()
-
 	if err := EnsureBaseDirs(); err != nil {
 		return GlobalConfig{}, err
 	}
 
-	file := GlobalConfigPath()
-	content, err := os.ReadFile(file)
+	cfg, err := readStructuredFile(GlobalConfigPath(), func(data []byte, target *GlobalConfig) error {
+		return yaml.Unmarshal(data, target)
+	})
 	if errors.Is(err, os.ErrNotExist) {
 		return GlobalConfig{
 			Repos:   map[string]RegisteredRepo{},
@@ -90,11 +85,6 @@ func LoadGlobalConfig() (GlobalConfig, error) {
 		}, nil
 	}
 	if err != nil {
-		return GlobalConfig{}, err
-	}
-
-	var cfg GlobalConfig
-	if err := yaml.Unmarshal(content, &cfg); err != nil {
 		return GlobalConfig{}, err
 	}
 	if cfg.Repos == nil {
@@ -107,9 +97,6 @@ func LoadGlobalConfig() (GlobalConfig, error) {
 }
 
 func SaveGlobalConfig(cfg GlobalConfig) error {
-	globalConfigMu.Lock()
-	defer globalConfigMu.Unlock()
-
 	if err := EnsureBaseDirs(); err != nil {
 		return err
 	}
@@ -119,45 +106,34 @@ func SaveGlobalConfig(cfg GlobalConfig) error {
 	if cfg.Tunnels == nil {
 		cfg.Tunnels = map[string]TunnelDefinition{}
 	}
-	out, err := yaml.Marshal(cfg)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(GlobalConfigPath(), out, 0o644)
+	return writeStructuredFile(GlobalConfigPath(), cfg, func(value GlobalConfig) ([]byte, error) {
+		return yaml.Marshal(value)
+	})
 }
 
 func LoadRuntimeMetadata() (RuntimeMetadata, error) {
-	var meta RuntimeMetadata
-	content, err := os.ReadFile(RuntimeMetadataPath())
-	if err != nil {
-		return meta, err
-	}
-	err = json.Unmarshal(content, &meta)
-	return meta, err
+	return readStructuredFile(RuntimeMetadataPath(), func(data []byte, target *RuntimeMetadata) error {
+		return json.Unmarshal(data, target)
+	})
 }
 
 func SaveRuntimeMetadata(meta RuntimeMetadata) error {
 	if err := EnsureBaseDirs(); err != nil {
 		return err
 	}
-	out, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return err
-	}
-	out = append(out, '\n')
-	return os.WriteFile(RuntimeMetadataPath(), out, 0o644)
+	return writeStructuredFile(RuntimeMetadataPath(), meta, func(value RuntimeMetadata) ([]byte, error) {
+		return json.MarshalIndent(value, "", "  ")
+	})
 }
 
 func LoadPortRegistry() (PortRegistryState, error) {
-	var state PortRegistryState
-	content, err := os.ReadFile(PortRegistryPath())
+	state, err := readStructuredFile(PortRegistryPath(), func(data []byte, target *PortRegistryState) error {
+		return json.Unmarshal(data, target)
+	})
 	if errors.Is(err, os.ErrNotExist) {
 		return PortRegistryState{Slots: []PortSlot{}}, nil
 	}
 	if err != nil {
-		return state, err
-	}
-	if err := json.Unmarshal(content, &state); err != nil {
 		return state, err
 	}
 	if state.Slots == nil {
@@ -170,32 +146,45 @@ func SavePortRegistry(state PortRegistryState) error {
 	if err := EnsureBaseDirs(); err != nil {
 		return err
 	}
-	out, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return err
-	}
-	out = append(out, '\n')
-	return os.WriteFile(PortRegistryPath(), out, 0o644)
+	return writeStructuredFile(PortRegistryPath(), state, func(value PortRegistryState) ([]byte, error) {
+		return json.MarshalIndent(value, "", "  ")
+	})
 }
 
 func LoadRepoState(repoID string) (RepoState, error) {
-	var state RepoState
-	content, err := os.ReadFile(RepoStatePath(repoID))
-	if err != nil {
-		return state, err
-	}
-	err = json.Unmarshal(content, &state)
-	return state, err
+	return readStructuredFile(RepoStatePath(repoID), func(data []byte, target *RepoState) error {
+		return json.Unmarshal(data, target)
+	})
 }
 
 func SaveRepoState(repoID string, state RepoState) error {
 	if err := os.MkdirAll(RepoDir(repoID), 0o755); err != nil {
 		return err
 	}
-	out, err := json.MarshalIndent(state, "", "  ")
+	return writeStructuredFile(RepoStatePath(repoID), state, func(value RepoState) ([]byte, error) {
+		return json.MarshalIndent(value, "", "  ")
+	})
+}
+
+func readStructuredFile[T any](path string, unmarshal func([]byte, *T) error) (T, error) {
+	var value T
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return value, err
+	}
+	if err := unmarshal(content, &value); err != nil {
+		return value, err
+	}
+	return value, nil
+}
+
+func writeStructuredFile[T any](path string, value T, marshal func(T) ([]byte, error)) error {
+	out, err := marshal(value)
 	if err != nil {
 		return err
 	}
-	out = append(out, '\n')
-	return os.WriteFile(RepoStatePath(repoID), out, 0o644)
+	if len(out) == 0 || out[len(out)-1] != '\n' {
+		out = append(out, '\n')
+	}
+	return os.WriteFile(path, out, 0o600)
 }

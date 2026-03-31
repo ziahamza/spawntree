@@ -6,7 +6,7 @@ import (
 )
 
 type RegistryManager struct {
-	mu           sync.Mutex
+	mu           sync.RWMutex
 	config       GlobalConfig
 	tunnelStatus map[string]TunnelStatusInfo
 }
@@ -29,14 +29,14 @@ func NewRegistryManager() (*RegistryManager, error) {
 }
 
 func (r *RegistryManager) RepoCount() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return len(r.config.Repos)
 }
 
-func (r *RegistryManager) DaemonConfig() DaemonConfig {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func (r *RegistryManager) DaemonConfig() RuntimeConfig {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.config.Daemon
 }
 
@@ -58,37 +58,21 @@ func (r *RegistryManager) RegisterRepo(repoPath, configPath string) (RegisteredR
 }
 
 func (r *RegistryManager) ListRepos() []RegisteredRepo {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	result := make([]RegisteredRepo, 0, len(r.config.Repos))
-	for _, repo := range r.config.Repos {
-		result = append(result, repo)
-	}
-	sortRepos(result)
-	return result
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return sortedMapValues(r.config.Repos)
 }
 
 func (r *RegistryManager) ListTunnels() []TunnelDefinition {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	result := make([]TunnelDefinition, 0, len(r.config.Tunnels))
-	for _, tunnel := range r.config.Tunnels {
-		result = append(result, tunnel)
-	}
-	sortTunnels(result)
-	return result
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return sortedMapValues(r.config.Tunnels)
 }
 
 func (r *RegistryManager) UpsertTunnel(req UpsertTunnelRequest) (TunnelDefinition, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	tunnel := TunnelDefinition{
-		ID:       req.ID,
-		Provider: req.Provider,
-		Target:   req.Target,
-		Enabled:  req.Enabled,
-		Config:   req.Config,
-	}
+	tunnel := TunnelDefinition(req)
 	if tunnel.ID == "" {
 		tunnel.ID = sanitizeID(req.Provider + "-" + req.Target.RepoID + "-" + req.Target.EnvID + "-" + req.Target.ServiceName)
 	}
@@ -106,42 +90,7 @@ func (r *RegistryManager) UpsertTunnel(req UpsertTunnelRequest) (TunnelDefinitio
 }
 
 func (r *RegistryManager) ListTunnelStatuses() []TunnelStatusInfo {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	result := make([]TunnelStatusInfo, 0, len(r.tunnelStatus))
-	for _, status := range r.tunnelStatus {
-		result = append(result, status)
-	}
-	sortTunnelStatuses(result)
-	return result
-}
-
-func sortRepos(repos []RegisteredRepo) {
-	for i := 0; i < len(repos); i++ {
-		for j := i + 1; j < len(repos); j++ {
-			if repos[j].RepoID < repos[i].RepoID {
-				repos[i], repos[j] = repos[j], repos[i]
-			}
-		}
-	}
-}
-
-func sortTunnels(tunnels []TunnelDefinition) {
-	for i := 0; i < len(tunnels); i++ {
-		for j := i + 1; j < len(tunnels); j++ {
-			if tunnels[j].ID < tunnels[i].ID {
-				tunnels[i], tunnels[j] = tunnels[j], tunnels[i]
-			}
-		}
-	}
-}
-
-func sortTunnelStatuses(statuses []TunnelStatusInfo) {
-	for i := 0; i < len(statuses); i++ {
-		for j := i + 1; j < len(statuses); j++ {
-			if statuses[j].ID < statuses[i].ID {
-				statuses[i], statuses[j] = statuses[j], statuses[i]
-			}
-		}
-	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return sortedMapValues(r.tunnelStatus)
 }

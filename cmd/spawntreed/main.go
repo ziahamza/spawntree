@@ -16,22 +16,26 @@ import (
 const daemonVersion = "0.2.0"
 
 func main() {
-	if err := daemon.EnsureBaseDirs(); err != nil {
+	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "spawntreed: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+func run() error {
+	if err := daemon.EnsureBaseDirs(); err != nil {
+		return err
 	}
 
 	portRegistry, err := daemon.NewPortRegistry()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "spawntreed: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	logStreamer := daemon.NewLogStreamer()
 	infraManager := daemon.NewInfraManager()
 	registryManager, err := daemon.NewRegistryManager()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "spawntreed: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	proxyPort := registryManager.DaemonConfig().Proxy.Port
@@ -42,8 +46,7 @@ func main() {
 	_ = os.Remove(daemon.SocketPath())
 	unixListener, err := net.Listen("unix", daemon.SocketPath())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "spawntreed: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	defer os.Remove(daemon.SocketPath())
 
@@ -55,12 +58,11 @@ func main() {
 		httpListener, err = net.Listen("tcp", "127.0.0.1:0")
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "spawntreed: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
-	unixServer := &http.Server{Handler: app}
-	httpServer := &http.Server{Handler: app}
+	unixServer := &http.Server{Handler: app, ReadHeaderTimeout: 5 * time.Second}
+	httpServer := &http.Server{Handler: app, ReadHeaderTimeout: 5 * time.Second}
 
 	meta := daemon.RuntimeMetadata{
 		PID:        os.Getpid(),
@@ -69,8 +71,7 @@ func main() {
 		HTTPPort:   httpListener.Addr().(*net.TCPAddr).Port,
 	}
 	if err := daemon.SaveRuntimeMetadata(meta); err != nil {
-		fmt.Fprintf(os.Stderr, "spawntreed: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	go func() {
@@ -92,4 +93,5 @@ func main() {
 	_ = proxy.Stop()
 	_ = unixServer.Shutdown(shutdownCtx)
 	_ = httpServer.Shutdown(shutdownCtx)
+	return nil
 }

@@ -290,6 +290,7 @@ func (c *ContainerRunner) Healthcheck(ctx context.Context) bool {
 }
 
 func (c *ContainerRunner) attachLogs() {
+	// #nosec G204 -- command shape is fixed and arguments are passed directly without shell interpolation.
 	cmd := exec.Command("docker", "logs", "-f", c.containerName)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -403,6 +404,7 @@ func (e *ExternalRunner) Start(context.Context) error {
 			}
 			proxy.ServeHTTP(w, r)
 		}),
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 	server := e.server
 	e.status = ServiceStatusRunning

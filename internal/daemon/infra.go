@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,8 +22,10 @@ const (
 )
 
 func postgresPort(version string) int {
-	major := 17
-	fmt.Sscanf(version, "%d", &major)
+	major, err := strconv.Atoi(version)
+	if err != nil {
+		return postgresBasePort + 3
+	}
 	return postgresBasePort + (major - 14)
 }
 
@@ -169,6 +172,7 @@ func (p *PostgresRunner) ListDatabases() ([]string, error) {
 
 func (p *PostgresRunner) ForkFrom(ctx context.Context, dbName, sourceURL string) error {
 	dump := exec.CommandContext(ctx, "pg_dump", "--format=custom", "--no-owner", "--no-acl", sourceURL)
+	// #nosec G204 -- command shape is fixed and arguments are passed directly without shell interpolation.
 	restore := exec.CommandContext(ctx, "docker", "exec", "-i", p.containerRef(), "pg_restore", "-U", "postgres", "-d", dbName, "--no-owner", "--no-acl", "-v")
 	dumpStdout, err := dump.StdoutPipe()
 	if err != nil {
@@ -194,6 +198,7 @@ func (p *PostgresRunner) DumpToTemplate(ctx context.Context, dbName, templateNam
 		return err
 	}
 	defer file.Close()
+	// #nosec G204 -- command shape is fixed and arguments are passed directly without shell interpolation.
 	cmd := exec.CommandContext(ctx, "docker", "exec", p.containerRef(), "pg_dump", "-U", "postgres", "--format=custom", "--no-owner", "--no-acl", dbName)
 	cmd.Stdout = file
 	cmd.Stderr = os.Stderr
@@ -210,6 +215,7 @@ func (p *PostgresRunner) RestoreFromTemplate(ctx context.Context, dbName, templa
 	if err := p.CreateDatabase(dbName); err != nil {
 		return err
 	}
+	// #nosec G204 -- command shape is fixed and arguments are passed directly without shell interpolation.
 	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", p.containerRef(), "pg_restore", "-U", "postgres", "-d", dbName, "--no-owner", "--no-acl")
 	cmd.Stdin = file
 	cmd.Stdout = io.Discard
@@ -257,7 +263,7 @@ func (p *PostgresRunner) buildImage(ctx context.Context, tag string) error {
 		fmt.Sprintf("FROM postgres:%s", p.Version),
 		fmt.Sprintf("RUN apt-get update && apt-get install -y --no-install-recommends postgresql-%s-pgvector postgresql-%s-cron postgresql-%s-postgis-3 && rm -rf /var/lib/apt/lists/*", p.Version, p.Version, p.Version),
 	}, "\n") + "\n"
-	if err := os.WriteFile(dockerfilePath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(dockerfilePath, []byte(content), 0o600); err != nil {
 		return err
 	}
 	cmd := exec.CommandContext(ctx, "docker", "build", "-t", tag, "-f", dockerfilePath, dir)
@@ -504,7 +510,7 @@ func (m *InfraManager) StopAll(ctx context.Context) error {
 	return m.StopRedis(ctx)
 }
 
-func (m *InfraManager) GetStatus(ctx context.Context) (InfraStatusResponse, error) {
+func (m *InfraManager) GetStatus(_ context.Context) (InfraStatusResponse, error) {
 	m.mu.Lock()
 	pgRunners := make([]*PostgresRunner, 0, len(m.postgres))
 	for _, runner := range m.postgres {

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -98,7 +99,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 		for _, item := range errs {
 			lines = append(lines, fmt.Sprintf("  %s: %s", item.Path, item.Message))
 		}
-		return EnvInfo{}, fmt.Errorf(strings.Join(lines, "\n"))
+		return EnvInfo{}, errors.New(strings.Join(lines, "\n"))
 	}
 
 	basePort, err := m.portRegistry.Allocate(envKey)
