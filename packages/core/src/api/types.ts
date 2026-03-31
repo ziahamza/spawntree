@@ -1,6 +1,6 @@
 // Service types
 export type ServiceStatus = "starting" | "running" | "failed" | "stopped";
-export type ServiceType = "process" | "container" | "postgres" | "redis";
+export type ServiceType = "process" | "container" | "postgres" | "redis" | "external";
 export type InfraStatus = "running" | "stopped" | "starting" | "error";
 
 export interface ServiceInfo {

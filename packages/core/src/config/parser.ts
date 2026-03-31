@@ -2,10 +2,11 @@ import { parse as parseYaml } from "yaml";
 import { substituteVars } from "./substitution.js";
 
 export interface ServiceConfig {
-  type: "process" | "container" | "postgres" | "redis";
+  type: "process" | "container" | "postgres" | "redis" | "external";
   command?: string;
   port?: number;
   image?: string;
+  url?: string; // external: the upstream URL to proxy to
   toolchain?: Record<string, string>;
   healthcheck?: {
     url: string;

@@ -17,6 +17,7 @@ import type {
   CreateEnvRequest,
 } from "spawntree-core";
 import { ProcessRunner } from "../runners/process-runner.js";
+import { ExternalRunner } from "../runners/external-runner.js";
 import { PortRegistry } from "./port-registry.js";
 import { LogStreamer } from "./log-streamer.js";
 import { InfraManager } from "./infra-manager.js";
@@ -281,10 +282,17 @@ export class EnvManager {
     for (const name of serviceOrder) {
       const serviceConfig = config.services[name];
 
-      // Infra services (postgres, redis) are managed by InfraManager, not ProcessRunner
+      // Infra services are managed by InfraManager, not by process/external runners
       if (serviceConfig.type === "postgres" || serviceConfig.type === "redis") {
         console.log(`[spawntree-daemon]   ${name} (${serviceConfig.type}) managed by infra layer — skipping process start`);
         continue;
+      }
+
+      // External services: resolve url substitution
+      let resolvedServiceConfig = serviceConfig;
+      if (serviceConfig.type === "external" && serviceConfig.url) {
+        const resolvedUrl = substituteVars(serviceConfig.url, { ...envVars, ...infraEnvVars });
+        resolvedServiceConfig = { ...serviceConfig, url: resolvedUrl };
       }
 
       const serviceIndex = serviceNames.indexOf(name);
@@ -602,14 +610,19 @@ export class EnvManager {
           envId,
           logStreamer: this.logStreamer,
         });
+      case "external":
+        return new ExternalRunner({
+          name,
+          config,
+          allocatedPort: parseInt(envVars.PORT || "0", 10),
+        });
       case "container":
         throw new Error(
-          `Service type "container" is not yet supported. Use type: "process" for custom processes, ` +
+          `Service type "container" is not yet supported via daemon. Use type: "process" for custom processes, ` +
             `or type: "postgres" / "redis" for managed infra services.`,
         );
       case "postgres":
       case "redis":
-        // These are managed by InfraManager and should never reach createService()
         throw new Error(
           `Internal error: infra service "${config.type}" should not reach createService().`,
         );
@@ -665,16 +678,19 @@ export class EnvManager {
       const pid =
         service instanceof ProcessRunner ? service.pid : undefined;
 
-      // Use proxy URL for non-infra services
+      // Use proxy URL for non-infra, non-external services
       const isInfra = serviceConfig.type === "postgres" || serviceConfig.type === "redis";
+      const isExternal = serviceConfig.type === "external";
       const proxyUrl = (isInfra || !this.proxyManager.isRunning) ? undefined : `http://${name}-${managed.envId}.localhost:${this.proxyManager.proxyPort}`;
+      // External services show their upstream URL
+      const externalUrl = isExternal ? serviceConfig.url : undefined;
 
       const info: ServiceInfo = {
         name,
         type: serviceConfig.type,
         status,
         port,
-        url: proxyUrl || `http://127.0.0.1:${port}`,
+        url: externalUrl || proxyUrl || `http://127.0.0.1:${port}`,
       };
       if (pid !== undefined) info.pid = pid;
       return info;

@@ -28,7 +28,7 @@ export function validateConfig(
     errors.push({ path: "services", message: "At least one service is required" });
   }
 
-  const validTypes = new Set(["process", "container", "postgres", "redis"]);
+  const validTypes = new Set(["process", "container", "postgres", "redis", "external"]);
 
   for (const [name, svc] of Object.entries(services)) {
     if (svc === null || typeof svc !== "object") {
@@ -61,6 +61,13 @@ export function validateConfig(
       errors.push({
         path: `services.${name}.image`,
         message: "image is required for container services",
+      });
+    }
+
+    if (service.type === "external" && !service.url) {
+      errors.push({
+        path: `services.${name}.url`,
+        message: "url is required for external services",
       });
     }
 
