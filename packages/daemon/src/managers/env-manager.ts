@@ -492,8 +492,12 @@ export class EnvManager {
     const vars: Record<string, string> = {
       ...baseEnvVars,
       PORT: String(port),
+      HOST: "127.0.0.1",
       ENV_NAME: envId,
       STATE_DIR: `${worktreePath}/.spawntree/state/${envId}`,
+      // Disable portless if it's embedded in service dev scripts.
+      // spawntree owns port allocation and proxy — portless would conflict.
+      PORTLESS: "0",
     };
 
     // Inject service discovery env vars for process services.

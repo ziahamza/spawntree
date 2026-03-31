@@ -76,9 +76,6 @@ importers:
       hono:
         specifier: ^4.7.0
         version: 4.12.9
-      portless:
-        specifier: ^0.8.0
-        version: 0.8.0
       spawntree-core:
         specifier: workspace:*
         version: link:../core
@@ -1034,12 +1031,6 @@ packages:
   pify@4.0.1:
     resolution: {integrity: sha512-uB80kBFb/tfd68bVleG9T5GGsGPjJrLAUpR5PZIrhBnIaRTQRjqdJSsIKkOP6OAIFbj7GOrcudc5pNjZ+geV2g==}
     engines: {node: '>=6'}
-
-  portless@0.8.0:
-    resolution: {integrity: sha512-nCxqSnc5ynckes82+lXlDMzB9kkIz2C+oink6lz9TMCHneP5a9KZ0xOPj56wiFT8sc4j6zOsQPuXe2/HSL9v/A==}
-    engines: {node: '>=20'}
-    os: [darwin, linux, win32]
-    hasBin: true
 
   postcss@8.5.8:
     resolution: {integrity: sha512-OW/rX8O/jXnm82Ey1k44pObPtdblfiuWnrd8X7GJ7emImCOstunGbXUpp7HdBrFQX6rJzn3sPT397Wp5aCwCHg==}
@@ -2233,8 +2224,6 @@ snapshots:
   picomatch@4.0.4: {}
 
   pify@4.0.1: {}
-
-  portless@0.8.0: {}
 
   postcss@8.5.8:
     dependencies:
