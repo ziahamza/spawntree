@@ -1,5 +1,11 @@
 # spawntree-core
 
+## 0.2.1
+
+### Patch Changes
+
+- Fix workspace:\* dependencies not being resolved during npm publish.
+
 ## 0.2.0
 
 ### Minor Changes
