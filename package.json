@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm --filter spawntree-core run build && pnpm --filter spawntree-daemon run build && pnpm --filter spawntree run build",
+    "generate:api": "node ./scripts/generate-api.mjs",
+    "build": "pnpm run generate:api && pnpm --filter spawntree-core run build && pnpm --filter spawntree-daemon run build && pnpm --filter spawntree run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "oxlint .",
@@ -14,6 +15,7 @@
     "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
+    "@hey-api/openapi-ts": "^0.94.5",
     "@changesets/changelog-github": "^0.6.0",
     "@changesets/cli": "^2.30.0",
     "@types/node": "^25.5.0",

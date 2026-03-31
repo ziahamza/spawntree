@@ -1,72 +1,120 @@
-import type {
-  DaemonInfo,
-  CreateEnvRequest,
-  CreateEnvResponse,
-  GetEnvResponse,
-  ListEnvsResponse,
-  DeleteEnvResponse,
-  DownEnvResponse,
-  LogLine,
-  GetInfraStatusResponse,
-  StopInfraRequest,
-  StopInfraResponse,
-  ListDbTemplatesResponse,
-  DumpDbRequest,
-  DumpDbResponse,
-  RestoreDbRequest,
-  RestoreDbResponse,
-  ApiError,
-} from "./types.js";
+import { createClient as createGeneratedClient } from "../generated/client/index.js";
+import {
+  createEnv,
+  deleteEnv,
+  downEnv,
+  dumpDb,
+  getDaemonInfo,
+  getEnv,
+  getInfraStatus,
+  listDbTemplates,
+  listEnvs,
+  listRegisteredRepos,
+  listRepoEnvs,
+  listTunnelStatuses,
+  listTunnels,
+  registerRepo,
+  restoreDb,
+  stopInfra,
+  upsertTunnel,
+  type ApiError,
+  type ClientOptions,
+  type CreateEnvRequest,
+  type CreateEnvResponse,
+  type DaemonInfo,
+  type DeleteEnvResponse,
+  type DownEnvResponse,
+  type DumpDbRequest,
+  type DumpDbResponse,
+  type EnvInfo,
+  type GetEnvResponse,
+  type InfraStatusResponse,
+  type ListDbTemplatesResponse,
+  type ListEnvsResponse,
+  type ListRegisteredReposResponse,
+  type ListTunnelStatusesResponse,
+  type ListTunnelsResponse,
+  type LogLine,
+  type RegisterRepoRequest,
+  type RegisterRepoResponse,
+  type RestoreDbRequest,
+  type RestoreDbResponse,
+  type StopInfraRequest,
+  type StopInfraResponse,
+  type UpsertTunnelRequest,
+  type UpsertTunnelResponse,
+} from "../generated/index.js";
+
+type GeneratedClient = ReturnType<typeof createGeneratedClient>;
 
 export class ApiClient {
+  private readonly client: GeneratedClient;
+
   constructor(
     private readonly fetchFn: typeof fetch,
     private readonly baseUrl: string,
-  ) {}
-
-  // -------------------------------------------------------------------------
-  // Daemon
-  // -------------------------------------------------------------------------
-
-  async getDaemonInfo(): Promise<DaemonInfo> {
-    return this.get<DaemonInfo>("/api/v1/daemon");
+  ) {
+    this.client = createGeneratedClient({
+      baseUrl,
+      fetch: fetchFn,
+      throwOnError: false,
+      responseStyle: "fields",
+    } satisfies ClientOptions & {
+      fetch: typeof fetch;
+      responseStyle: "fields";
+      throwOnError: false;
+    });
   }
 
-  // -------------------------------------------------------------------------
-  // Environments
-  // -------------------------------------------------------------------------
+  async getDaemonInfo(): Promise<DaemonInfo> {
+    return this.unwrap(getDaemonInfo({ client: this.client }));
+  }
 
   async createEnv(req: CreateEnvRequest): Promise<CreateEnvResponse> {
-    return this.post<CreateEnvResponse>("/api/v1/envs", req);
+    return this.unwrap(createEnv({ client: this.client, body: req }));
   }
 
   async getEnv(repoId: string, envId: string): Promise<GetEnvResponse> {
-    return this.get<GetEnvResponse>(`/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}`);
+    return this.unwrap(getEnv({ client: this.client, path: { repoId, envId } }));
   }
 
   async listEnvs(repoId?: string): Promise<ListEnvsResponse> {
-    const path = repoId
-      ? `/api/v1/repos/${encodeURIComponent(repoId)}/envs`
-      : "/api/v1/envs";
-    return this.get<ListEnvsResponse>(path);
+    if (repoId) {
+      const response = await this.unwrap<{ envs: EnvInfo[] }>(
+        listRepoEnvs({ client: this.client, path: { repoId } }),
+      );
+      return { envs: response.envs };
+    }
+    return this.unwrap(listEnvs({ client: this.client }));
   }
 
   async deleteEnv(repoId: string, envId: string): Promise<DeleteEnvResponse> {
-    return this.delete<DeleteEnvResponse>(
-      `/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}`,
-    );
+    return this.unwrap(deleteEnv({ client: this.client, path: { repoId, envId } }));
   }
 
   async downEnv(repoId: string, envId: string): Promise<DownEnvResponse> {
-    return this.post<DownEnvResponse>(
-      `/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}/down`,
-      {},
-    );
+    return this.unwrap(downEnv({ client: this.client, path: { repoId, envId } }));
   }
 
-  // -------------------------------------------------------------------------
-  // Log streaming (SSE)
-  // -------------------------------------------------------------------------
+  async registerRepo(req: RegisterRepoRequest): Promise<RegisterRepoResponse> {
+    return this.unwrap(registerRepo({ client: this.client, body: req }));
+  }
+
+  async listRegisteredRepos(): Promise<ListRegisteredReposResponse> {
+    return this.unwrap(listRegisteredRepos({ client: this.client }));
+  }
+
+  async listTunnels(): Promise<ListTunnelsResponse> {
+    return this.unwrap(listTunnels({ client: this.client }));
+  }
+
+  async upsertTunnel(req: UpsertTunnelRequest): Promise<UpsertTunnelResponse> {
+    return this.unwrap(upsertTunnel({ client: this.client, body: req }));
+  }
+
+  async listTunnelStatuses(): Promise<ListTunnelStatusesResponse> {
+    return this.unwrap(listTunnelStatuses({ client: this.client }));
+  }
 
   async *streamLogs(
     repoId: string,
@@ -78,10 +126,8 @@ export class ApiClient {
       this.baseUrl,
     );
 
-    if (services && services.length > 0) {
-      for (const svc of services) {
-        url.searchParams.append("service", svc);
-      }
+    if (services && services[0]) {
+      url.searchParams.set("service", services[0]);
     }
 
     const response = await this.fetchFn(url.toString(), {
@@ -97,102 +143,52 @@ export class ApiClient {
     yield* parseSSE(response.body);
   }
 
-  // -------------------------------------------------------------------------
-  // Infrastructure
-  // -------------------------------------------------------------------------
-
-  async getInfraStatus(): Promise<GetInfraStatusResponse> {
-    return this.get<GetInfraStatusResponse>("/api/v1/infra");
+  async getInfraStatus(): Promise<InfraStatusResponse> {
+    return this.unwrap(getInfraStatus({ client: this.client }));
   }
 
   async stopInfra(req: StopInfraRequest): Promise<StopInfraResponse> {
-    return this.post<StopInfraResponse>("/api/v1/infra/stop", req);
+    return this.unwrap(stopInfra({ client: this.client, body: req }));
   }
 
-  // -------------------------------------------------------------------------
-  // DB templates
-  // -------------------------------------------------------------------------
-
   async listDbTemplates(): Promise<ListDbTemplatesResponse> {
-    return this.get<ListDbTemplatesResponse>("/api/v1/db/templates");
+    return this.unwrap(listDbTemplates({ client: this.client }));
   }
 
   async dumpDb(req: DumpDbRequest): Promise<DumpDbResponse> {
-    return this.post<DumpDbResponse>("/api/v1/db/dump", req);
+    return this.unwrap(dumpDb({ client: this.client, body: req }));
   }
 
   async restoreDb(req: RestoreDbRequest): Promise<RestoreDbResponse> {
-    return this.post<RestoreDbResponse>("/api/v1/db/restore", req);
+    return this.unwrap(restoreDb({ client: this.client, body: req }));
   }
 
-  // -------------------------------------------------------------------------
-  // Private helpers
-  // -------------------------------------------------------------------------
+  private async unwrap<T>(promise: Promise<any>): Promise<T> {
+    const result = await promise;
 
-  private async get<T>(path: string): Promise<T> {
-    const response = await this.fetchFn(`${this.baseUrl}${path}`, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-    });
-    return this.parseResponse<T>(response);
-  }
-
-  private async post<T>(path: string, body: unknown): Promise<T> {
-    const response = await this.fetchFn(`${this.baseUrl}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-    return this.parseResponse<T>(response);
-  }
-
-  private async delete<T>(path: string): Promise<T> {
-    const response = await this.fetchFn(`${this.baseUrl}${path}`, {
-      method: "DELETE",
-      headers: { Accept: "application/json" },
-    });
-    return this.parseResponse<T>(response);
-  }
-
-  private async parseResponse<T>(response: Response): Promise<T> {
-    const text = await response.text();
-
-    let json: unknown;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      throw new ApiClientError(response.status, `Non-JSON response: ${text}`);
+    if (result?.response?.ok) {
+      return result.data as T;
     }
 
-    if (!response.ok) {
-      const err = json as ApiError;
-      throw new ApiClientError(
-        response.status,
-        err.error ?? "Unknown error",
-        err.code,
-        err.details,
-      );
-    }
+    const statusCode = result?.response?.status ?? 500;
+    const apiError = result?.error as ApiError | undefined;
+    const message =
+      apiError?.error ??
+      result?.response?.statusText ??
+      "Unknown error";
 
-    return json as T;
+    throw new ApiClientError(
+      statusCode,
+      message,
+      apiError?.code,
+      apiError?.details,
+    );
   }
 }
 
-// -------------------------------------------------------------------------
-// SSE parser
-// -------------------------------------------------------------------------
-
-/**
- * Parse a ReadableStream of SSE events into LogLine objects.
- * Handles `data:` lines; ignores comments and keep-alive lines.
- */
 async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncIterable<LogLine> {
   const decoder = new TextDecoder();
   const reader = body.getReader();
-
   let buffer = "";
 
   try {
@@ -201,26 +197,22 @@ async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncIterable<LogLin
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-
-      // SSE events are separated by double newlines
       const events = buffer.split(/\n\n/);
-      // Keep the last (potentially incomplete) chunk in the buffer
       buffer = events.pop() ?? "";
 
       for (const event of events) {
-        const logLine = parseSseEvent(event);
-        if (logLine !== null) {
-          yield logLine;
+        const parsed = parseSseEvent(event);
+        if (parsed) {
+          yield parsed;
         }
       }
     }
 
-    // Flush any remaining data
     buffer += decoder.decode();
     if (buffer.trim()) {
-      const logLine = parseSseEvent(buffer);
-      if (logLine !== null) {
-        yield logLine;
+      const parsed = parseSseEvent(buffer);
+      if (parsed) {
+        yield parsed;
       }
     }
   } finally {
@@ -235,10 +227,9 @@ function parseSseEvent(event: string): LogLine | null {
     if (line.startsWith("data:")) {
       dataLine = line.slice(5).trimStart();
     }
-    // Ignore `id:`, `event:`, `retry:`, and comment lines
   }
 
-  if (dataLine === undefined || dataLine === "") return null;
+  if (!dataLine) return null;
 
   try {
     return JSON.parse(dataLine) as LogLine;
@@ -246,10 +237,6 @@ function parseSseEvent(event: string): LogLine | null {
     return null;
   }
 }
-
-// -------------------------------------------------------------------------
-// Error type
-// -------------------------------------------------------------------------
 
 export class ApiClientError extends Error {
   constructor(

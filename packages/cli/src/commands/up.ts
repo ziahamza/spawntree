@@ -75,6 +75,7 @@ export function registerUpCommand(program: Command): void {
       }
 
       try {
+        await client.registerRepo({ repoPath, configPath: configFile });
         const { env } = await client.createEnv({
           repoPath,
           envId,

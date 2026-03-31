@@ -1,0 +1,850 @@
+components:
+    schemas:
+        APIError:
+            properties:
+                code:
+                    type: string
+                details: {}
+                error:
+                    type: string
+            required:
+                - error
+                - code
+            type: object
+        CreateEnvRequest:
+            properties:
+                configFile:
+                    type: string
+                envId:
+                    type: string
+                envOverrides:
+                    additionalProperties:
+                        type: string
+                    type: object
+                prefix:
+                    type: string
+                repoPath:
+                    type: string
+            required:
+                - repoPath
+            type: object
+        CreateEnvResponse:
+            properties:
+                env:
+                    $ref: '#/components/schemas/EnvInfo'
+            required:
+                - env
+            type: object
+        DaemonInfo:
+            properties:
+                activeEnvs:
+                    type: integer
+                pid:
+                    type: integer
+                repos:
+                    type: integer
+                uptime:
+                    type: integer
+                version:
+                    type: string
+            required:
+                - version
+                - pid
+                - uptime
+                - repos
+                - activeEnvs
+            type: object
+        DbTemplate:
+            properties:
+                createdAt:
+                    type: string
+                name:
+                    type: string
+                size:
+                    type: integer
+                sourceDatabaseUrl:
+                    type: string
+            required:
+                - name
+                - size
+                - createdAt
+            type: object
+        DeleteEnvResponse:
+            properties:
+                ok:
+                    type: boolean
+            required:
+                - ok
+            type: object
+        DownEnvResponse:
+            properties:
+                ok:
+                    type: boolean
+            required:
+                - ok
+            type: object
+        DumpDBRequest:
+            properties:
+                dbName:
+                    type: string
+                envId:
+                    type: string
+                repoPath:
+                    type: string
+                templateName:
+                    type: string
+            required:
+                - repoPath
+                - envId
+                - dbName
+                - templateName
+            type: object
+        DumpDBResponse:
+            properties:
+                template:
+                    $ref: '#/components/schemas/DbTemplate'
+            required:
+                - template
+            type: object
+        EnvInfo:
+            properties:
+                basePort:
+                    type: integer
+                branch:
+                    type: string
+                createdAt:
+                    type: string
+                envId:
+                    type: string
+                repoId:
+                    type: string
+                repoPath:
+                    type: string
+                services:
+                    items:
+                        $ref: '#/components/schemas/ServiceInfo'
+                    type: array
+            required:
+                - envId
+                - repoId
+                - repoPath
+                - branch
+                - basePort
+                - createdAt
+                - services
+            type: object
+        GetEnvResponse:
+            properties:
+                env:
+                    $ref: '#/components/schemas/EnvInfo'
+            required:
+                - env
+            type: object
+        InfraStatusResponse:
+            properties:
+                postgres:
+                    items:
+                        $ref: '#/components/schemas/PostgresInstanceInfo'
+                    type: array
+                redis:
+                    $ref: '#/components/schemas/RedisInstanceInfo'
+            required:
+                - postgres
+            type: object
+        ListDBTemplatesResponse:
+            properties:
+                templates:
+                    items:
+                        $ref: '#/components/schemas/DbTemplate'
+                    type: array
+            required:
+                - templates
+            type: object
+        ListEnvsResponse:
+            properties:
+                envs:
+                    items:
+                        $ref: '#/components/schemas/EnvInfo'
+                    type: array
+            required:
+                - envs
+            type: object
+        ListRegisteredReposResponse:
+            properties:
+                repos:
+                    items:
+                        $ref: '#/components/schemas/RegisteredRepo'
+                    type: array
+            required:
+                - repos
+            type: object
+        ListTunnelStatusesResponse:
+            properties:
+                statuses:
+                    items:
+                        $ref: '#/components/schemas/TunnelStatusInfo'
+                    type: array
+            required:
+                - statuses
+            type: object
+        ListTunnelsResponse:
+            properties:
+                tunnels:
+                    items:
+                        $ref: '#/components/schemas/TunnelDefinition'
+                    type: array
+            required:
+                - tunnels
+            type: object
+        LogLine:
+            properties:
+                line:
+                    type: string
+                service:
+                    type: string
+                stream:
+                    enum:
+                        - stdout
+                        - stderr
+                        - system
+                    type: string
+                ts:
+                    type: string
+            required:
+                - ts
+                - service
+                - stream
+                - line
+            type: object
+        PostgresInstanceInfo:
+            properties:
+                containerId:
+                    type: string
+                dataDir:
+                    type: string
+                databases:
+                    items:
+                        type: string
+                    type: array
+                port:
+                    type: integer
+                status:
+                    enum:
+                        - running
+                        - stopped
+                        - starting
+                        - error
+                    type: string
+                version:
+                    type: string
+            required:
+                - version
+                - status
+                - port
+                - dataDir
+                - databases
+            type: object
+        RedisInstanceInfo:
+            properties:
+                allocatedDbIndices:
+                    type: integer
+                containerId:
+                    type: string
+                port:
+                    type: integer
+                status:
+                    enum:
+                        - running
+                        - stopped
+                        - starting
+                        - error
+                    type: string
+            required:
+                - status
+                - port
+                - allocatedDbIndices
+            type: object
+        RegisterRepoRequest:
+            properties:
+                configPath:
+                    type: string
+                repoPath:
+                    type: string
+            required:
+                - repoPath
+                - configPath
+            type: object
+        RegisterRepoResponse:
+            properties:
+                repo:
+                    $ref: '#/components/schemas/RegisteredRepo'
+            required:
+                - repo
+            type: object
+        RegisteredRepo:
+            properties:
+                configPath:
+                    type: string
+                lastSeenAt:
+                    type: string
+                repoId:
+                    type: string
+                repoPath:
+                    type: string
+            required:
+                - repoId
+                - repoPath
+                - configPath
+                - lastSeenAt
+            type: object
+        RestoreDBRequest:
+            properties:
+                dbName:
+                    type: string
+                envId:
+                    type: string
+                repoPath:
+                    type: string
+                templateName:
+                    type: string
+            required:
+                - repoPath
+                - envId
+                - dbName
+                - templateName
+            type: object
+        RestoreDBResponse:
+            properties:
+                ok:
+                    type: boolean
+            required:
+                - ok
+            type: object
+        ServiceInfo:
+            properties:
+                containerId:
+                    type: string
+                name:
+                    type: string
+                pid:
+                    nullable: true
+                    type: integer
+                port:
+                    type: integer
+                status:
+                    enum:
+                        - starting
+                        - running
+                        - failed
+                        - stopped
+                    type: string
+                type:
+                    enum:
+                        - process
+                        - container
+                        - postgres
+                        - redis
+                        - external
+                    type: string
+                url:
+                    type: string
+            required:
+                - name
+                - type
+                - status
+                - port
+            type: object
+        StopInfraRequest:
+            properties:
+                target:
+                    enum:
+                        - postgres
+                        - redis
+                        - all
+                    type: string
+                version:
+                    type: string
+            required:
+                - target
+            type: object
+        StopInfraResponse:
+            properties:
+                ok:
+                    type: boolean
+            required:
+                - ok
+            type: object
+        TunnelDefinition:
+            properties:
+                config:
+                    additionalProperties:
+                        type: string
+                    type: object
+                enabled:
+                    type: boolean
+                id:
+                    type: string
+                provider:
+                    type: string
+                target:
+                    $ref: '#/components/schemas/TunnelTarget'
+            required:
+                - id
+                - provider
+                - target
+                - enabled
+            type: object
+        TunnelStatusInfo:
+            properties:
+                id:
+                    type: string
+                lastError:
+                    type: string
+                provider:
+                    type: string
+                publicUrl:
+                    type: string
+                state:
+                    type: string
+            required:
+                - id
+                - provider
+                - state
+            type: object
+        TunnelTarget:
+            properties:
+                envId:
+                    type: string
+                repoId:
+                    type: string
+                serviceName:
+                    type: string
+            type: object
+        UpsertTunnelRequest:
+            properties:
+                config:
+                    additionalProperties:
+                        type: string
+                    type: object
+                enabled:
+                    type: boolean
+                id:
+                    type: string
+                provider:
+                    type: string
+                target:
+                    $ref: '#/components/schemas/TunnelTarget'
+            required:
+                - provider
+                - target
+                - enabled
+            type: object
+        UpsertTunnelResponse:
+            properties:
+                tunnel:
+                    $ref: '#/components/schemas/TunnelDefinition'
+            required:
+                - tunnel
+            type: object
+info:
+    title: spawntree daemon API
+    version: 0.2.0
+openapi: 3.1.0
+paths:
+    /api/v1/daemon:
+        get:
+            operationId: getDaemonInfo
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/DaemonInfo'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+    /api/v1/db/dump:
+        post:
+            operationId: dumpDb
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/DumpDBRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/DumpDBResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+    /api/v1/db/restore:
+        post:
+            operationId: restoreDb
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/RestoreDBRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/RestoreDBResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+    /api/v1/db/templates:
+        get:
+            operationId: listDbTemplates
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListDBTemplatesResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+    /api/v1/envs:
+        get:
+            operationId: listEnvs
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListEnvsResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+        post:
+            operationId: createEnv
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateEnvRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CreateEnvResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+    /api/v1/infra:
+        get:
+            operationId: getInfraStatus
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InfraStatusResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+    /api/v1/infra/stop:
+        post:
+            operationId: stopInfra
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/StopInfraRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/StopInfraResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+    /api/v1/registry/repos:
+        get:
+            operationId: listRegisteredRepos
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListRegisteredReposResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+        post:
+            operationId: registerRepo
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/RegisterRepoRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/RegisterRepoResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+    /api/v1/repos/{repoId}/envs:
+        get:
+            operationId: listRepoEnvs
+            parameters:
+                - in: path
+                  name: repoId
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListEnvsResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+    /api/v1/repos/{repoId}/envs/{envId}:
+        delete:
+            operationId: deleteEnv
+            parameters:
+                - in: path
+                  name: repoId
+                  required: true
+                  schema:
+                    type: string
+                - in: path
+                  name: envId
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/DeleteEnvResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+        get:
+            operationId: getEnv
+            parameters:
+                - in: path
+                  name: repoId
+                  required: true
+                  schema:
+                    type: string
+                - in: path
+                  name: envId
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/GetEnvResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+    /api/v1/repos/{repoId}/envs/{envId}/down:
+        post:
+            operationId: downEnv
+            parameters:
+                - in: path
+                  name: repoId
+                  required: true
+                  schema:
+                    type: string
+                - in: path
+                  name: envId
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/DownEnvResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+    /api/v1/repos/{repoId}/envs/{envId}/logs:
+        get:
+            operationId: streamLogs
+            parameters:
+                - in: path
+                  name: repoId
+                  required: true
+                  schema:
+                    type: string
+                - in: path
+                  name: envId
+                  required: true
+                  schema:
+                    type: string
+                - in: query
+                  name: service
+                  schema:
+                    type: string
+                - in: query
+                  name: follow
+                  schema:
+                    type: boolean
+                - in: query
+                  name: lines
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        text/event-stream:
+                            schema:
+                                $ref: '#/components/schemas/LogLine'
+                    description: SSE log stream
+    /api/v1/tunnels:
+        get:
+            operationId: listTunnels
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListTunnelsResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+        post:
+            operationId: upsertTunnel
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/UpsertTunnelRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UpsertTunnelResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+        put:
+            operationId: replaceTunnel
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/UpsertTunnelRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UpsertTunnelResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
+    /api/v1/tunnels/status:
+        get:
+            operationId: listTunnelStatuses
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListTunnelStatusesResponse'
+                    description: OK
+                default:
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/APIError'
+                    description: Error
