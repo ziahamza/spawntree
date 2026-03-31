@@ -20,6 +20,7 @@ import { ProcessRunner } from "../runners/process-runner.js";
 import { PortRegistry } from "./port-registry.js";
 import { LogStreamer } from "./log-streamer.js";
 import { InfraManager } from "./infra-manager.js";
+import { ProxyManager } from "./proxy-manager.js";
 import {
   saveRepoState,
   loadRepoState,
@@ -109,11 +110,13 @@ export class EnvManager {
   private readonly portRegistry: PortRegistry;
   private readonly logStreamer: LogStreamer;
   private readonly infraManager: InfraManager;
+  private readonly proxyManager: ProxyManager;
 
-  constructor(portRegistry: PortRegistry, logStreamer: LogStreamer, infraManager: InfraManager) {
+  constructor(portRegistry: PortRegistry, logStreamer: LogStreamer, infraManager: InfraManager, proxyManager: ProxyManager) {
     this.portRegistry = portRegistry;
     this.logStreamer = logStreamer;
     this.infraManager = infraManager;
+    this.proxyManager = proxyManager;
   }
 
   // ---------------------------------------------------------------------------
@@ -307,7 +310,14 @@ export class EnvManager {
           }
         }
 
-        console.log(`[spawntree-daemon]   ${name} started`);
+        // Register with reverse proxy for clean URLs
+        try {
+          await this.proxyManager.ensureRunning();
+          const cleanUrl = this.proxyManager.register(repoId, envId, name, port);
+          console.log(`[spawntree-daemon]   ${name} started → ${cleanUrl}`);
+        } catch {
+          console.log(`[spawntree-daemon]   ${name} started (port ${port}, proxy unavailable)`);
+        }
       } catch (err) {
         // Stop already-started services before bubbling
         // (only process services are in the map)
@@ -365,6 +375,7 @@ export class EnvManager {
     console.log(`[spawntree-daemon] Stopping env ${envId} (keeping state)`);
 
     await this.stopServices(managed.services, [...managed.serviceOrder].reverse());
+    this.proxyManager.unregisterAll(repoId, envId);
     this.persistRepoState(repoId);
   }
 
@@ -378,8 +389,9 @@ export class EnvManager {
 
     console.log(`[spawntree-daemon] Deleting env ${envId}`);
 
-    // Stop services
+    // Stop services and unregister proxy routes
     await this.stopServices(managed.services, [...managed.serviceOrder].reverse());
+    this.proxyManager.unregisterAll(repoId, envId);
 
     // Free Redis db indices (flush and de-allocate)
     if (managed.redisDbIndices.size > 0) {
@@ -512,7 +524,9 @@ export class EnvManager {
 
       vars[`${upperName}_HOST`] = "127.0.0.1";
       vars[`${upperName}_PORT`] = String(otherPort);
-      vars[`${upperName}_URL`] = `http://127.0.0.1:${otherPort}`;
+      // Use proxy URL if proxy is running, otherwise fall back to raw port
+      const proxyUrl = `http://${otherName}-${envId}.localhost:${this.proxyManager.proxyPort}`;
+      vars[`${upperName}_URL`] = this.proxyManager.proxyPort ? proxyUrl : `http://127.0.0.1:${otherPort}`;
     }
 
     // Resolve per-service environment overrides using the now-computed vars
@@ -636,12 +650,16 @@ export class EnvManager {
       const pid =
         service instanceof ProcessRunner ? service.pid : undefined;
 
+      // Use proxy URL for non-infra services
+      const isInfra = serviceConfig.type === "postgres" || serviceConfig.type === "redis";
+      const proxyUrl = isInfra ? undefined : `http://${name}-${managed.envId}.localhost:${this.proxyManager.proxyPort}`;
+
       const info: ServiceInfo = {
         name,
         type: serviceConfig.type,
         status,
         port,
-        url: `http://127.0.0.1:${port}`,
+        url: proxyUrl || `http://127.0.0.1:${port}`,
       };
       if (pid !== undefined) info.pid = pid;
       return info;

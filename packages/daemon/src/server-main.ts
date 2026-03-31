@@ -7,6 +7,7 @@ import { EnvManager } from "./managers/env-manager.js";
 import { InfraManager } from "./managers/infra-manager.js";
 import { PortRegistry } from "./managers/port-registry.js";
 import { LogStreamer } from "./managers/log-streamer.js";
+import { ProxyManager } from "./managers/proxy-manager.js";
 import {
   ensureDir,
   saveDaemonPid,
@@ -25,7 +26,8 @@ async function main() {
   const portRegistry = new PortRegistry();
   const logStreamer = new LogStreamer();
   const infraManager = new InfraManager(portRegistry);
-  const envManager = new EnvManager(portRegistry, logStreamer, infraManager);
+  const proxyManager = new ProxyManager();
+  const envManager = new EnvManager(portRegistry, logStreamer, infraManager, proxyManager);
   const app = createApp(envManager, logStreamer, portRegistry, infraManager);
 
   // Use raw Node http.createServer with Hono's request listener adapter
