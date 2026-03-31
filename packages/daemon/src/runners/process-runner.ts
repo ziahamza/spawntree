@@ -132,6 +132,12 @@ export class ProcessRunner implements Service {
 
     this._status = "stopped";
 
+    // If process already exited (crashed), just clean up
+    if (this.process.exitCode !== null || this.process.signalCode !== null) {
+      this.process = null;
+      return;
+    }
+
     return new Promise<void>((resolve) => {
       const killTimer = setTimeout(() => {
         this.process?.kill("SIGKILL");

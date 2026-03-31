@@ -50,9 +50,13 @@ export class ProxyManager {
   }
 
   unregisterAll(repoId: string, envId: string): void {
-    const suffix = `-${envId}.localhost`;
     for (const hostname of this.proxy.registeredHostnames()) {
-      if (hostname.endsWith(suffix)) {
+      // Hostname format: <serviceName>-<envId>.localhost
+      // Extract envId by removing .localhost suffix and taking everything after first hyphen
+      const withoutTld = hostname.replace(/\.localhost$/, "");
+      const idx = withoutTld.indexOf("-");
+      const hostnameEnvId = idx >= 0 ? withoutTld.slice(idx + 1) : withoutTld;
+      if (hostnameEnvId === envId) {
         this.proxy.unregister(hostname);
       }
     }

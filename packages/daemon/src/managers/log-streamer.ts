@@ -93,6 +93,10 @@ export class LogStreamer {
   subscribe(repoId: string, envId: string, opts: SubscribeOptions): ReadableStream {
     const { service: filterService, follow = true, lines: historyLines = 50 } = opts;
 
+    // Track subscribed keys for cleanup
+    const subscribedKeys: string[] = [];
+    let sendFn: ((logLine: LogLine) => void) | null = null;
+
     return new ReadableStream({
       start: (controller) => {
         const send = (logLine: LogLine) => {
@@ -101,9 +105,11 @@ export class LogStreamer {
           try {
             controller.enqueue(new TextEncoder().encode(data));
           } catch {
-            // controller may be closed
+            // controller may be closed — clean up subscriber
+            this.removeSubscriber(subscribedKeys, send);
           }
         };
+        sendFn = send;
 
         // Replay buffered history
         const services = filterService
@@ -114,8 +120,7 @@ export class LogStreamer {
           const key = bufferKey(repoId, envId, svc);
           const buf = this.buffers.get(key);
           if (buf) {
-            const replayLines = buf.lines.slice(-historyLines);
-            for (const logLine of replayLines) {
+            for (const logLine of buf.lines.slice(-historyLines)) {
               send(logLine);
             }
           }
@@ -127,13 +132,10 @@ export class LogStreamer {
         }
 
         // Subscribe to live lines
-        const subscribedKeys: string[] = [];
-
         const subscribeTo = (svc: string) => {
           const key = bufferKey(repoId, envId, svc);
           let buf = this.buffers.get(key);
           if (!buf) {
-            // Create a buffer entry so the subscriber can attach
             const dir = logDir(repoId, envId);
             const filePath = resolve(dir, `${svc}.log`);
             const writeStream = createWriteStream(filePath, { flags: "a" });
@@ -147,20 +149,25 @@ export class LogStreamer {
         if (filterService) {
           subscribeTo(filterService);
         } else {
-          // Subscribe to all known services for this env and watch for new ones
           for (const svc of services) {
             subscribeTo(svc);
           }
         }
+      },
 
-        // Return a cancel function (called when client disconnects)
-        return () => {
-          for (const key of subscribedKeys) {
-            this.buffers.get(key)?.subscribers.delete(send);
-          }
-        };
+      // Called when the client disconnects or stream is cancelled
+      cancel: () => {
+        if (sendFn) {
+          this.removeSubscriber(subscribedKeys, sendFn);
+        }
       },
     });
+  }
+
+  private removeSubscriber(keys: string[], send: (logLine: LogLine) => void): void {
+    for (const key of keys) {
+      this.buffers.get(key)?.subscribers.delete(send);
+    }
   }
 
   /**
