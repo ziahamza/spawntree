@@ -1,0 +1,38 @@
+{
+  "name": "spawntree",
+  "version": "0.1.0",
+  "description": "Isolated environment orchestrator. Docker Compose, but with native processes and per-branch isolation.",
+  "type": "module",
+  "bin": {
+    "spawntree": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": [
+    "orchestrator",
+    "environment",
+    "docker-compose",
+    "development",
+    "cli",
+    "devtools"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ziahamza/spawntree.git",
+    "directory": "packages/cli"
+  },
+  "dependencies": {
+    "spawntree-core": "workspace:*",
+    "spawntree-daemon": "workspace:*",
+    "commander": "^13.0.0",
+    "undici": "^7.0.0",
+    "yaml": "^2.7.0"
+  }
+}

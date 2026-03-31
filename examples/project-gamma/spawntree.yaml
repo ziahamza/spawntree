@@ -1,0 +1,41 @@
+# Project Gamma — CF Workers + Bun + Vite app
+# Zero external deps: Host uses PGlite in-process, Machine uses local SQLite
+#
+# TESTED: host + studio start via spawntree daemon, healthchecks pass
+#
+# Prerequisites:
+#   mise install  (node 24, bun 1.3, pnpm 10.7)
+#   pnpm install  (in the project root)
+
+services:
+  host:
+    type: process
+    command: bun run packages/host/src/dev-local.ts
+    port: 8787
+    healthcheck:
+      url: http://localhost:${PORT}/health
+      timeout: 30
+    environment:
+      PORT: "${PORT}"
+      STUDIO_URL: http://localhost:5173
+
+  # machine:
+  #   type: process
+  #   command: bun run --hot packages/machine/src/index.ts
+  #   port: 3001
+  #   depends_on:
+  #     - host
+  #   environment:
+  #     MACHINE_PORT: "${PORT}"
+  #     HOST_URL: ${HOST_URL}
+  #     MACHINE_API_KEY: ${MACHINE_API_KEY}  # required, set in .env
+
+  studio:
+    type: process
+    command: pnpm --filter @gitenv/studio exec vite dev --port ${PORT}
+    port: 5173
+    depends_on:
+      - host
+    environment:
+      VITE_HOST_URL: ${HOST_URL}
+      DATABASE_URL: dev.db
