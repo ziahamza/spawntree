@@ -15,9 +15,6 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "references": [
-    { "path": "../core" }
-  ],
-  "include": ["src"],
+  "include": ["src/index.ts"],
   "exclude": ["node_modules", "dist", "tests"]
 }

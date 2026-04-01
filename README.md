@@ -15,7 +15,7 @@ spawntree down      # stop everything
 - **Shared Redis** — same pattern. Per-env DB index isolation.
 - **Branch-aware** — current git branch = your environment. Switch branches, switch environments.
 - **Port isolation** — automatic, no conflicts. Supports multiple projects simultaneously.
-- **Clean URLs** — `api-main.localhost:1355` via built-in reverse proxy
+- **Clean URLs** — `api-main.localhost:13655` via built-in reverse proxy
 - **Framework-aware** — auto-injects `--port` for vite, next.js, astro, nuxt
 - **portless compatible** — injects `PORTLESS=0` to disable portless cleanly when embedded in dev scripts
 - **Daemon architecture** — background process manages everything. CLI is a thin HTTP client. Same API for future cloud mode.
@@ -83,7 +83,7 @@ services:
 | `HOST` | Always `127.0.0.1` |
 | `DATABASE_URL` | From shared Postgres (or external if provided) |
 | `REDIS_URL` | From shared Redis (or external if provided) |
-| `<SERVICE>_URL` | Proxy URL for each service (`http://api-main.localhost:1355`) |
+| `<SERVICE>_URL` | Proxy URL for each service (`http://api-main.localhost:13655`) |
 | `<SERVICE>_HOST` | `127.0.0.1` |
 | `<SERVICE>_PORT` | Allocated port |
 | `PORTLESS` | Set to `0` (disables portless) |

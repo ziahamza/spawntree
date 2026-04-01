@@ -17,6 +17,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
@@ -25,6 +34,21 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      - name: Check OpenAPI
+        run: pnpm run check:openapi
+
+      - name: Check generated types
+        run: pnpm run check:types
+
+      - name: Check Go fmt
+        run: pnpm run check:go-fmt
+
+      - name: Lint Go
+        run: pnpm run lint:go
+
+      - name: Go test
+        run: go test ./...
 
       - name: Build
         run: pnpm build
