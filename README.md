@@ -18,13 +18,15 @@ spawntree down      # stop everything
 - **Clean URLs** — `api-main.localhost:13655` via built-in reverse proxy
 - **Framework-aware** — auto-injects `--port` for vite, next.js, astro, nuxt
 - **portless compatible** — injects `PORTLESS=0` to disable portless cleanly when embedded in dev scripts
-- **Daemon architecture** — background process manages everything. CLI is a thin HTTP client. Same API for future cloud mode.
+- **Daemon architecture** — native Go background process manages everything. CLI is a thin client against a generated OpenAPI contract.
 
 ## Install
 
 ```bash
 npm i -g spawntree
 ```
+
+The npm install includes precompiled daemon binaries for supported macOS, Linux, and Windows platforms.
 
 ## Quick start
 
@@ -115,6 +117,7 @@ spawntree db restore mydata
 ## Documentation
 
 - [Getting Started](./docs/getting-started.md)
+- [Daemon Architecture](./docs/daemon-architecture.md)
 - [Configuration](./docs/configuration.md)
 - [Environment Variables](./docs/environment-variables.md)
 - [CLI Reference](./docs/cli-reference.md)

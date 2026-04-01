@@ -6,6 +6,8 @@
 npm i -g spawntree
 ```
 
+The npm package includes the native Go daemon binary for supported macOS, Linux, and Windows platforms.
+
 Or run directly:
 
 ```bash
@@ -40,7 +42,7 @@ spawntree init --from-package   # from package.json scripts
 spawntree up
 ```
 
-A background daemon starts automatically. Services start in dependency order. Ctrl+C to stop.
+A background native daemon starts automatically. Services start in dependency order. Ctrl+C to stop.
 
 4. Check what's running:
 
@@ -50,7 +52,7 @@ spawntree status
 
 ## How It Works
 
-spawntree runs a background daemon that manages all infrastructure:
+spawntree runs a native Go daemon that manages all infrastructure:
 
 ```
 spawntree up → daemon starts (if not running) → services start → logs stream
@@ -59,7 +61,8 @@ spawntree up → daemon starts (if not running) → services start → logs stre
                    ├── Shared Redis (Docker, per-env DB index)
                    ├── Process services (native, with port injection)
                    ├── Container services (Docker, arbitrary images)
-                   └── Reverse proxy (*.localhost URLs)
+                   ├── Reverse proxy (*.localhost URLs on :13655)
+                   └── Generated OpenAPI API (Unix socket + loopback HTTP)
 ```
 
 - **Shared infrastructure**: Postgres and Redis run as shared Docker containers reused across all your projects. Each environment gets its own database/keyspace.
@@ -107,6 +110,7 @@ spawntree up
 ## Next Steps
 
 - [Configuration Reference](./configuration.md)
+- [Daemon Architecture](./daemon-architecture.md)
 - [Environment Variables](./environment-variables.md)
 - [CLI Reference](./cli-reference.md)
 - [Examples](../examples/)

@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -88,7 +87,7 @@ func (p *ProcessRunner) Start(ctx context.Context) error {
 	cmd := exec.Command("sh", "-lc", command)
 	cmd.Dir = p.cwd
 	cmd.Env = mergeEnv(os.Environ(), p.envVars)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	applyProcessGroup(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -150,12 +149,12 @@ func (p *ProcessRunner) Stop(context.Context) error {
 		return nil
 	}
 
-	// Kill the whole process group so child processes from shells, bun, pnpm, etc. do not leak.
-	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	// Kill the whole process tree on platforms that support it so shell children do not leak.
+	_ = terminateProcessGroup(cmd.Process.Pid)
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = forceKillProcessGroup(cmd.Process.Pid)
 		<-done
 	}
 

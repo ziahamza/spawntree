@@ -53,6 +53,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Verify daemon package contents
+        run: pnpm --filter spawntree-daemon run verify:pack
+
       - name: Lint
         run: pnpm exec oxlint .
 

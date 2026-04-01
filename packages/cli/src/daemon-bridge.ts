@@ -83,8 +83,9 @@ export async function isDaemonRunning(): Promise<boolean> {
 }
 
 /**
- * Start the daemon if not running. Waits for the "READY" signal on stdout
- * (up to 10 seconds), then unrefs the child so the CLI can exit independently.
+ * Start the native daemon if not running.
+ * Readiness is health-based: wait until the socket responds and runtime metadata
+ * includes the loopback HTTP listener.
  */
 export async function ensureDaemon(): Promise<void> {
   if (await isDaemonRunning()) return;

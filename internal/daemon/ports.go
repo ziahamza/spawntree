@@ -25,6 +25,9 @@ func (p *PortRegistry) Free(envKey EnvKey) error {
 }
 
 func (p *PortRegistry) GetPhysicalPort(basePort Port, serviceIndex int) (Port, error) {
+	if serviceIndex < 0 {
+		return 0, fmt.Errorf("service index %d is negative", serviceIndex)
+	}
 	if serviceIndex >= portRangeSize {
 		return 0, fmt.Errorf("service index %d exceeds port range size %d", serviceIndex, portRangeSize)
 	}

@@ -10,9 +10,12 @@
     "bin"
   ],
   "scripts": {
-    "build": "EXT=''; if [ \"$(go env GOOS)\" = 'windows' ]; then EXT='.exe'; fi; mkdir -p bin && go build -o \"bin/spawntreed-$(go env GOOS)-$(go env GOARCH)$EXT\" ../../cmd/spawntreed && tsc -p tsconfig.json",
+    "build:binaries": "mkdir -p bin && for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do GOOS=${target%/*}; GOARCH=${target#*/}; EXT=''; if [ \"$GOOS\" = 'windows' ]; then EXT='.exe'; fi; GOOS=\"$GOOS\" GOARCH=\"$GOARCH\" go build -o \"bin/spawntreed-$GOOS-$GOARCH$EXT\" ../../cmd/spawntreed; done",
+    "verify:binaries": "for file in bin/spawntreed-darwin-amd64 bin/spawntreed-darwin-arm64 bin/spawntreed-linux-amd64 bin/spawntreed-linux-arm64 bin/spawntreed-windows-amd64.exe bin/spawntreed-windows-arm64.exe; do test -f \"$file\"; done",
+    "verify:pack": "pkg=$(npm pack --silent); tar -tzf \"$pkg\" | rg 'package/bin/spawntreed-darwin-amd64$' >/dev/null && tar -tzf \"$pkg\" | rg 'package/bin/spawntreed-darwin-arm64$' >/dev/null && tar -tzf \"$pkg\" | rg 'package/bin/spawntreed-linux-amd64$' >/dev/null && tar -tzf \"$pkg\" | rg 'package/bin/spawntreed-linux-arm64$' >/dev/null && tar -tzf \"$pkg\" | rg 'package/bin/spawntreed-windows-amd64.exe$' >/dev/null && tar -tzf \"$pkg\" | rg 'package/bin/spawntreed-windows-arm64.exe$' >/dev/null && rm -f \"$pkg\"",
+    "build": "pnpm run build:binaries && pnpm run verify:binaries && tsc -p tsconfig.json",
     "test": "vitest run",
-    "dev": "EXT=''; if [ \"$(go env GOOS)\" = 'windows' ]; then EXT='.exe'; fi; mkdir -p bin && go build -o \"bin/spawntreed-$(go env GOOS)-$(go env GOARCH)$EXT\" ../../cmd/spawntreed"
+    "dev": "EXT=''; GOOS=$(go env GOOS); GOARCH=$(go env GOARCH); if [ \"$GOOS\" = 'windows' ]; then EXT='.exe'; fi; mkdir -p bin && GOOS=\"$GOOS\" GOARCH=\"$GOARCH\" go build -o \"bin/spawntreed-$GOOS-$GOARCH$EXT\" ../../cmd/spawntreed"
   },
   "dependencies": {},
   "license": "MIT",
