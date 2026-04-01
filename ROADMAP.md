@@ -2,7 +2,7 @@
 
 ## v0.1.0 — Orchestration Core + Daemon Architecture (done)
 
-- [x] Daemon architecture: background process on Unix socket, Hono HTTP API
+- [x] Daemon architecture: native Go daemon on Unix socket + loopback HTTP
 - [x] CLI as thin HTTP client (auto-starts daemon, undici Unix socket fetch)
 - [x] 15-endpoint typed API contract (shared between daemon and future cloud)
 - [x] ProcessRunner with shell mode, framework port injection (vite, next, astro, nuxt)
@@ -34,7 +34,7 @@
 - [ ] **`spawntree doctor`**: check prerequisites (Docker, git, node, mise)
 - [ ] **Shell completions**: bash, zsh, fish via commander
 - [ ] **Graceful errors**: show last 10 log lines on crash, suggest `spawntree status --all` on port exhaustion
-- [ ] **GlobalRegistry**: `~/.spawntree/registry.json`, `spawntree status --global`
+- [ ] **GlobalRegistry**: `~/.spawntree/config.yaml`, `spawntree status --global`
 
 ## v0.3 — Tunnels + Remote Access
 
@@ -73,6 +73,6 @@ Per-PR and per-agent-session environments, hosted.
 | No PGlite | Too experimental. Real projects need real Postgres with extensions. |
 | Own proxy (not portless) | Need same proxy for local and cloud. `PORTLESS=0` disables portless cleanly. |
 | Framework port injection | Auto-detect vite/next/astro and inject `--port` flags (like portless). |
-| Hono for HTTP | Portable between Node.js daemon and future CF Workers cloud. |
+| Go `net/http` + generated OpenAPI | One native daemon implementation with a generated TS SDK and stable local/cloud-ready contract. |
 | `PORTLESS=0` injection | Prevents port allocation conflicts with embedded portless in dev scripts. |
 | Env vars user-provided | Users bring .env files. Secret providers (1Password etc.) are future. |

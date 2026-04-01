@@ -26,8 +26,9 @@ export function registerLogsCommand(program: Command): void {
     .description("Stream service logs")
     .argument("[service]", "Service name (omit for all services)")
     .option("-f, --follow", "Follow log output (default: true when no service filter)", false)
+    .option("--lines <count>", "Number of historical lines to replay before following", "50")
     .option("--prefix <name>", "Named prefix for the environment")
-    .action(async (service?: string, options?: { follow: boolean; prefix?: string }) => {
+    .action(async (service?: string, options?: { follow: boolean; prefix?: string; lines?: string }) => {
       let repoId: string;
       let envId: string;
 
@@ -48,9 +49,14 @@ export function registerLogsCommand(program: Command): void {
       }
 
       const services = service ? [service] : undefined;
+      const follow = options?.follow || !service;
+      const lines = options?.lines ? Number.parseInt(options.lines, 10) : 50;
 
       try {
-        for await (const line of client.streamLogs(repoId, envId, services)) {
+        for await (const line of client.streamLogs(repoId, envId, services, {
+          follow,
+          lines: Number.isFinite(lines) ? lines : 50,
+        })) {
           printLogLine(line);
         }
       } catch (err) {

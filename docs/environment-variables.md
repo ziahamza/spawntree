@@ -30,7 +30,7 @@ Every service gets variables for every other service:
 |----------|---------|
 | `<SERVICE>_HOST` | `API_HOST=127.0.0.1` |
 | `<SERVICE>_PORT` | `API_PORT=10001` |
-| `<SERVICE>_URL` | `API_URL=http://127.0.0.1:10001` |
+| `<SERVICE>_URL` | `API_URL=http://api-main.localhost:13655` when the built-in proxy owns the port, otherwise `http://127.0.0.1:PORT` |
 
 Postgres and Redis services also inject conventional connection strings:
 

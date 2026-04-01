@@ -1,14 +1,20 @@
 import { execSync, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { createInterface } from "node:readline";
 import { Agent, fetch as undiciFetch } from "undici";
 import { ApiClient, deriveRepoId } from "spawntree-core";
 
 const SPAWNTREE_DIR = join(homedir(), ".spawntree");
 const SOCKET_PATH = join(SPAWNTREE_DIR, "spawntree.sock");
-const DAEMON_PID_PATH = join(SPAWNTREE_DIR, "daemon.pid");
+const RUNTIME_METADATA_PATH = join(SPAWNTREE_DIR, "runtime", "daemon.json");
+
+interface RuntimeMetadata {
+  pid: number;
+  startedAt: string;
+  socketPath: string;
+  httpPort: number;
+}
 
 /**
  * Create a fetch function that routes all requests through the Unix socket.
@@ -16,24 +22,48 @@ const DAEMON_PID_PATH = join(SPAWNTREE_DIR, "daemon.pid");
  */
 export function createSocketFetch(): typeof fetch {
   const agent = new Agent({ connect: { socketPath: SOCKET_PATH } });
-  return (url, init) =>
-    undiciFetch(url as string, { ...init, dispatcher: agent }) as unknown as ReturnType<typeof fetch>;
+  return (input, init) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+    const requestInit =
+      input instanceof Request
+        ? {
+            method: input.method,
+            headers: input.headers,
+            body: input.body as any,
+            duplex: input.body ? "half" : undefined,
+            redirect: input.redirect,
+            signal: input.signal,
+          }
+        : {};
+
+    return undiciFetch(url, {
+      ...requestInit,
+      ...(init as RequestInit | undefined),
+      duplex:
+        (requestInit as { body?: BodyInit | null }).body ??
+        (init as RequestInit | undefined)?.body
+          ? "half"
+          : undefined,
+      dispatcher: agent,
+    } as any) as unknown as ReturnType<typeof fetch>;
+  };
 }
 
 /**
  * Check if the daemon is running by verifying the PID file and probing the socket.
  */
 export async function isDaemonRunning(): Promise<boolean> {
-  if (!existsSync(DAEMON_PID_PATH)) return false;
+  const metadata = readRuntimeMetadata();
+  if (!metadata) return false;
 
-  let pid: number;
-  try {
-    pid = parseInt(readFileSync(DAEMON_PID_PATH, "utf-8").trim(), 10);
-  } catch {
-    return false;
-  }
-
-  if (!pid || isNaN(pid)) return false;
+  const pid = metadata.pid;
+  if (!pid || Number.isNaN(pid)) return false;
 
   // Check if the process is alive
   try {
@@ -53,65 +83,37 @@ export async function isDaemonRunning(): Promise<boolean> {
 }
 
 /**
- * Start the daemon if not running. Waits for the "READY" signal on stdout
- * (up to 10 seconds), then unrefs the child so the CLI can exit independently.
+ * Start the native daemon if not running.
+ * Readiness is health-based: wait until the socket responds and runtime metadata
+ * includes the loopback HTTP listener.
  */
 export async function ensureDaemon(): Promise<void> {
   if (await isDaemonRunning()) return;
 
-  // Resolve the daemon binary from the spawntree-daemon package
-  let daemonBin: string;
-  try {
-    // Try to resolve via require.resolve from the installed package
-    const { createRequire } = await import("node:module");
-    const require = createRequire(import.meta.url);
-    daemonBin = require.resolve("spawntree-daemon/dist/server-main.js");
-  } catch {
-    // Fallback: look relative to this file (monorepo layout)
-    const { resolve, dirname } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const __dirname = dirname(fileURLToPath(import.meta.url));
-    daemonBin = resolve(__dirname, "../../../daemon/dist/server-main.js");
-  }
+  const { resolveDaemonBinary } = await import("spawntree-daemon");
+  const daemonBin = resolveDaemonBinary();
 
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn("node", [daemonBin], {
+  const started = await new Promise<boolean>((resolve, reject) => {
+    const child = spawn(daemonBin, [], {
       detached: true,
-      stdio: ["ignore", "pipe", "inherit"],
+      stdio: ["ignore", "ignore", "inherit"],
       env: { ...process.env },
     });
 
-    const rl = createInterface({ input: child.stdout! });
-
-    const timeout = setTimeout(() => {
-      rl.close();
-      child.unref();
-      reject(new Error("Daemon did not start within 10 seconds"));
-    }, 10_000);
-
-    rl.on("line", (line) => {
-      if (line.includes("READY")) {
-        clearTimeout(timeout);
-        rl.close();
-        child.unref();
-        resolve();
-      }
-    });
-
-    child.on("error", (err) => {
-      clearTimeout(timeout);
-      rl.close();
+    child.once("error", (err) => {
       reject(new Error(`Failed to start daemon: ${err.message}`));
     });
 
-    child.on("exit", (code) => {
-      clearTimeout(timeout);
-      rl.close();
-      if (code !== null && code !== 0) {
-        reject(new Error(`Daemon exited with code ${code}`));
-      }
-    });
+    child.unref();
+
+    waitForDaemon(10_000)
+      .then(resolve)
+      .catch(reject);
   });
+
+  if (!started) {
+    throw new Error("Daemon did not start within 10 seconds");
+  }
 }
 
 /**
@@ -119,7 +121,9 @@ export async function ensureDaemon(): Promise<void> {
  */
 export async function getClient(): Promise<ApiClient> {
   await ensureDaemon();
-  return new ApiClient(createSocketFetch(), "http://localhost");
+  const client = new ApiClient(createSocketFetch(), "http://localhost");
+  await autoRegisterRepo(client);
+  return client;
 }
 
 /**
@@ -176,4 +180,38 @@ export function getCurrentEnvId(prefix?: string): string {
 
   const safeBranch = branch.replace(/\//g, "-") || "detached";
   return prefix ? `${safeBranch}-${prefix}` : safeBranch;
+}
+
+function readRuntimeMetadata(): RuntimeMetadata | null {
+  if (!existsSync(RUNTIME_METADATA_PATH)) return null;
+  try {
+    return JSON.parse(readFileSync(RUNTIME_METADATA_PATH, "utf-8")) as RuntimeMetadata;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForDaemon(timeoutMs: number): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const metadata = readRuntimeMetadata();
+    if (metadata?.httpPort && await isDaemonRunning()) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return false;
+}
+
+async function autoRegisterRepo(client: ApiClient): Promise<void> {
+  try {
+    const repoPath = getRepoPath();
+    const configPath = resolve(repoPath, "spawntree.yaml");
+    if (!existsSync(configPath)) {
+      return;
+    }
+    await client.registerRepo({ repoPath, configPath });
+  } catch {
+    // Not every command runs in a git repository. Ignore silently.
+  }
 }

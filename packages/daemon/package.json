@@ -1,32 +1,23 @@
 {
   "name": "spawntree-daemon",
   "version": "0.1.2",
-  "description": "Background daemon for spawntree - manages shared infrastructure and environment lifecycles",
+  "description": "Native daemon resolver and build shim for spawntree",
   "type": "module",
-  "main": "./dist/server-main.js",
-  "bin": {
-    "spawntree-daemon": "./dist/server-main.js"
-  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build:binaries": "mkdir -p bin && for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do GOOS=${target%/*}; GOARCH=${target#*/}; EXT=''; if [ \"$GOOS\" = 'windows' ]; then EXT='.exe'; fi; GOOS=\"$GOOS\" GOARCH=\"$GOARCH\" go build -o \"bin/spawntreed-$GOOS-$GOARCH$EXT\" ../../cmd/spawntreed; done",
+    "verify:binaries": "for file in bin/spawntreed-darwin-amd64 bin/spawntreed-darwin-arm64 bin/spawntreed-linux-amd64 bin/spawntreed-linux-arm64 bin/spawntreed-windows-amd64.exe bin/spawntreed-windows-arm64.exe; do test -f \"$file\"; done",
+    "verify:pack": "pkg=$(npm pack --silent); tar -tzf \"$pkg\" | grep -E 'package/bin/spawntreed-darwin-amd64$' >/dev/null && tar -tzf \"$pkg\" | grep -E 'package/bin/spawntreed-darwin-arm64$' >/dev/null && tar -tzf \"$pkg\" | grep -E 'package/bin/spawntreed-linux-amd64$' >/dev/null && tar -tzf \"$pkg\" | grep -E 'package/bin/spawntreed-linux-arm64$' >/dev/null && tar -tzf \"$pkg\" | grep -E 'package/bin/spawntreed-windows-amd64.exe$' >/dev/null && tar -tzf \"$pkg\" | grep -E 'package/bin/spawntreed-windows-arm64.exe$' >/dev/null && rm -f \"$pkg\"",
+    "build": "pnpm run build:binaries && pnpm run verify:binaries && tsc -p tsconfig.json",
     "test": "vitest run",
-    "dev": "node --watch dist/server-main.js"
+    "dev": "EXT=''; GOOS=$(go env GOOS); GOARCH=$(go env GOARCH); if [ \"$GOOS\" = 'windows' ]; then EXT='.exe'; fi; mkdir -p bin && GOOS=\"$GOOS\" GOARCH=\"$GOARCH\" go build -o \"bin/spawntreed-$GOOS-$GOARCH$EXT\" ../../cmd/spawntreed"
   },
-  "dependencies": {
-    "@hono/node-server": "^1.14.0",
-    "dockerode": "^4.0.0",
-    "dotenv": "^16.5.0",
-    "dotenv-expand": "^12.0.0",
-    "hono": "^4.7.0",
-    "spawntree-core": "workspace:*",
-    "yaml": "^2.7.0"
-  },
-  "devDependencies": {
-    "@types/dockerode": "^3.3.0"
-  },
+  "dependencies": {},
   "license": "MIT",
   "repository": {
     "type": "git",
