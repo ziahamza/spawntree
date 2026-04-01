@@ -306,6 +306,14 @@ type SpawntreeConfig struct {
 	ServiceOrder []string                 `json:"-" yaml:"-"`
 }
 
+func (cfg SpawntreeConfig) OrderedServiceNames() []ServiceName {
+	names := make([]ServiceName, 0, len(cfg.ServiceOrder))
+	for _, name := range cfg.ServiceOrder {
+		names = append(names, ServiceName(name))
+	}
+	return names
+}
+
 func DeriveRepoID(repoPath string) RepoID {
 	last := ""
 	for _, ch := range repoPath {

@@ -18,11 +18,11 @@ type ManagedEnv struct {
 	BasePort          Port
 	CreatedAt         string
 	Config            SpawntreeConfig
-	Services          map[string]Service
-	ServiceOrder      []string
+	Services          map[ServiceName]Service
+	ServiceOrder      []ServiceName
 	WorktreePath      string
-	RedisDBIndices    map[string]int
-	PostgresDatabases map[string]string
+	RedisDBIndices    map[ServiceName]int
+	PostgresDatabases map[ServiceName]string
 }
 
 type EnvManager struct {
@@ -122,8 +122,8 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 		}
 	}
 
-	for _, name := range config.ServiceOrder {
-		if err := m.logStreamer.InitService(repoID, envID, name); err != nil {
+	for _, name := range config.OrderedServiceNames() {
+		if err := m.logStreamer.InitService(repoID, envID, string(name)); err != nil {
 			return EnvInfo{}, err
 		}
 	}
@@ -131,11 +131,11 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 	_ = m.proxy.Start()
 
 	infraEnvVars := map[string]string{}
-	redisDBIndices := map[string]int{}
-	postgresDatabases := map[string]string{}
+	redisDBIndices := map[ServiceName]int{}
+	postgresDatabases := map[ServiceName]string{}
 	firstPostgres := true
-	for _, name := range config.ServiceOrder {
-		serviceConfig := config.Services[name]
+	for _, name := range config.OrderedServiceNames() {
+		serviceConfig := config.Services[string(name)]
 		switch serviceConfig.Type {
 		case ServiceTypePostgres:
 			if envVars["DATABASE_URL"] != "" {
@@ -165,7 +165,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 				}
 			}
 			pgURL := fmt.Sprintf("postgresql://postgres@localhost:%d/%s", pgRunner.Port, dbName)
-			upper := strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+			upper := strings.ToUpper(strings.ReplaceAll(string(name), "-", "_"))
 			if firstPostgres {
 				infraEnvVars["DATABASE_URL"] = pgURL
 				infraEnvVars["DB_HOST"] = "127.0.0.1"
@@ -198,13 +198,13 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 	if err != nil {
 		return EnvInfo{}, err
 	}
-	services := map[string]Service{}
+	services := map[ServiceName]Service{}
 	for _, name := range serviceOrder {
-		serviceConfig := config.Services[name]
+		serviceConfig := config.Services[string(name)]
 		if serviceConfig.Type == ServiceTypePostgres || serviceConfig.Type == ServiceTypeRedis {
 			continue
 		}
-		port, err := m.portRegistry.GetPhysicalPort(basePort, indexOf(config.ServiceOrder, name))
+		port, err := m.portRegistry.GetPhysicalPort(basePort, indexOfService(config.OrderedServiceNames(), name))
 		if err != nil {
 			return EnvInfo{}, err
 		}
@@ -216,7 +216,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 		}
 		services[name] = service
 		if err := service.Start(ctx); err != nil {
-			_ = m.stopServices(ctx, services, reverse(serviceOrder[:indexOf(serviceOrder, name)+1]))
+			_ = m.stopServices(ctx, services, reverse(serviceOrder[:indexOfService(serviceOrder, name)+1]))
 			return EnvInfo{}, err
 		}
 		if resolved.Healthcheck != nil {
@@ -225,12 +225,12 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 				timeout = resolved.Healthcheck.Timeout
 			}
 			if !waitForHealthy(ctx, service, time.Duration(timeout)*time.Second) {
-				_ = m.stopServices(ctx, services, reverse(serviceOrder[:indexOf(serviceOrder, name)+1]))
+				_ = m.stopServices(ctx, services, reverse(serviceOrder[:indexOfService(serviceOrder, name)+1]))
 				return EnvInfo{}, fmt.Errorf("healthcheck failed for %q after %ds", name, timeout)
 			}
 		}
 		if m.proxy.IsRunning() {
-			_ = m.proxy.Register(fmt.Sprintf("%s-%s.localhost", name, envID), port.Int())
+			_ = m.proxy.Register(serviceRouteHost(name, envID), port.Int())
 		}
 	}
 
@@ -330,8 +330,8 @@ func (m *EnvManager) getManaged(repoID RepoID, envID EnvID) (*ManagedEnv, error)
 	return m.state.GetManagedEnv(repoID, envID)
 }
 
-func (m *EnvManager) buildServiceEnvVars(name string, serviceConfig ServiceConfig, baseEnvVars map[string]string, envID EnvID, worktreePath string, basePort Port, config SpawntreeConfig) map[string]string {
-	port, _ := m.portRegistry.GetPhysicalPort(basePort, indexOf(config.ServiceOrder, name))
+func (m *EnvManager) buildServiceEnvVars(name ServiceName, serviceConfig ServiceConfig, baseEnvVars map[string]string, envID EnvID, worktreePath string, basePort Port, config SpawntreeConfig) map[string]string {
+	port, _ := m.portRegistry.GetPhysicalPort(basePort, indexOfService(config.OrderedServiceNames(), name))
 	vars := mergeStringMaps(baseEnvVars, map[string]string{
 		"PORT":      fmt.Sprintf("%d", port),
 		"HOST":      "127.0.0.1",
@@ -339,17 +339,17 @@ func (m *EnvManager) buildServiceEnvVars(name string, serviceConfig ServiceConfi
 		"STATE_DIR": filepath.Join(worktreePath, ".spawntree", "state", string(envID)),
 		"PORTLESS":  "0",
 	})
-	for _, otherName := range config.ServiceOrder {
-		otherConfig := config.Services[otherName]
+	for _, otherName := range config.OrderedServiceNames() {
+		otherConfig := config.Services[string(otherName)]
 		if otherConfig.Type == ServiceTypePostgres || otherConfig.Type == ServiceTypeRedis {
 			continue
 		}
-		otherPort, _ := m.portRegistry.GetPhysicalPort(basePort, indexOf(config.ServiceOrder, otherName))
-		upper := strings.ToUpper(strings.ReplaceAll(otherName, "-", "_"))
+		otherPort, _ := m.portRegistry.GetPhysicalPort(basePort, indexOfService(config.OrderedServiceNames(), otherName))
+		upper := strings.ToUpper(strings.ReplaceAll(string(otherName), "-", "_"))
 		vars[upper+"_HOST"] = "127.0.0.1"
 		vars[upper+"_PORT"] = fmt.Sprintf("%d", otherPort)
 		if m.proxy.IsRunning() {
-			vars[upper+"_URL"] = fmt.Sprintf("http://%s-%s.localhost:%d", otherName, envID, m.proxy.Port())
+			vars[upper+"_URL"] = fmt.Sprintf("http://%s:%d", serviceRouteHost(otherName, envID), m.proxy.Port())
 		} else {
 			vars[upper+"_URL"] = fmt.Sprintf("http://127.0.0.1:%d", otherPort)
 		}
@@ -366,20 +366,20 @@ func (m *EnvManager) buildServiceEnvVars(name string, serviceConfig ServiceConfi
 	return vars
 }
 
-func (m *EnvManager) createService(name string, config ServiceConfig, envVars map[string]string, cwd string, repoID RepoID, envID EnvID, port Port) (Service, error) {
+func (m *EnvManager) createService(name ServiceName, config ServiceConfig, envVars map[string]string, cwd string, repoID RepoID, envID EnvID, port Port) (Service, error) {
 	switch config.Type {
 	case ServiceTypeProcess:
-		return NewProcessRunner(name, config, envVars, cwd, string(repoID), string(envID), m.logStreamer), nil
+		return NewProcessRunner(string(name), config, envVars, cwd, string(repoID), string(envID), m.logStreamer), nil
 	case ServiceTypeContainer:
-		return NewContainerRunner(name, config, envVars, port.Int(), string(repoID), string(envID), m.logStreamer), nil
+		return NewContainerRunner(string(name), config, envVars, port.Int(), string(repoID), string(envID), m.logStreamer), nil
 	case ServiceTypeExternal:
-		return NewExternalRunner(name, config, port.Int())
+		return NewExternalRunner(string(name), config, port.Int())
 	default:
 		return nil, fmt.Errorf("unknown or unsupported service type: %s", config.Type)
 	}
 }
 
-func (m *EnvManager) stopServices(ctx context.Context, services map[string]Service, order []string) error {
+func (m *EnvManager) stopServices(ctx context.Context, services map[ServiceName]Service, order []ServiceName) error {
 	for _, name := range order {
 		service := services[name]
 		if service == nil || service.Status() == ServiceStatusStopped {
@@ -394,10 +394,10 @@ func (m *EnvManager) stopServices(ctx context.Context, services map[string]Servi
 
 func (m *EnvManager) toEnvInfo(managed *ManagedEnv) EnvInfo {
 	services := []ServiceInfo{}
-	for _, name := range managed.Config.ServiceOrder {
+	for _, name := range managed.ServiceOrder {
 		service := managed.Services[name]
-		serviceConfig := managed.Config.Services[name]
-		port, _ := m.portRegistry.GetPhysicalPort(managed.BasePort, indexOf(managed.Config.ServiceOrder, name))
+		serviceConfig := managed.Config.Services[string(name)]
+		port, _ := m.portRegistry.GetPhysicalPort(managed.BasePort, indexOfService(managed.ServiceOrder, name))
 		status := ServiceStatusStopped
 		pid := (*int)(nil)
 		containerID := ""
@@ -410,10 +410,10 @@ func (m *EnvManager) toEnvInfo(managed *ManagedEnv) EnvInfo {
 		if serviceConfig.Type == ServiceTypeExternal {
 			url = serviceConfig.URL
 		} else if m.proxy.IsRunning() && serviceConfig.Type != ServiceTypePostgres && serviceConfig.Type != ServiceTypeRedis {
-			url = fmt.Sprintf("http://%s-%s.localhost:%d", name, managed.EnvID, m.proxy.Port())
+			url = fmt.Sprintf("http://%s:%d", serviceRouteHost(name, managed.EnvID), m.proxy.Port())
 		}
 		services = append(services, ServiceInfo{
-			Name:        ServiceName(name),
+			Name:        name,
 			Type:        serviceConfig.Type,
 			Status:      status,
 			Port:        port,
@@ -458,12 +458,12 @@ func (m *EnvManager) persistRepoState(repoID RepoID) error {
 	return SaveRepoState(repoID, state)
 }
 
-func topologicalSort(config SpawntreeConfig) ([]string, error) {
-	result := []string{}
-	visited := map[string]bool{}
-	visiting := map[string]bool{}
-	var visit func(string) error
-	visit = func(name string) error {
+func topologicalSort(config SpawntreeConfig) ([]ServiceName, error) {
+	result := []ServiceName{}
+	visited := map[ServiceName]bool{}
+	visiting := map[ServiceName]bool{}
+	var visit func(ServiceName) error
+	visit = func(name ServiceName) error {
 		if visited[name] {
 			return nil
 		}
@@ -471,8 +471,8 @@ func topologicalSort(config SpawntreeConfig) ([]string, error) {
 			return fmt.Errorf("circular dependency detected involving %q", name)
 		}
 		visiting[name] = true
-		for _, dep := range config.Services[name].DependsOn {
-			if err := visit(dep); err != nil {
+		for _, dep := range config.Services[string(name)].DependsOn {
+			if err := visit(ServiceName(dep)); err != nil {
 				return err
 			}
 		}
@@ -481,7 +481,7 @@ func topologicalSort(config SpawntreeConfig) ([]string, error) {
 		result = append(result, name)
 		return nil
 	}
-	for _, name := range config.ServiceOrder {
+	for _, name := range config.OrderedServiceNames() {
 		if err := visit(name); err != nil {
 			return nil, err
 		}
@@ -504,8 +504,8 @@ func waitForHealthy(ctx context.Context, service Service, timeout time.Duration)
 	return false
 }
 
-func reverse(values []string) []string {
-	out := make([]string, len(values))
+func reverse(values []ServiceName) []ServiceName {
+	out := make([]ServiceName, len(values))
 	copy(out, values)
 	for i := 0; i < len(out)/2; i++ {
 		j := len(out) - 1 - i
@@ -514,13 +514,17 @@ func reverse(values []string) []string {
 	return out
 }
 
-func indexOf(values []string, target string) int {
+func indexOfService(values []ServiceName, target ServiceName) int {
 	for i, value := range values {
 		if value == target {
 			return i
 		}
 	}
 	return -1
+}
+
+func serviceRouteHost(name ServiceName, envID EnvID) string {
+	return fmt.Sprintf("%s-%s.localhost", name, envID)
 }
 
 func mergeStringMaps(base map[string]string, extra map[string]string) map[string]string {

@@ -40,6 +40,7 @@ type ProcessRunner struct {
 	mu     sync.Mutex
 	status ServiceStatus
 	cmd    *exec.Cmd
+	done   chan error
 }
 
 func NewProcessRunner(name string, config ServiceConfig, envVars map[string]string, cwd, repoID, envID string, logStreamer *LogStreamer) *ProcessRunner {
@@ -87,6 +88,7 @@ func (p *ProcessRunner) Start(ctx context.Context) error {
 	cmd := exec.Command("sh", "-lc", command)
 	cmd.Dir = p.cwd
 	cmd.Env = mergeEnv(os.Environ(), p.envVars)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -101,6 +103,7 @@ func (p *ProcessRunner) Start(ctx context.Context) error {
 
 	p.mu.Lock()
 	p.cmd = cmd
+	p.done = make(chan error, 1)
 	p.mu.Unlock()
 
 	go streamPipeLines(stdout, func(line string) {
@@ -114,6 +117,10 @@ func (p *ProcessRunner) Start(ctx context.Context) error {
 		err := cmd.Wait()
 		p.mu.Lock()
 		defer p.mu.Unlock()
+		if p.done != nil {
+			p.done <- err
+			close(p.done)
+		}
 		if p.status != ServiceStatusStopped {
 			p.status = ServiceStatusFailed
 			if err != nil {
@@ -136,23 +143,26 @@ func (p *ProcessRunner) Start(ctx context.Context) error {
 func (p *ProcessRunner) Stop(context.Context) error {
 	p.mu.Lock()
 	cmd := p.cmd
+	done := p.done
 	p.status = ServiceStatusStopped
 	p.mu.Unlock()
-	if cmd == nil || cmd.Process == nil {
+	if cmd == nil || cmd.Process == nil || done == nil {
 		return nil
 	}
-	_ = cmd.Process.Signal(syscall.SIGTERM)
-	done := make(chan struct{})
-	go func() {
-		_, _ = cmd.Process.Wait()
-		close(done)
-	}()
+
+	// Kill the whole process group so child processes from shells, bun, pnpm, etc. do not leak.
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		_ = cmd.Process.Kill()
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		<-done
 	}
+
+	p.mu.Lock()
+	p.cmd = nil
+	p.done = nil
+	p.mu.Unlock()
 	return nil
 }
 

@@ -111,7 +111,7 @@ export function registerUpCommand(program: Command): void {
 
       // Stream logs until interrupted
       try {
-        for await (const logLine of client.streamLogs(repoId, envId)) {
+        for await (const logLine of client.streamLogs(repoId, envId, undefined, { follow: true, lines: 0 })) {
           printLogLine(logLine);
         }
       } catch (err) {

@@ -21,6 +21,11 @@ type serviceBuffer struct {
 	file        *os.File
 }
 
+type LogReadOptions struct {
+	Service string
+	Lines   int
+}
+
 type LogStreamer struct {
 	mu      sync.Mutex
 	buffers map[string]*serviceBuffer
@@ -77,13 +82,17 @@ func (l *LogStreamer) AddLine(repoID RepoID, envID EnvID, service, stream, line 
 	}
 }
 
-func (l *LogStreamer) ReadHistory(repoID RepoID, envID EnvID, service string, lines int) ([]LogLine, error) {
+func (l *LogStreamer) ReadHistory(repoID RepoID, envID EnvID, options LogReadOptions) ([]LogLine, error) {
+	if options.Lines <= 0 {
+		return []LogLine{}, nil
+	}
+
 	l.mu.Lock()
 	services := l.getServicesForEnvLocked(repoID, envID)
 	l.mu.Unlock()
 
-	if service != "" {
-		services = []string{service}
+	if options.Service != "" {
+		services = []string{options.Service}
 	}
 
 	var all []LogLine
@@ -101,14 +110,14 @@ func (l *LogStreamer) ReadHistory(repoID RepoID, envID EnvID, service string, li
 				svcLines = append(svcLines, line)
 			}
 		}
-		if len(svcLines) > lines {
-			svcLines = svcLines[len(svcLines)-lines:]
+		if len(svcLines) > options.Lines {
+			svcLines = svcLines[len(svcLines)-options.Lines:]
 		}
 		all = append(all, svcLines...)
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].TS < all[j].TS })
-	if len(all) > lines {
-		all = all[len(all)-lines:]
+	if len(all) > options.Lines {
+		all = all[len(all)-options.Lines:]
 	}
 	return all, nil
 }

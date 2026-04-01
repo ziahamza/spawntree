@@ -120,6 +120,10 @@ export class ApiClient {
     repoId: string,
     envId: string,
     services?: string[],
+    options?: {
+      follow?: boolean;
+      lines?: number;
+    },
   ): AsyncIterable<LogLine> {
     const url = new URL(
       `/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}/logs`,
@@ -128,6 +132,12 @@ export class ApiClient {
 
     if (services && services[0]) {
       url.searchParams.set("service", services[0]);
+    }
+    if (options?.follow === false) {
+      url.searchParams.set("follow", "false");
+    }
+    if (options?.lines !== undefined) {
+      url.searchParams.set("lines", String(options.lines));
     }
 
     const response = await this.fetchFn(url.toString(), {
