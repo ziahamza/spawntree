@@ -7,16 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
 type ManagedEnv struct {
-	EnvID             string
-	RepoID            string
+	EnvID             EnvID
+	RepoID            RepoID
 	RepoPath          string
-	Branch            string
-	BasePort          int
+	Branch            BranchName
+	BasePort          Port
 	CreatedAt         string
 	Config            SpawntreeConfig
 	Services          map[string]Service
@@ -27,17 +26,16 @@ type ManagedEnv struct {
 }
 
 type EnvManager struct {
-	mu           sync.Mutex
-	envs         map[string]map[string]*ManagedEnv
+	state        *StateStore
 	portRegistry *PortRegistry
 	logStreamer  *LogStreamer
 	infraManager *InfraManager
 	proxy        *ProxyServer
 }
 
-func NewEnvManager(portRegistry *PortRegistry, logStreamer *LogStreamer, infraManager *InfraManager, proxy *ProxyServer) *EnvManager {
+func NewEnvManager(state *StateStore, portRegistry *PortRegistry, logStreamer *LogStreamer, infraManager *InfraManager, proxy *ProxyServer) *EnvManager {
 	return &EnvManager{
-		envs:         map[string]map[string]*ManagedEnv{},
+		state:        state,
 		portRegistry: portRegistry,
 		logStreamer:  logStreamer,
 		infraManager: infraManager,
@@ -59,34 +57,29 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 	if err != nil {
 		return EnvInfo{}, err
 	}
-	branch := CurrentBranch(gitRoot)
+	branch := BranchName(CurrentBranch(gitRoot))
 	repoID := DeriveRepoID(gitRoot)
-	safeBranch := strings.ReplaceAll(branch, "/", "-")
+	safeBranch := EnvID(strings.ReplaceAll(string(branch), "/", "-"))
 	envID := req.EnvID
 	if envID == "" {
 		if req.Prefix != "" {
-			envID = safeBranch + "-" + req.Prefix
+			envID = EnvID(string(safeBranch) + "-" + req.Prefix)
 		} else {
 			envID = safeBranch
 		}
 	}
-	envKey := repoID + ":" + envID
+	envKey := NewEnvKey(repoID, envID)
 
-	m.mu.Lock()
-	if repoEnvs := m.envs[repoID]; repoEnvs != nil {
-		if existing := repoEnvs[envID]; existing != nil {
-			info := m.toEnvInfo(existing)
-			m.mu.Unlock()
-			return info, nil
-		}
+	existing, err := m.state.GetManagedEnv(repoID, envID)
+	if err == nil {
+		return m.toEnvInfo(existing), nil
 	}
-	m.mu.Unlock()
 
 	content, err := os.ReadFile(configPath)
 	if err != nil {
 		return EnvInfo{}, err
 	}
-	envVars, err := LoadEnv(envID, configDir, req.EnvOverrides)
+	envVars, err := LoadEnv(string(envID), configDir, req.EnvOverrides)
 	if err != nil {
 		return EnvInfo{}, err
 	}
@@ -114,7 +107,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 		if err := wm.EnsureGitignore(); err != nil {
 			return EnvInfo{}, err
 		}
-		worktreePath, err = wm.Create(envID)
+		worktreePath, err = wm.Create(string(envID))
 		if err != nil {
 			return EnvInfo{}, err
 		}
@@ -237,7 +230,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 			}
 		}
 		if m.proxy.IsRunning() {
-			_ = m.proxy.Register(fmt.Sprintf("%s-%s.localhost", name, envID), port)
+			_ = m.proxy.Register(fmt.Sprintf("%s-%s.localhost", name, envID), port.Int())
 		}
 	}
 
@@ -256,12 +249,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 		PostgresDatabases: postgresDatabases,
 	}
 
-	m.mu.Lock()
-	if m.envs[repoID] == nil {
-		m.envs[repoID] = map[string]*ManagedEnv{}
-	}
-	m.envs[repoID][envID] = managed
-	m.mu.Unlock()
+	m.state.PutManagedEnv(managed)
 	if err := m.persistRepoState(repoID); err != nil {
 		return EnvInfo{}, err
 	}
@@ -269,7 +257,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 }
 
 func (m *EnvManager) DownEnv(ctx context.Context, repoID, envID string) error {
-	managed, err := m.getManaged(repoID, envID)
+	managed, err := m.getManaged(RepoID(repoID), EnvID(envID))
 	if err != nil {
 		return err
 	}
@@ -281,15 +269,15 @@ func (m *EnvManager) DownEnv(ctx context.Context, repoID, envID string) error {
 			m.proxy.Unregister(hostname)
 		}
 	}
-	return m.persistRepoState(repoID)
+	return m.persistRepoState(RepoID(repoID))
 }
 
 func (m *EnvManager) DeleteEnv(ctx context.Context, repoID, envID string) error {
-	managed, err := m.getManaged(repoID, envID)
+	managed, err := m.getManaged(RepoID(repoID), EnvID(envID))
 	if err != nil {
 		return err
 	}
-	envKey := repoID + ":" + envID
+	envKey := NewEnvKey(RepoID(repoID), EnvID(envID))
 	if err := m.stopServices(ctx, managed.Services, reverse(managed.ServiceOrder)); err != nil {
 		return err
 	}
@@ -313,21 +301,16 @@ func (m *EnvManager) DeleteEnv(ctx context.Context, repoID, envID string) error 
 		_ = serviceName
 	}
 	wm := NewWorktreeManager(managed.RepoPath)
-	_ = wm.Remove(envID)
-	m.logStreamer.CloseEnv(repoID, envID)
+	_ = wm.Remove(string(envID))
+	m.logStreamer.CloseEnv(RepoID(repoID), EnvID(envID))
 	_ = m.portRegistry.Free(envKey)
 
-	m.mu.Lock()
-	delete(m.envs[repoID], envID)
-	if len(m.envs[repoID]) == 0 {
-		delete(m.envs, repoID)
-	}
-	m.mu.Unlock()
-	return m.persistRepoState(repoID)
+	m.state.DeleteManagedEnv(RepoID(repoID), EnvID(envID))
+	return m.persistRepoState(RepoID(repoID))
 }
 
 func (m *EnvManager) GetEnv(repoID, envID string) (EnvInfo, error) {
-	managed, err := m.getManaged(repoID, envID)
+	managed, err := m.getManaged(RepoID(repoID), EnvID(envID))
 	if err != nil {
 		return EnvInfo{}, err
 	}
@@ -335,40 +318,25 @@ func (m *EnvManager) GetEnv(repoID, envID string) (EnvInfo, error) {
 }
 
 func (m *EnvManager) ListEnvs(repoID string) []EnvInfo {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	repoKey := RepoID(repoID)
 	result := []EnvInfo{}
-	if repoID != "" {
-		for _, managed := range m.envs[repoID] {
-			result = append(result, m.toEnvInfo(managed))
-		}
-		return result
-	}
-	for _, repoEnvs := range m.envs {
-		for _, managed := range repoEnvs {
-			result = append(result, m.toEnvInfo(managed))
-		}
+	for _, managed := range m.state.ListManagedEnvs(repoKey) {
+		result = append(result, m.toEnvInfo(managed))
 	}
 	return result
 }
 
-func (m *EnvManager) getManaged(repoID, envID string) (*ManagedEnv, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	repoEnvs := m.envs[repoID]
-	if repoEnvs == nil || repoEnvs[envID] == nil {
-		return nil, fmt.Errorf("environment %q not found for repo %q", envID, repoID)
-	}
-	return repoEnvs[envID], nil
+func (m *EnvManager) getManaged(repoID RepoID, envID EnvID) (*ManagedEnv, error) {
+	return m.state.GetManagedEnv(repoID, envID)
 }
 
-func (m *EnvManager) buildServiceEnvVars(name string, serviceConfig ServiceConfig, baseEnvVars map[string]string, envID, worktreePath string, basePort int, config SpawntreeConfig) map[string]string {
+func (m *EnvManager) buildServiceEnvVars(name string, serviceConfig ServiceConfig, baseEnvVars map[string]string, envID EnvID, worktreePath string, basePort Port, config SpawntreeConfig) map[string]string {
 	port, _ := m.portRegistry.GetPhysicalPort(basePort, indexOf(config.ServiceOrder, name))
 	vars := mergeStringMaps(baseEnvVars, map[string]string{
 		"PORT":      fmt.Sprintf("%d", port),
 		"HOST":      "127.0.0.1",
-		"ENV_NAME":  envID,
-		"STATE_DIR": filepath.Join(worktreePath, ".spawntree", "state", envID),
+		"ENV_NAME":  string(envID),
+		"STATE_DIR": filepath.Join(worktreePath, ".spawntree", "state", string(envID)),
 		"PORTLESS":  "0",
 	})
 	for _, otherName := range config.ServiceOrder {
@@ -398,14 +366,14 @@ func (m *EnvManager) buildServiceEnvVars(name string, serviceConfig ServiceConfi
 	return vars
 }
 
-func (m *EnvManager) createService(name string, config ServiceConfig, envVars map[string]string, cwd, repoID, envID string, port int) (Service, error) {
+func (m *EnvManager) createService(name string, config ServiceConfig, envVars map[string]string, cwd string, repoID RepoID, envID EnvID, port Port) (Service, error) {
 	switch config.Type {
 	case ServiceTypeProcess:
-		return NewProcessRunner(name, config, envVars, cwd, repoID, envID, m.logStreamer), nil
+		return NewProcessRunner(name, config, envVars, cwd, string(repoID), string(envID), m.logStreamer), nil
 	case ServiceTypeContainer:
-		return NewContainerRunner(name, config, envVars, port, repoID, envID, m.logStreamer), nil
+		return NewContainerRunner(name, config, envVars, port.Int(), string(repoID), string(envID), m.logStreamer), nil
 	case ServiceTypeExternal:
-		return NewExternalRunner(name, config, port)
+		return NewExternalRunner(name, config, port.Int())
 	default:
 		return nil, fmt.Errorf("unknown or unsupported service type: %s", config.Type)
 	}
@@ -445,7 +413,7 @@ func (m *EnvManager) toEnvInfo(managed *ManagedEnv) EnvInfo {
 			url = fmt.Sprintf("http://%s-%s.localhost:%d", name, managed.EnvID, m.proxy.Port())
 		}
 		services = append(services, ServiceInfo{
-			Name:        name,
+			Name:        ServiceName(name),
 			Type:        serviceConfig.Type,
 			Status:      status,
 			Port:        port,
@@ -465,14 +433,12 @@ func (m *EnvManager) toEnvInfo(managed *ManagedEnv) EnvInfo {
 	}
 }
 
-func (m *EnvManager) persistRepoState(repoID string) error {
-	m.mu.Lock()
-	repoEnvs := m.envs[repoID]
-	m.mu.Unlock()
+func (m *EnvManager) persistRepoState(repoID RepoID) error {
+	repoEnvs := m.state.ListManagedEnvs(repoID)
 	state := RepoState{
 		RepoID: repoID,
 	}
-	if repoEnvs != nil {
+	if len(repoEnvs) > 0 {
 		for _, managed := range repoEnvs {
 			state.RepoPath = managed.RepoPath
 			envRecord := RepoEnvRecord{

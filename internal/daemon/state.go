@@ -47,15 +47,15 @@ func SocketPath() string {
 	return filepath.Join(SpawntreeHome(), "spawntree.sock")
 }
 
-func RepoDir(repoID string) string {
-	return filepath.Join(SpawntreeHome(), "repos", repoID)
+func RepoDir(repoID RepoID) string {
+	return filepath.Join(SpawntreeHome(), "repos", string(repoID))
 }
 
-func RepoLogDir(repoID, envID string) string {
-	return filepath.Join(RepoDir(repoID), "logs", envID)
+func RepoLogDir(repoID RepoID, envID EnvID) string {
+	return filepath.Join(RepoDir(repoID), "logs", string(envID))
 }
 
-func RepoStatePath(repoID string) string {
+func RepoStatePath(repoID RepoID) string {
 	return filepath.Join(RepoDir(repoID), "state.json")
 }
 
@@ -63,7 +63,7 @@ func PortRegistryPath() string {
 	return filepath.Join(RuntimeDir(), "port-registry.json")
 }
 
-func EnsureRepoDirs(repoID, envID string) error {
+func EnsureRepoDirs(repoID RepoID, envID EnvID) error {
 	if err := os.MkdirAll(RepoDir(repoID), 0o755); err != nil {
 		return err
 	}
@@ -80,18 +80,18 @@ func LoadGlobalConfig() (GlobalConfig, error) {
 	})
 	if errors.Is(err, os.ErrNotExist) {
 		return GlobalConfig{
-			Repos:   map[string]RegisteredRepo{},
-			Tunnels: map[string]TunnelDefinition{},
+			Repos:   map[RepoID]RegisteredRepo{},
+			Tunnels: map[TunnelID]TunnelDefinition{},
 		}, nil
 	}
 	if err != nil {
 		return GlobalConfig{}, err
 	}
 	if cfg.Repos == nil {
-		cfg.Repos = map[string]RegisteredRepo{}
+		cfg.Repos = map[RepoID]RegisteredRepo{}
 	}
 	if cfg.Tunnels == nil {
-		cfg.Tunnels = map[string]TunnelDefinition{}
+		cfg.Tunnels = map[TunnelID]TunnelDefinition{}
 	}
 	return cfg, nil
 }
@@ -101,10 +101,10 @@ func SaveGlobalConfig(cfg GlobalConfig) error {
 		return err
 	}
 	if cfg.Repos == nil {
-		cfg.Repos = map[string]RegisteredRepo{}
+		cfg.Repos = map[RepoID]RegisteredRepo{}
 	}
 	if cfg.Tunnels == nil {
-		cfg.Tunnels = map[string]TunnelDefinition{}
+		cfg.Tunnels = map[TunnelID]TunnelDefinition{}
 	}
 	return writeStructuredFile(GlobalConfigPath(), cfg, func(value GlobalConfig) ([]byte, error) {
 		return yaml.Marshal(value)
@@ -151,13 +151,13 @@ func SavePortRegistry(state PortRegistryState) error {
 	})
 }
 
-func LoadRepoState(repoID string) (RepoState, error) {
+func LoadRepoState(repoID RepoID) (RepoState, error) {
 	return readStructuredFile(RepoStatePath(repoID), func(data []byte, target *RepoState) error {
 		return json.Unmarshal(data, target)
 	})
 }
 
-func SaveRepoState(repoID string, state RepoState) error {
+func SaveRepoState(repoID RepoID, state RepoState) error {
 	if err := os.MkdirAll(RepoDir(repoID), 0o755); err != nil {
 		return err
 	}

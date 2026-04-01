@@ -293,7 +293,7 @@ type RedisRunner struct {
 	containerID string
 	status      InfraStatus
 	mu          sync.Mutex
-	dbIndexMap  map[string]int
+	dbIndexMap  map[EnvKey]int
 	nextDBIndex int
 }
 
@@ -301,7 +301,7 @@ func NewRedisRunner() *RedisRunner {
 	return &RedisRunner{
 		Port:        redisPort,
 		status:      InfraStatusStopped,
-		dbIndexMap:  map[string]int{},
+		dbIndexMap:  map[EnvKey]int{},
 		nextDBIndex: 1,
 	}
 }
@@ -371,7 +371,7 @@ func (r *RedisRunner) Stop(context.Context) error {
 	return nil
 }
 
-func (r *RedisRunner) AllocateDBIndex(envKey string) int {
+func (r *RedisRunner) AllocateDBIndex(envKey EnvKey) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing, ok := r.dbIndexMap[envKey]; ok {
@@ -383,7 +383,7 @@ func (r *RedisRunner) AllocateDBIndex(envKey string) int {
 	return idx
 }
 
-func (r *RedisRunner) FreeDBIndex(envKey string) {
+func (r *RedisRunner) FreeDBIndex(envKey EnvKey) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.dbIndexMap, envKey)
@@ -533,7 +533,7 @@ func (m *InfraManager) GetStatus(_ context.Context) (InfraStatusResponse, error)
 			Version:     runner.Version,
 			Status:      runner.Status(),
 			ContainerID: runner.containerID,
-			Port:        runner.Port,
+			Port:        Port(runner.Port),
 			DataDir:     postgresDataDir(runner.Version),
 			Databases:   databases,
 		})
@@ -542,7 +542,7 @@ func (m *InfraManager) GetStatus(_ context.Context) (InfraStatusResponse, error)
 		resp.Redis = &RedisInstanceInfo{
 			Status:             redisRunner.Status(),
 			ContainerID:        redisRunner.containerID,
-			Port:               redisRunner.Port,
+			Port:               Port(redisRunner.Port),
 			AllocatedDbIndices: redisRunner.AllocatedDBCount(),
 		}
 	}

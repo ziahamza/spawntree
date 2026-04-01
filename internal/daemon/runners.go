@@ -104,10 +104,10 @@ func (p *ProcessRunner) Start(ctx context.Context) error {
 	p.mu.Unlock()
 
 	go streamPipeLines(stdout, func(line string) {
-		p.logStreamer.AddLine(p.repoID, p.envID, p.name, "stdout", line)
+		p.logStreamer.AddLine(RepoID(p.repoID), EnvID(p.envID), p.name, "stdout", line)
 	})
 	go streamPipeLines(stderr, func(line string) {
-		p.logStreamer.AddLine(p.repoID, p.envID, p.name, "stderr", line)
+		p.logStreamer.AddLine(RepoID(p.repoID), EnvID(p.envID), p.name, "stderr", line)
 	})
 
 	go func() {
@@ -117,7 +117,7 @@ func (p *ProcessRunner) Start(ctx context.Context) error {
 		if p.status != ServiceStatusStopped {
 			p.status = ServiceStatusFailed
 			if err != nil {
-				p.logStreamer.AddLine(p.repoID, p.envID, p.name, "system", fmt.Sprintf("[spawntree] Process exited: %v", err))
+				p.logStreamer.AddLine(RepoID(p.repoID), EnvID(p.envID), p.name, "system", fmt.Sprintf("[spawntree] Process exited: %v", err))
 			}
 		}
 		p.cmd = nil
@@ -255,7 +255,7 @@ func (c *ContainerRunner) Start(context.Context) error {
 	c.status = ServiceStatusRunning
 	c.mu.Unlock()
 
-	c.logStreamer.AddLine(c.repoID, c.envID, c.name, "system", fmt.Sprintf("[spawntree-daemon] Container started: %s on port %d", c.config.Image, c.allocatedPort))
+	c.logStreamer.AddLine(RepoID(c.repoID), EnvID(c.envID), c.name, "system", fmt.Sprintf("[spawntree-daemon] Container started: %s on port %d", c.config.Image, c.allocatedPort))
 	c.attachLogs()
 	return nil
 }
@@ -307,10 +307,10 @@ func (c *ContainerRunner) attachLogs() {
 	c.logCmd = cmd
 	c.mu.Unlock()
 	go streamPipeLines(stdout, func(line string) {
-		c.logStreamer.AddLine(c.repoID, c.envID, c.name, "stdout", line)
+		c.logStreamer.AddLine(RepoID(c.repoID), EnvID(c.envID), c.name, "stdout", line)
 	})
 	go streamPipeLines(stderr, func(line string) {
-		c.logStreamer.AddLine(c.repoID, c.envID, c.name, "stderr", line)
+		c.logStreamer.AddLine(RepoID(c.repoID), EnvID(c.envID), c.name, "stderr", line)
 	})
 	go func() {
 		_ = cmd.Wait()
@@ -318,7 +318,7 @@ func (c *ContainerRunner) attachLogs() {
 		defer c.mu.Unlock()
 		if c.status != ServiceStatusStopped {
 			c.status = ServiceStatusFailed
-			c.logStreamer.AddLine(c.repoID, c.envID, c.name, "system", "[spawntree-daemon] Container exited")
+			c.logStreamer.AddLine(RepoID(c.repoID), EnvID(c.envID), c.name, "system", "[spawntree-daemon] Container exited")
 		}
 	}()
 }

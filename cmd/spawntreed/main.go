@@ -27,20 +27,18 @@ func run() error {
 		return err
 	}
 
-	portRegistry, err := daemon.NewPortRegistry()
+	stateStore, err := daemon.NewStateStore()
 	if err != nil {
 		return err
 	}
 	logStreamer := daemon.NewLogStreamer()
 	infraManager := daemon.NewInfraManager()
-	registryManager, err := daemon.NewRegistryManager()
-	if err != nil {
-		return err
-	}
+	portRegistry := daemon.NewPortRegistry(stateStore)
+	registryManager := daemon.NewRegistryManager(stateStore)
 
 	proxyPort := registryManager.DaemonConfig().Proxy.Port
-	proxy := daemon.NewProxyServer(proxyPort)
-	envManager := daemon.NewEnvManager(portRegistry, logStreamer, infraManager, proxy)
+	proxy := daemon.NewProxyServer(proxyPort.Int())
+	envManager := daemon.NewEnvManager(stateStore, portRegistry, logStreamer, infraManager, proxy)
 	app := daemon.NewApp(envManager, logStreamer, infraManager, registryManager, daemonVersion)
 
 	_ = os.Remove(daemon.SocketPath())
@@ -68,7 +66,7 @@ func run() error {
 		PID:        os.Getpid(),
 		StartedAt:  time.Now().UTC().Format(time.RFC3339),
 		SocketPath: daemon.SocketPath(),
-		HTTPPort:   httpListener.Addr().(*net.TCPAddr).Port,
+		HTTPPort:   daemon.Port(httpListener.Addr().(*net.TCPAddr).Port),
 	}
 	if err := daemon.SaveRuntimeMetadata(meta); err != nil {
 		return err
@@ -88,7 +86,7 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	for _, env := range envManager.ListEnvs("") {
-		_ = envManager.DownEnv(shutdownCtx, env.RepoID, env.EnvID)
+		_ = envManager.DownEnv(shutdownCtx, string(env.RepoID), string(env.EnvID))
 	}
 	_ = proxy.Stop()
 	_ = unixServer.Shutdown(shutdownCtx)

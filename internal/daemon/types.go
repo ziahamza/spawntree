@@ -29,21 +29,21 @@ const (
 )
 
 type ServiceInfo struct {
-	Name        string        `json:"name" yaml:"name"`
+	Name        ServiceName   `json:"name" yaml:"name"`
 	Type        ServiceType   `json:"type" yaml:"type"`
 	Status      ServiceStatus `json:"status" yaml:"status"`
-	Port        int           `json:"port" yaml:"port"`
+	Port        Port          `json:"port" yaml:"port"`
 	PID         *int          `json:"pid,omitempty" yaml:"pid,omitempty"`
 	URL         string        `json:"url,omitempty" yaml:"url,omitempty"`
 	ContainerID string        `json:"containerId,omitempty" yaml:"containerId,omitempty"`
 }
 
 type EnvInfo struct {
-	EnvID     string        `json:"envId" yaml:"envId"`
-	RepoID    string        `json:"repoId" yaml:"repoId"`
+	EnvID     EnvID         `json:"envId" yaml:"envId"`
+	RepoID    RepoID        `json:"repoId" yaml:"repoId"`
 	RepoPath  string        `json:"repoPath" yaml:"repoPath"`
-	Branch    string        `json:"branch" yaml:"branch"`
-	BasePort  int           `json:"basePort" yaml:"basePort"`
+	Branch    BranchName    `json:"branch" yaml:"branch"`
+	BasePort  Port          `json:"basePort" yaml:"basePort"`
 	CreatedAt string        `json:"createdAt" yaml:"createdAt"`
 	Services  []ServiceInfo `json:"services" yaml:"services"`
 }
@@ -60,7 +60,7 @@ type PostgresInstanceInfo struct {
 	Version     string      `json:"version" yaml:"version"`
 	Status      InfraStatus `json:"status" yaml:"status"`
 	ContainerID string      `json:"containerId,omitempty" yaml:"containerId,omitempty"`
-	Port        int         `json:"port" yaml:"port"`
+	Port        Port        `json:"port" yaml:"port"`
 	DataDir     string      `json:"dataDir" yaml:"dataDir"`
 	Databases   []string    `json:"databases" yaml:"databases"`
 }
@@ -68,7 +68,7 @@ type PostgresInstanceInfo struct {
 type RedisInstanceInfo struct {
 	Status             InfraStatus `json:"status" yaml:"status"`
 	ContainerID        string      `json:"containerId,omitempty" yaml:"containerId,omitempty"`
-	Port               int         `json:"port" yaml:"port"`
+	Port               Port        `json:"port" yaml:"port"`
 	AllocatedDbIndices int         `json:"allocatedDbIndices" yaml:"allocatedDbIndices"`
 }
 
@@ -79,7 +79,7 @@ type InfraStatusResponse struct {
 
 type CreateEnvRequest struct {
 	RepoPath     string            `json:"repoPath"`
-	EnvID        string            `json:"envId,omitempty"`
+	EnvID        EnvID             `json:"envId,omitempty"`
 	Prefix       string            `json:"prefix,omitempty"`
 	EnvOverrides map[string]string `json:"envOverrides,omitempty"`
 	ConfigFile   string            `json:"configFile,omitempty"`
@@ -161,11 +161,11 @@ type APIError struct {
 }
 
 type HTTPListenerConfig struct {
-	Port int `json:"port,omitempty" yaml:"port,omitempty"`
+	Port Port `json:"port,omitempty" yaml:"port,omitempty"`
 }
 
 type ProxySettings struct {
-	Port int `json:"port,omitempty" yaml:"port,omitempty"`
+	Port Port `json:"port,omitempty" yaml:"port,omitempty"`
 }
 
 type RuntimeConfig struct {
@@ -174,14 +174,14 @@ type RuntimeConfig struct {
 }
 
 type RegisteredRepo struct {
-	RepoID     string `json:"repoId" yaml:"repoId"`
+	RepoID     RepoID `json:"repoId" yaml:"repoId"`
 	RepoPath   string `json:"repoPath" yaml:"repoPath"`
 	ConfigPath string `json:"configPath" yaml:"configPath"`
 	LastSeenAt string `json:"lastSeenAt" yaml:"lastSeenAt"`
 }
 
 type TunnelDefinition struct {
-	ID       string            `json:"id" yaml:"id"`
+	ID       TunnelID          `json:"id" yaml:"id"`
 	Provider string            `json:"provider" yaml:"provider"`
 	Target   TunnelTarget      `json:"target" yaml:"target"`
 	Enabled  bool              `json:"enabled" yaml:"enabled"`
@@ -189,23 +189,23 @@ type TunnelDefinition struct {
 }
 
 type TunnelTarget struct {
-	RepoID      string `json:"repoId,omitempty" yaml:"repoId,omitempty"`
-	EnvID       string `json:"envId,omitempty" yaml:"envId,omitempty"`
-	ServiceName string `json:"serviceName,omitempty" yaml:"serviceName,omitempty"`
+	RepoID      RepoID      `json:"repoId,omitempty" yaml:"repoId,omitempty"`
+	EnvID       EnvID       `json:"envId,omitempty" yaml:"envId,omitempty"`
+	ServiceName ServiceName `json:"serviceName,omitempty" yaml:"serviceName,omitempty"`
 }
 
 type TunnelStatusInfo struct {
-	ID        string `json:"id" yaml:"id"`
-	Provider  string `json:"provider" yaml:"provider"`
-	State     string `json:"state" yaml:"state"`
-	PublicURL string `json:"publicUrl,omitempty" yaml:"publicUrl,omitempty"`
-	LastError string `json:"lastError,omitempty" yaml:"lastError,omitempty"`
+	ID        TunnelID `json:"id" yaml:"id"`
+	Provider  string   `json:"provider" yaml:"provider"`
+	State     string   `json:"state" yaml:"state"`
+	PublicURL string   `json:"publicUrl,omitempty" yaml:"publicUrl,omitempty"`
+	LastError string   `json:"lastError,omitempty" yaml:"lastError,omitempty"`
 }
 
 type GlobalConfig struct {
-	Daemon  RuntimeConfig               `json:"daemon,omitempty" yaml:"daemon,omitempty"`
-	Repos   map[string]RegisteredRepo   `json:"repos,omitempty" yaml:"repos,omitempty"`
-	Tunnels map[string]TunnelDefinition `json:"tunnels,omitempty" yaml:"tunnels,omitempty"`
+	Daemon  RuntimeConfig                 `json:"daemon,omitempty" yaml:"daemon,omitempty"`
+	Repos   map[RepoID]RegisteredRepo     `json:"repos,omitempty" yaml:"repos,omitempty"`
+	Tunnels map[TunnelID]TunnelDefinition `json:"tunnels,omitempty" yaml:"tunnels,omitempty"`
 }
 
 type RegisterRepoRequest struct {
@@ -226,7 +226,7 @@ type ListTunnelsResponse struct {
 }
 
 type UpsertTunnelRequest struct {
-	ID       string            `json:"id"`
+	ID       TunnelID          `json:"id"`
 	Provider string            `json:"provider"`
 	Target   TunnelTarget      `json:"target"`
 	Enabled  bool              `json:"enabled"`
@@ -245,12 +245,12 @@ type RuntimeMetadata struct {
 	PID        int    `json:"pid"`
 	StartedAt  string `json:"startedAt"`
 	SocketPath string `json:"socketPath"`
-	HTTPPort   int    `json:"httpPort"`
+	HTTPPort   Port   `json:"httpPort"`
 }
 
 type PortSlot struct {
-	EnvKey      string `json:"envKey"`
-	BasePort    int    `json:"basePort"`
+	EnvKey      EnvKey `json:"envKey"`
+	BasePort    Port   `json:"basePort"`
 	AllocatedAt string `json:"allocatedAt"`
 }
 
@@ -259,17 +259,17 @@ type PortRegistryState struct {
 }
 
 type RepoEnvRecord struct {
-	EnvID     string        `json:"envId"`
-	RepoID    string        `json:"repoId"`
+	EnvID     EnvID         `json:"envId"`
+	RepoID    RepoID        `json:"repoId"`
 	RepoPath  string        `json:"repoPath"`
-	Branch    string        `json:"branch"`
-	BasePort  int           `json:"basePort"`
+	Branch    BranchName    `json:"branch"`
+	BasePort  Port          `json:"basePort"`
 	CreatedAt string        `json:"createdAt"`
 	Services  []ServiceInfo `json:"services"`
 }
 
 type RepoState struct {
-	RepoID   string          `json:"repoId"`
+	RepoID   RepoID          `json:"repoId"`
 	RepoPath string          `json:"repoPath"`
 	Envs     []RepoEnvRecord `json:"envs"`
 }
@@ -289,7 +289,7 @@ type VolumeConfig struct {
 type ServiceConfig struct {
 	Type        ServiceType        `json:"type" yaml:"type"`
 	Command     string             `json:"command,omitempty" yaml:"command,omitempty"`
-	Port        int                `json:"port,omitempty" yaml:"port,omitempty"`
+	Port        Port               `json:"port,omitempty" yaml:"port,omitempty"`
 	Image       string             `json:"image,omitempty" yaml:"image,omitempty"`
 	URL         string             `json:"url,omitempty" yaml:"url,omitempty"`
 	Toolchain   map[string]string  `json:"toolchain,omitempty" yaml:"toolchain,omitempty"`
@@ -306,7 +306,7 @@ type SpawntreeConfig struct {
 	ServiceOrder []string                 `json:"-" yaml:"-"`
 }
 
-func DeriveRepoID(repoPath string) string {
+func DeriveRepoID(repoPath string) RepoID {
 	last := ""
 	for _, ch := range repoPath {
 		if ch == '/' {
@@ -317,10 +317,10 @@ func DeriveRepoID(repoPath string) string {
 	parts := splitPath(repoPath)
 	for i := len(parts) - 1; i >= 0; i-- {
 		if parts[i] != "" {
-			return sanitizeID(parts[i])
+			return RepoID(sanitizeID(parts[i]))
 		}
 	}
-	return sanitizeID(last)
+	return RepoID(sanitizeID(last))
 }
 
 func splitPath(path string) []string {

@@ -32,18 +32,18 @@ func NewLogStreamer() *LogStreamer {
 	}
 }
 
-func bufferKey(repoID, envID, service string) string {
-	return repoID + ":" + envID + ":" + service
+func bufferKey(repoID RepoID, envID EnvID, service string) string {
+	return string(repoID) + ":" + string(envID) + ":" + service
 }
 
-func (l *LogStreamer) InitService(repoID, envID, service string) error {
+func (l *LogStreamer) InitService(repoID RepoID, envID EnvID, service string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	_, err := l.ensureBufferLocked(repoID, envID, service)
 	return err
 }
 
-func (l *LogStreamer) AddLine(repoID, envID, service, stream, line string) {
+func (l *LogStreamer) AddLine(repoID RepoID, envID EnvID, service, stream, line string) {
 	l.mu.Lock()
 	buf, err := l.ensureBufferLocked(repoID, envID, service)
 	if err != nil {
@@ -77,7 +77,7 @@ func (l *LogStreamer) AddLine(repoID, envID, service, stream, line string) {
 	}
 }
 
-func (l *LogStreamer) ReadHistory(repoID, envID, service string, lines int) ([]LogLine, error) {
+func (l *LogStreamer) ReadHistory(repoID RepoID, envID EnvID, service string, lines int) ([]LogLine, error) {
 	l.mu.Lock()
 	services := l.getServicesForEnvLocked(repoID, envID)
 	l.mu.Unlock()
@@ -113,7 +113,7 @@ func (l *LogStreamer) ReadHistory(repoID, envID, service string, lines int) ([]L
 	return all, nil
 }
 
-func (l *LogStreamer) Subscribe(repoID, envID, service string) (<-chan LogLine, func(), error) {
+func (l *LogStreamer) Subscribe(repoID RepoID, envID EnvID, service string) (<-chan LogLine, func(), error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -162,10 +162,10 @@ func (l *LogStreamer) Subscribe(repoID, envID, service string) (<-chan LogLine, 
 	return ch, cleanup, nil
 }
 
-func (l *LogStreamer) CloseEnv(repoID, envID string) {
+func (l *LogStreamer) CloseEnv(repoID RepoID, envID EnvID) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	prefix := repoID + ":" + envID + ":"
+	prefix := string(repoID) + ":" + string(envID) + ":"
 	seen := map[chan LogLine]bool{}
 	for key, buf := range l.buffers {
 		if strings.HasPrefix(key, prefix) {
@@ -182,7 +182,7 @@ func (l *LogStreamer) CloseEnv(repoID, envID string) {
 	}
 }
 
-func (l *LogStreamer) ensureBufferLocked(repoID, envID, service string) (*serviceBuffer, error) {
+func (l *LogStreamer) ensureBufferLocked(repoID RepoID, envID EnvID, service string) (*serviceBuffer, error) {
 	key := bufferKey(repoID, envID, service)
 	if buf, ok := l.buffers[key]; ok {
 		return buf, nil
@@ -203,8 +203,8 @@ func (l *LogStreamer) ensureBufferLocked(repoID, envID, service string) (*servic
 	return buf, nil
 }
 
-func (l *LogStreamer) getServicesForEnvLocked(repoID, envID string) []string {
-	prefix := repoID + ":" + envID + ":"
+func (l *LogStreamer) getServicesForEnvLocked(repoID RepoID, envID EnvID) []string {
+	prefix := string(repoID) + ":" + string(envID) + ":"
 	services := []string{}
 	for key := range l.buffers {
 		if strings.HasPrefix(key, prefix) {

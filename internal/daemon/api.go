@@ -311,7 +311,7 @@ func (a *App) handleLogStream(w http.ResponseWriter, r *http.Request, repoID, en
 			lines = parsed
 		}
 	}
-	history, err := a.logStreamer.ReadHistory(repoID, envID, service, lines)
+	history, err := a.logStreamer.ReadHistory(RepoID(repoID), EnvID(envID), service, lines)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
@@ -331,7 +331,7 @@ func (a *App) handleLogStream(w http.ResponseWriter, r *http.Request, repoID, en
 	if !follow {
 		return
 	}
-	ch, cleanup, err := a.logStreamer.Subscribe(repoID, envID, service)
+	ch, cleanup, err := a.logStreamer.Subscribe(RepoID(repoID), EnvID(envID), service)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
