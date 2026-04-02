@@ -327,6 +327,28 @@ func TestUpsertCloneAfterRelink(t *testing.T) {
 	}
 }
 
+// Regression: Devin review — UpsertClone must update repo_id when remote changes.
+func TestUpsertCloneUpdatesRepoID(t *testing.T) {
+	db := setupTestDB(t)
+
+	_ = db.UpsertRepo(Repo{ID: "github/org/old", Slug: "github-org-old", Name: "old", Provider: "github", Owner: "org"})
+	_ = db.UpsertRepo(Repo{ID: "github/org/new", Slug: "github-org-new", Name: "new", Provider: "github", Owner: "org"})
+
+	clone := Clone{ID: "c1", RepoID: "github/org/old", Path: "/repos/project", Status: "active"}
+	_ = db.UpsertClone(clone)
+
+	// Re-add same clone with different repo (remote changed from fork to upstream)
+	clone.RepoID = "github/org/new"
+	if err := db.UpsertClone(clone); err != nil {
+		t.Fatalf("UpsertClone with new repo_id: %v", err)
+	}
+
+	got, _ := db.GetClone("c1")
+	if got.RepoID != "github/org/new" {
+		t.Errorf("repo_id = %q, want 'github/org/new'", got.RepoID)
+	}
+}
+
 // Regression: Devin review — PRAGMA DSN params must use modernc.org/sqlite syntax.
 // The original code used mattn/go-sqlite3 syntax which was silently ignored.
 // Found by Devin on 2026-04-03.

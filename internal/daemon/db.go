@@ -166,6 +166,9 @@ func (db *DB) UpsertRepo(repo Repo) error {
 	}
 	repo.UpdatedAt = now
 
+	// Delete any stale repo with same slug but different ID to avoid UNIQUE violation.
+	_, _ = db.writerDB.Exec("DELETE FROM repos WHERE slug = ? AND id != ?", repo.Slug, repo.ID)
+
 	_, err := db.writerDB.Exec(`
 		INSERT INTO repos (id, slug, name, provider, owner, remote_url, default_branch, description, registered_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -202,6 +205,7 @@ func (db *DB) UpsertClone(clone Clone) error {
 		INSERT INTO clones (id, repo_id, path, status, last_seen_at, registered_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
+			repo_id = excluded.repo_id,
 			path = excluded.path,
 			status = excluded.status,
 			last_seen_at = excluded.last_seen_at
@@ -219,6 +223,8 @@ func (db *DB) UpdateCloneStatus(cloneID, status string) error {
 
 func (db *DB) UpdateClonePath(cloneID, newPath string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
+	// Delete any other clone with the same path to avoid UNIQUE violation
+	_, _ = db.writerDB.Exec("DELETE FROM clones WHERE path = ? AND id != ?", newPath, cloneID)
 	_, err := db.writerDB.Exec("UPDATE clones SET path = ?, status = 'active', last_seen_at = ? WHERE id = ?", newPath, now, cloneID)
 	return err
 }
