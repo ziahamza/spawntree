@@ -172,12 +172,27 @@ export function useWebRepoDetail(slug: string) {
   return useQuery<WebRepoDetail>({
     queryKey: ['web', 'repos', slug],
     queryFn: async () => {
-      const res = await apiFetch<{ repo: WebRepo; clones: Clone[]; worktrees: Record<string, Worktree[]> }>(`/web/repos/${slug}`)
+      const res = await apiFetch<{
+        repo: WebRepo
+        clones: Array<{ id: string; repoId: string; path: string; status: string; lastSeenAt: string }>
+        worktrees: Record<string, Array<{ path: string; branch: string; headRef: string }>>
+      }>(`/web/repos/${slug}`)
+      // Transform backend shapes to frontend types
+      const clones: Clone[] = (res.clones ?? []).map((c) => ({
+        id: c.id,
+        path: c.path,
+        missing: c.status === 'missing',
+        worktrees: (res.worktrees?.[c.id] ?? []).map((wt) => ({
+          path: wt.path,
+          branch: wt.branch,
+          envs: [], // Envs are fetched separately per clone via the envs API
+        })),
+      }))
       return {
         slug: res.repo.slug,
         name: res.repo.name,
         remoteUrl: res.repo.remoteUrl,
-        clones: res.clones ?? [],
+        clones,
         worktrees: res.worktrees ?? {},
       }
     },

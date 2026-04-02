@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -587,7 +588,7 @@ func (a *App) handleWebAddFolder(w http.ResponseWriter, r *http.Request) {
 
 	info, remotes, err := DetectRepoInfo(gitRoot)
 	if err != nil {
-		info = RemoteInfo{Provider: "local", Repo: sanitizeID(gitRoot)}
+		info = RemoteInfo{Provider: "local", Repo: sanitizeID(filepath.Base(gitRoot))}
 	}
 
 	// If the user specified a preferred remote, use it instead of the default
