@@ -1,0 +1,110 @@
+import { createRootRoute, Outlet } from '@tanstack/react-router'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useState } from 'react'
+import { Menu, X } from 'lucide-react'
+import { RepoTree } from '../components/RepoTree'
+import { AddFolderDialog } from '../components/AddFolderDialog'
+import { useDaemonInfo } from '../lib/api'
+import '../styles.css'
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchInterval: 5000,
+      staleTime: 2000,
+    },
+  },
+})
+
+export const Route = createRootRoute({
+  component: () => (
+    <QueryClientProvider client={queryClient}>
+      <RootComponent />
+    </QueryClientProvider>
+  ),
+})
+
+function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+  const [addOpen, setAddOpen] = useState(false)
+  const { data: daemon } = useDaemonInfo()
+
+  return (
+    <>
+      <div className="p-4 border-b border-border flex items-center justify-between flex-shrink-0">
+        <div>
+          <h1 className="text-sm font-semibold font-display text-foreground">spawntree</h1>
+          <span className="text-xs text-muted">{daemon?.version ?? '…'}</span>
+        </div>
+        <button
+          onClick={() => setAddOpen(true)}
+          className="px-2.5 py-1 text-xs rounded-md border border-border bg-surface text-muted hover:text-foreground hover:border-foreground/30 transition-colors min-h-[30px]"
+        >
+          + Add
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <RepoTree onNavigate={onNavigate} />
+      </div>
+
+      <AddFolderDialog open={addOpen} onOpenChange={setAddOpen} />
+    </>
+  )
+}
+
+function RootComponent() {
+  const [drawerOpen, setDrawerOpen] = useState(false)
+
+  return (
+    <div className="flex h-screen bg-background text-foreground font-sans overflow-hidden">
+      {/* Desktop sidebar (lg+) */}
+      <aside className="hidden lg:flex w-60 flex-shrink-0 border-r border-border bg-surface flex-col">
+        <SidebarContent />
+      </aside>
+
+      {/* Mobile drawer overlay */}
+      {drawerOpen && (
+        <div
+          className="lg:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+          onClick={() => setDrawerOpen(false)}
+        />
+      )}
+
+      {/* Mobile drawer panel */}
+      <aside
+        className={`lg:hidden fixed inset-y-0 left-0 z-50 w-72 bg-surface border-r border-border flex flex-col transition-transform duration-200 ${
+          drawerOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="flex items-center justify-end p-2 border-b border-border">
+          <button
+            onClick={() => setDrawerOpen(false)}
+            className="p-2 text-muted hover:text-foreground transition-colors rounded-md"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto flex flex-col">
+          <SidebarContent onNavigate={() => setDrawerOpen(false)} />
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <main className="flex-1 flex flex-col overflow-hidden min-w-0">
+        {/* Mobile top bar */}
+        <div className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-surface flex-shrink-0">
+          <button
+            onClick={() => setDrawerOpen(true)}
+            className="p-2 text-muted hover:text-foreground transition-colors rounded-md min-h-[44px] min-w-[44px] flex items-center justify-center"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <span className="font-display font-semibold text-sm text-foreground">spawntree</span>
+        </div>
+
+        <div className="flex-1 overflow-auto">
+          <Outlet />
+        </div>
+      </main>
+    </div>
+  )
+}
