@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Database, Server, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
+import { Database, Server } from 'lucide-react'
 import { useInfra } from '../lib/api'
 import { StatusDot } from '../components/StatusDot'
 import type { Status } from '../components/StatusDot'
@@ -8,16 +8,8 @@ export const Route = createFileRoute('/infra')({
   component: InfraPage,
 })
 
-function serviceStatus(s: 'running' | 'stopped' | 'crashed'): Status {
-  if (s === 'running') return 'running'
-  if (s === 'crashed') return 'crashed'
-  return 'stopped'
-}
-
-function StatusIcon({ status }: { status: 'running' | 'stopped' | 'crashed' }) {
-  if (status === 'running') return <CheckCircle className="w-4 h-4 text-green" />
-  if (status === 'crashed') return <XCircle className="w-4 h-4 text-red" />
-  return <AlertCircle className="w-4 h-4 text-muted" />
+function toStatus(isRunning: boolean): Status {
+  return isRunning ? 'running' : 'stopped'
 }
 
 function InfraCard({
@@ -28,7 +20,7 @@ function InfraCard({
 }: {
   title: string
   icon: React.ReactNode
-  status: 'running' | 'stopped' | 'crashed'
+  status: Status
   details: { label: string; value: string | number | undefined }[]
 }) {
   return (
@@ -37,7 +29,7 @@ function InfraCard({
         <div className="text-muted">{icon}</div>
         <h2 className="font-display font-semibold text-foreground">{title}</h2>
         <div className="ml-auto flex items-center gap-2">
-          <StatusDot status={serviceStatus(status)} />
+          <StatusDot status={status} />
           <span className="text-sm text-muted capitalize">{status}</span>
         </div>
       </div>
@@ -80,38 +72,53 @@ function InfraPage() {
     )
   }
 
+  // The API returns {postgres: [...instances], redis: {...} | null}
+  const pgInstances = Array.isArray(infra?.postgres) ? infra.postgres : []
+  const redis = infra?.redis
+
   return (
     <div className="p-6 max-w-2xl mx-auto w-full">
       <h1 className="font-display text-2xl font-semibold text-foreground mb-6">Infrastructure</h1>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        {/* PostgreSQL */}
-        <InfraCard
-          title="PostgreSQL"
-          icon={<Database className="w-5 h-5" />}
-          status={infra?.postgres.status ?? 'stopped'}
-          details={[
-            { label: 'Version', value: infra?.postgres.version },
-            { label: 'Port', value: infra?.postgres.port },
-            { label: 'Container', value: infra?.postgres.containerID?.slice(0, 12) },
-          ]}
-        />
+        {pgInstances.length > 0 ? (
+          pgInstances.map((pg: any, i: number) => (
+            <InfraCard
+              key={i}
+              title={`PostgreSQL ${pg.version || ''}`}
+              icon={<Database className="w-5 h-5" />}
+              status={toStatus(pg.running)}
+              details={[
+                { label: 'Version', value: pg.version },
+                { label: 'Port', value: pg.port },
+                { label: 'Container', value: pg.containerID?.slice(0, 12) },
+                { label: 'Databases', value: pg.databases },
+              ]}
+            />
+          ))
+        ) : (
+          <InfraCard
+            title="PostgreSQL"
+            icon={<Database className="w-5 h-5" />}
+            status="stopped"
+            details={[
+              { label: 'Status', value: 'Not running' },
+            ]}
+          />
+        )}
 
-        {/* Redis */}
         <InfraCard
           title="Redis"
           icon={<Server className="w-5 h-5" />}
-          status={infra?.redis.status ?? 'stopped'}
-          details={[
-            { label: 'Port', value: infra?.redis.port },
-            { label: 'Container', value: infra?.redis.containerID?.slice(0, 12) },
+          status={redis ? toStatus(redis.running) : 'stopped'}
+          details={redis ? [
+            { label: 'Port', value: redis.port },
+            { label: 'Container', value: redis.containerID?.slice(0, 12) },
+          ] : [
+            { label: 'Status', value: 'Not running' },
           ]}
         />
       </div>
-
-      {!infra && !isLoading && (
-        <p className="text-center text-muted text-sm mt-8">No infrastructure data available</p>
-      )}
     </div>
   )
 }
