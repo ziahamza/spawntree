@@ -15,7 +15,7 @@ import (
 
 type App struct {
 	envManager      *EnvManager
-	logStreamer      *LogStreamer
+	logStreamer     *LogStreamer
 	infraManager    *InfraManager
 	registryManager *RegistryManager
 	db              *DB
@@ -27,7 +27,7 @@ type App struct {
 func NewApp(envManager *EnvManager, logStreamer *LogStreamer, infraManager *InfraManager, registryManager *RegistryManager, db *DB, version string) *App {
 	a := &App{
 		envManager:      envManager,
-		logStreamer:      logStreamer,
+		logStreamer:     logStreamer,
 		infraManager:    infraManager,
 		registryManager: registryManager,
 		db:              db,
@@ -497,16 +497,19 @@ func (a *App) handleWebDeleteClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cloneID := chi.URLParam(r, "cloneID")
-	slug := chi.URLParam(r, "repoSlug")
 
-	// Check for running envs in this clone
-	repo, _ := a.db.GetRepoBySlug(slug)
-	if repo != nil {
-		envs := a.envManager.ListEnvs(string(DeriveRepoID(slug)))
-		if len(envs) > 0 {
-			writeAPIError(w, http.StatusConflict, "CONFLICT", "Cannot delete clone with running environments. Stop them first.", nil)
-			return
-		}
+	// Look up the clone's actual filesystem path to derive the correct repo ID
+	clone, err := a.db.GetClone(cloneID)
+	if err != nil || clone == nil {
+		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", "Clone not found", nil)
+		return
+	}
+	// Use the clone's real path to derive the repo ID that the env manager uses
+	envRepoID := DeriveRepoID(clone.Path)
+	envs := a.envManager.ListEnvs(string(envRepoID))
+	if len(envs) > 0 {
+		writeAPIError(w, http.StatusConflict, "CONFLICT", "Cannot delete clone with running environments. Stop them first.", nil)
+		return
 	}
 
 	if err := a.db.DeleteClone(cloneID); err != nil {
@@ -562,29 +565,18 @@ func (a *App) handleWebAddFolder(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Try to enrich with gh metadata
-	if info.Provider == "github" && info.Owner != "" && info.Repo != "" {
-		defBranch, desc := TryGHMetadata(info.Owner, info.Repo)
-		if defBranch != "" {
-			info.Repo = info.Repo // keep repo name
-			_ = defBranch
-			_ = desc
-		}
-	}
-
 	repo := Repo{
-		ID:       info.CanonicalID(),
-		Slug:     info.Slug(),
-		Name:     info.Repo,
-		Provider: info.Provider,
-		Owner:    info.Owner,
+		ID:        info.CanonicalID(),
+		Slug:      info.Slug(),
+		Name:      info.Repo,
+		Provider:  info.Provider,
+		Owner:     info.Owner,
 		RemoteURL: info.URL,
 	}
 
-	if info.Provider == "github" && info.Owner != "" {
-		defBranch, desc := TryGHMetadata(info.Owner, info.Repo)
-		repo.DefaultBranch = defBranch
-		repo.Description = desc
+	// Enrich with gh metadata (optional, single call)
+	if info.Provider == "github" && info.Owner != "" && info.Repo != "" {
+		repo.DefaultBranch, repo.Description = TryGHMetadata(info.Owner, info.Repo)
 	}
 
 	if err := a.db.UpsertRepo(repo); err != nil {

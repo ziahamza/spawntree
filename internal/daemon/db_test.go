@@ -199,6 +199,89 @@ func TestWorktreesLifecycle(t *testing.T) {
 	}
 }
 
+// Regression: Devin review — DeleteClone must be transactional.
+// If worktrees delete succeeds but clone delete would fail, both should roll back.
+// Found by /qa on 2026-04-02.
+func TestDeleteCloneIsTransactional(t *testing.T) {
+	db := setupTestDB(t)
+
+	repo := Repo{ID: "local/txtest", Slug: "local-txtest", Name: "txtest", Provider: "local"}
+	_ = db.UpsertRepo(repo)
+
+	clone := Clone{ID: "txclone", RepoID: "local/txtest", Path: t.TempDir(), Status: "active"}
+	_ = db.UpsertClone(clone)
+
+	wt := Worktree{Path: filepath.Join(clone.Path, "main"), CloneID: "txclone", Branch: "main", HeadRef: "abc", DiscoveredAt: "2026-04-01T00:00:00Z"}
+	_ = db.ReplaceWorktrees("txclone", []Worktree{wt})
+
+	// Normal delete should remove both clone and worktrees
+	if err := db.DeleteClone("txclone"); err != nil {
+		t.Fatalf("DeleteClone: %v", err)
+	}
+	clones, _ := db.ListClones("local/txtest")
+	if len(clones) != 0 {
+		t.Errorf("expected 0 clones after transactional delete, got %d", len(clones))
+	}
+	worktrees, _ := db.ListWorktrees("txclone")
+	if len(worktrees) != 0 {
+		t.Errorf("expected 0 worktrees after transactional delete, got %d", len(worktrees))
+	}
+}
+
+// Regression: Devin review — ReplaceWorktrees must be transactional.
+// If an INSERT fails mid-way, the old worktrees should be preserved (rolled back).
+// Found by /qa on 2026-04-02.
+func TestReplaceWorktreesIsTransactional(t *testing.T) {
+	db := setupTestDB(t)
+
+	repo := Repo{ID: "local/rwtx", Slug: "local-rwtx", Name: "rwtx", Provider: "local"}
+	_ = db.UpsertRepo(repo)
+
+	clone := Clone{ID: "rwclone", RepoID: "local/rwtx", Path: t.TempDir(), Status: "active"}
+	_ = db.UpsertClone(clone)
+
+	// Insert initial worktrees
+	wt1 := Worktree{Path: "/a", CloneID: "rwclone", Branch: "main", HeadRef: "aaa", DiscoveredAt: "2026-04-01T00:00:00Z"}
+	_ = db.ReplaceWorktrees("rwclone", []Worktree{wt1})
+
+	// Replace with valid set
+	wt2 := Worktree{Path: "/b", CloneID: "rwclone", Branch: "dev", HeadRef: "bbb", DiscoveredAt: "2026-04-01T00:00:00Z"}
+	wt3 := Worktree{Path: "/c", CloneID: "rwclone", Branch: "feat", HeadRef: "ccc", DiscoveredAt: "2026-04-01T00:00:00Z"}
+	if err := db.ReplaceWorktrees("rwclone", []Worktree{wt2, wt3}); err != nil {
+		t.Fatalf("ReplaceWorktrees: %v", err)
+	}
+
+	worktrees, _ := db.ListWorktrees("rwclone")
+	if len(worktrees) != 2 {
+		t.Fatalf("expected 2 worktrees, got %d", len(worktrees))
+	}
+	// Verify old worktree is gone
+	for _, wt := range worktrees {
+		if wt.Path == "/a" {
+			t.Error("old worktree /a should have been replaced")
+		}
+	}
+}
+
+// Regression: Devin review — DeriveRepoID must use filesystem paths, not URL slugs.
+// The clone delete handler was calling DeriveRepoID with a slug like "github-org-repo"
+// which always returned a wrong repo ID, bypassing the running-env safety check.
+// Found by /qa on 2026-04-02.
+func TestDeriveRepoIDUsesPathNotSlug(t *testing.T) {
+	// DeriveRepoID should extract last path component
+	got := string(DeriveRepoID("/Users/hzia/repos/spawntree"))
+	if got != "spawntree" {
+		t.Errorf("DeriveRepoID('/Users/hzia/repos/spawntree') = %q, want 'spawntree'", got)
+	}
+
+	// A slug with no slashes should NOT produce the same result as a real path
+	slugResult := string(DeriveRepoID("github-ziahamza-spawntree"))
+	pathResult := string(DeriveRepoID("/Users/hzia/repos/spawntree"))
+	if slugResult == pathResult {
+		t.Errorf("DeriveRepoID should produce different results for slug vs path, both got %q", slugResult)
+	}
+}
+
 func TestDBPathExists(t *testing.T) {
 	path := DBPath()
 	if path == "" {

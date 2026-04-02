@@ -34,10 +34,10 @@ type Repo struct {
 
 // Clone represents a local checkout (clone or worktree root) of a repo.
 type Clone struct {
-	ID           string `json:"id"`           // sha256(path)[:12]
-	RepoID       string `json:"repoId"`       // references Repo.ID
-	Path         string `json:"path"`         // absolute filesystem path
-	Status       string `json:"status"`       // "active" | "missing"
+	ID           string `json:"id"`     // sha256(path)[:12]
+	RepoID       string `json:"repoId"` // references Repo.ID
+	Path         string `json:"path"`   // absolute filesystem path
+	Status       string `json:"status"` // "active" | "missing"
 	LastSeenAt   string `json:"lastSeenAt"`
 	RegisteredAt string `json:"registeredAt"`
 }
@@ -61,7 +61,7 @@ type DiscoverResult struct {
 
 // DiscoverWarning represents a problem found during discovery.
 type DiscoverWarning struct {
-	Type    string `json:"type"`    // "missing_clone" | "orphaned_worktree"
+	Type    string `json:"type"` // "missing_clone" | "orphaned_worktree"
 	RepoID  string `json:"repoId"`
 	CloneID string `json:"cloneId,omitempty"`
 	Path    string `json:"path"`
@@ -210,29 +210,40 @@ func (db *DB) UpdateClonePath(cloneID, newPath string) error {
 }
 
 func (db *DB) DeleteClone(cloneID string) error {
-	_, err := db.writerDB.Exec("DELETE FROM worktrees WHERE clone_id = ?", cloneID)
+	tx, err := db.writerDB.Begin()
 	if err != nil {
 		return err
 	}
-	_, err = db.writerDB.Exec("DELETE FROM clones WHERE id = ?", cloneID)
-	return err
+	defer tx.Rollback()
+
+	if _, err := tx.Exec("DELETE FROM worktrees WHERE clone_id = ?", cloneID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM clones WHERE id = ?", cloneID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (db *DB) ReplaceWorktrees(cloneID string, worktrees []Worktree) error {
-	_, err := db.writerDB.Exec("DELETE FROM worktrees WHERE clone_id = ?", cloneID)
+	tx, err := db.writerDB.Begin()
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec("DELETE FROM worktrees WHERE clone_id = ?", cloneID); err != nil {
+		return err
+	}
 	for _, wt := range worktrees {
-		_, err := db.writerDB.Exec(`
+		if _, err := tx.Exec(`
 			INSERT INTO worktrees (path, clone_id, branch, head_ref, discovered_at)
 			VALUES (?, ?, ?, ?, ?)
-		`, wt.Path, cloneID, wt.Branch, wt.HeadRef, wt.DiscoveredAt)
-		if err != nil {
+		`, wt.Path, cloneID, wt.Branch, wt.HeadRef, wt.DiscoveredAt); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // --- Read operations (use readerDB, safe for HTTP handlers) ---
