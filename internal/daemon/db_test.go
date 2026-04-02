@@ -327,6 +327,33 @@ func TestUpsertCloneAfterRelink(t *testing.T) {
 	}
 }
 
+// Regression: Devin review — PRAGMA DSN params must use modernc.org/sqlite syntax.
+// The original code used mattn/go-sqlite3 syntax which was silently ignored.
+// Found by Devin on 2026-04-03.
+func TestSQLitePragmasApplied(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Verify WAL mode is enabled (critical for concurrent reader/writer)
+	var journalMode string
+	err := db.readerDB.QueryRow("PRAGMA journal_mode").Scan(&journalMode)
+	if err != nil {
+		t.Fatalf("PRAGMA journal_mode: %v", err)
+	}
+	if journalMode != "wal" {
+		t.Errorf("journal_mode = %q, want 'wal'", journalMode)
+	}
+
+	// Verify foreign keys are on
+	var fk int
+	err = db.readerDB.QueryRow("PRAGMA foreign_keys").Scan(&fk)
+	if err != nil {
+		t.Fatalf("PRAGMA foreign_keys: %v", err)
+	}
+	if fk != 1 {
+		t.Errorf("foreign_keys = %d, want 1", fk)
+	}
+}
+
 func TestDBPathExists(t *testing.T) {
 	path := DBPath()
 	if path == "" {

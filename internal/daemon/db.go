@@ -106,7 +106,8 @@ CREATE TABLE IF NOT EXISTS worktrees (
 
 // OpenDB opens the spawntree SQLite database with dual connection pools.
 func OpenDB(dbPath string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON&_synchronous=NORMAL", dbPath)
+	// modernc.org/sqlite uses _pragma= syntax, not mattn/go-sqlite3 underscore params
+	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)", dbPath)
 
 	writerDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
