@@ -551,12 +551,16 @@ func (a *App) handleWebDeleteClone(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", "Clone not found", nil)
 		return
 	}
-	// Use the clone's real path to derive the repo ID that the env manager uses
+	// Only block deletion if there are actually-running environments (not stopped ones)
 	envRepoID := DeriveRepoID(clone.Path)
 	envs := a.envManager.ListEnvs(string(envRepoID))
-	if len(envs) > 0 {
-		writeAPIError(w, http.StatusConflict, "CONFLICT", "Cannot delete clone with running environments. Stop them first.", nil)
-		return
+	for _, env := range envs {
+		for _, svc := range env.Services {
+			if svc.Status == ServiceStatusRunning || svc.Status == ServiceStatusStarting {
+				writeAPIError(w, http.StatusConflict, "CONFLICT", "Cannot delete clone with running environments. Stop them first.", nil)
+				return
+			}
+		}
 	}
 
 	if err := a.db.DeleteClone(cloneID); err != nil {

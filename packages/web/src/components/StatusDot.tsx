@@ -6,11 +6,12 @@ interface StatusDotProps {
 }
 
 export function StatusDot({ status, className = '' }: StatusDotProps) {
-  if (status === 'offline') {
+  // Stopped and offline both render as gray hollow dot per DESIGN.md
+  if (status === 'offline' || status === 'stopped') {
     return (
       <span
-        className={`inline-block w-2 h-2 rounded-full border border-muted ${className}`}
-        aria-label="offline"
+        className={`inline-block w-2 h-2 rounded-full border border-muted opacity-50 ${className}`}
+        aria-label={status}
       />
     )
   }
@@ -20,7 +21,7 @@ export function StatusDot({ status, className = '' }: StatusDotProps) {
       ? 'bg-green'
       : status === 'starting'
         ? 'bg-orange animate-pulse'
-        : 'bg-red' // stopped | crashed
+        : 'bg-red' // crashed
 
   return (
     <span
