@@ -87,8 +87,8 @@ func hostToProvider(host string) string {
 
 // GitRemote represents a named git remote.
 type GitRemote struct {
-	Name string
-	URL  string
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 // DetectRemotes runs `git remote -v` in the given directory and returns fetch remotes.

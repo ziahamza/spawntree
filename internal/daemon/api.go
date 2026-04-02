@@ -396,6 +396,14 @@ func (a *App) handleDiscover(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// WebRepoEnriched is a Repo with computed fields for the frontend.
+type WebRepoEnriched struct {
+	Repo
+	CloneCount     int    `json:"cloneCount"`
+	ActiveEnvCount int    `json:"activeEnvCount"`
+	OverallStatus  string `json:"overallStatus"`
+}
+
 func (a *App) handleWebListRepos(w http.ResponseWriter, _ *http.Request) {
 	if a.db == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"repos": []any{}})
@@ -406,10 +414,37 @@ func (a *App) handleWebListRepos(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	if repos == nil {
-		repos = []Repo{}
+
+	enriched := make([]WebRepoEnriched, 0, len(repos))
+	for _, repo := range repos {
+		clones, _ := a.db.ListClones(repo.ID)
+		activeCount := 0
+		status := "offline"
+		for _, clone := range clones {
+			envs := a.envManager.ListEnvs(string(DeriveRepoID(clone.Path)))
+			activeCount += len(envs)
+			// Envs in ListEnvs are active (in-memory). Check service statuses.
+			for _, env := range envs {
+				for _, svc := range env.Services {
+					if svc.Status == "running" {
+						status = "running"
+					} else if svc.Status == "crashed" && status != "running" {
+						status = "crashed"
+					}
+				}
+			}
+		}
+		if activeCount > 0 && status == "offline" {
+			status = "running"
+		}
+		enriched = append(enriched, WebRepoEnriched{
+			Repo:           repo,
+			CloneCount:     len(clones),
+			ActiveEnvCount: activeCount,
+			OverallStatus:  status,
+		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"repos": repos})
+	writeJSON(w, http.StatusOK, map[string]any{"repos": enriched})
 }
 
 func (a *App) handleWebGetRepo(w http.ResponseWriter, r *http.Request) {

@@ -169,8 +169,8 @@ function RepoDetail() {
       {/* Title */}
       <div className="mb-6">
         <h1 className="font-display text-2xl font-semibold text-foreground">{repo.name}</h1>
-        {repo.remoteURL && (
-          <p className="text-xs text-muted font-mono mt-1">{repo.remoteURL}</p>
+        {repo.remoteUrl && (
+          <p className="text-xs text-muted font-mono mt-1">{repo.remoteUrl}</p>
         )}
       </div>
 

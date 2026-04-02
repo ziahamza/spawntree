@@ -73,7 +73,7 @@ export interface Worktree {
 export interface WebRepo {
   slug: string
   name: string
-  remoteURL?: string
+  remoteUrl?: string
   cloneCount: number
   activeEnvCount: number
   overallStatus: 'running' | 'stopped' | 'crashed' | 'offline'
@@ -83,8 +83,9 @@ export interface WebRepo {
 export interface WebRepoDetail {
   slug: string
   name: string
-  remoteURL?: string
+  remoteUrl?: string
   clones: Clone[]
+  worktrees: Record<string, Worktree[]>
 }
 
 // ─── Fetch helpers ─────────────────────────────────────────────────────────────
@@ -170,7 +171,16 @@ export function useWebRepos() {
 export function useWebRepoDetail(slug: string) {
   return useQuery<WebRepoDetail>({
     queryKey: ['web', 'repos', slug],
-    queryFn: () => apiFetch<WebRepoDetail>(`/web/repos/${slug}`),
+    queryFn: async () => {
+      const res = await apiFetch<{ repo: WebRepo; clones: Clone[]; worktrees: Record<string, Worktree[]> }>(`/web/repos/${slug}`)
+      return {
+        slug: res.repo.slug,
+        name: res.repo.name,
+        remoteUrl: res.repo.remoteUrl,
+        clones: res.clones ?? [],
+        worktrees: res.worktrees ?? {},
+      }
+    },
     refetchInterval: 5000,
     enabled: !!slug,
   })
