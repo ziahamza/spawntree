@@ -282,6 +282,51 @@ func TestDeriveRepoIDUsesPathNotSlug(t *testing.T) {
 	}
 }
 
+// Regression: Devin review — UpsertClone after relink must not fail with
+// UNIQUE constraint violation when the path was relinked to a new clone ID.
+// Found by Devin on 2026-04-03.
+func TestUpsertCloneAfterRelink(t *testing.T) {
+	db := setupTestDB(t)
+
+	repo := Repo{ID: "local/relink", Slug: "local-relink", Name: "relink", Provider: "local"}
+	_ = db.UpsertRepo(repo)
+
+	oldPath := "/old/path"
+	newPath := "/new/path"
+	oldID := DeriveCloneID(oldPath)
+	newID := DeriveCloneID(newPath)
+
+	// Step 1: Register clone with old path
+	clone1 := Clone{ID: oldID, RepoID: "local/relink", Path: oldPath, Status: "active"}
+	if err := db.UpsertClone(clone1); err != nil {
+		t.Fatalf("Initial UpsertClone: %v", err)
+	}
+
+	// Step 2: Relink clone to new path (keeps old ID, changes path)
+	if err := db.UpdateClonePath(oldID, newPath); err != nil {
+		t.Fatalf("UpdateClonePath: %v", err)
+	}
+
+	// Step 3: Add folder again with new path -> new ID but same path
+	// This should NOT fail with UNIQUE constraint violation
+	clone2 := Clone{ID: newID, RepoID: "local/relink", Path: newPath, Status: "active"}
+	if err := db.UpsertClone(clone2); err != nil {
+		t.Fatalf("UpsertClone after relink: %v (should handle path conflict)", err)
+	}
+
+	// Verify only one clone exists with the new path
+	clones, _ := db.ListClones("local/relink")
+	pathCount := 0
+	for _, c := range clones {
+		if c.Path == newPath {
+			pathCount++
+		}
+	}
+	if pathCount != 1 {
+		t.Errorf("expected 1 clone with new path, got %d", pathCount)
+	}
+}
+
 func TestDBPathExists(t *testing.T) {
 	path := DBPath()
 	if path == "" {

@@ -186,6 +186,10 @@ func (db *DB) UpsertClone(clone Clone) error {
 	}
 	clone.LastSeenAt = now
 
+	// Handle both id and path conflicts. After a relink, the path may exist
+	// under a different id. Delete the stale row first to avoid UNIQUE violation.
+	_, _ = db.writerDB.Exec("DELETE FROM clones WHERE path = ? AND id != ?", clone.Path, clone.ID)
+
 	_, err := db.writerDB.Exec(`
 		INSERT INTO clones (id, repo_id, path, status, last_seen_at, registered_at)
 		VALUES (?, ?, ?, ?, ?, ?)
