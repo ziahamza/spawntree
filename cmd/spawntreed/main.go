@@ -31,6 +31,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
+	// Open SQLite database for web UI state
+	db, err := daemon.OpenDB(daemon.DBPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to open database: %v (web UI will be limited)\n", err)
+		db = nil
+	}
+
 	logStreamer := daemon.NewLogStreamer()
 	infraManager := daemon.NewInfraManager()
 	portRegistry := daemon.NewPortRegistry(stateStore)
@@ -39,7 +47,7 @@ func run() error {
 	proxyPort := registryManager.DaemonConfig().Proxy.Port
 	proxy := daemon.NewProxyServer(proxyPort.Int())
 	envManager := daemon.NewEnvManager(stateStore, portRegistry, logStreamer, infraManager, proxy)
-	app := daemon.NewApp(envManager, logStreamer, infraManager, registryManager, daemonVersion)
+	app := daemon.NewApp(envManager, logStreamer, infraManager, registryManager, db, daemonVersion)
 
 	_ = os.Remove(daemon.SocketPath())
 	unixListener, err := net.Listen("unix", daemon.SocketPath())
@@ -91,5 +99,8 @@ func run() error {
 	_ = proxy.Stop()
 	_ = unixServer.Shutdown(shutdownCtx)
 	_ = httpServer.Shutdown(shutdownCtx)
+	if db != nil {
+		_ = db.Close()
+	}
 	return nil
 }
