@@ -39,7 +39,7 @@
 
 ## Documentation
 - [ ] Update docs/configuration.md with all service types
-- [ ] Document daemon architecture
+- [x] Document daemon architecture
 - [ ] Document shared global infrastructure
 - [ ] Document framework port injection
 - [ ] Document PORTLESS=0 behavior

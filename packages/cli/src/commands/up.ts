@@ -75,6 +75,7 @@ export function registerUpCommand(program: Command): void {
       }
 
       try {
+        await client.registerRepo({ repoPath, configPath: configFile });
         const { env } = await client.createEnv({
           repoPath,
           envId,
@@ -110,7 +111,7 @@ export function registerUpCommand(program: Command): void {
 
       // Stream logs until interrupted
       try {
-        for await (const logLine of client.streamLogs(repoId, envId)) {
+        for await (const logLine of client.streamLogs(repoId, envId, undefined, { follow: true, lines: 0 })) {
           printLogLine(logLine);
         }
       } catch (err) {

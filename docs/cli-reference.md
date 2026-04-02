@@ -13,7 +13,7 @@
 
 ### spawntree up
 
-Start the environment. Auto-starts the daemon if not running.
+Start the environment. Auto-starts the native daemon if not running.
 
 ```bash
 spawntree up                         # env = current branch

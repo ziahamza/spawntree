@@ -1,0 +1,24 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errcheck
+    - errorlint
+    - gocritic
+    - gofmt
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - revive
+    - staticcheck
+    - unused
+    - wastedassign
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
