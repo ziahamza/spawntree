@@ -186,19 +186,28 @@ func (db *DB) UpsertClone(clone Clone) error {
 	}
 	clone.LastSeenAt = now
 
-	// Handle both id and path conflicts. After a relink, the path may exist
-	// under a different id. Delete the stale row first to avoid UNIQUE violation.
-	_, _ = db.writerDB.Exec("DELETE FROM clones WHERE path = ? AND id != ?", clone.Path, clone.ID)
+	// Wrap in transaction: delete stale path conflicts then upsert atomically.
+	tx, err := db.writerDB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
-	_, err := db.writerDB.Exec(`
+	// After a relink, the path may exist under a different id.
+	if _, err := tx.Exec("DELETE FROM clones WHERE path = ? AND id != ?", clone.Path, clone.ID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
 		INSERT INTO clones (id, repo_id, path, status, last_seen_at, registered_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			path = excluded.path,
 			status = excluded.status,
 			last_seen_at = excluded.last_seen_at
-	`, clone.ID, clone.RepoID, clone.Path, clone.Status, clone.LastSeenAt, clone.RegisteredAt)
-	return err
+	`, clone.ID, clone.RepoID, clone.Path, clone.Status, clone.LastSeenAt, clone.RegisteredAt); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (db *DB) UpdateCloneStatus(cloneID, status string) error {

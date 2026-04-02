@@ -68,7 +68,8 @@ export function RepoTree({ onNavigate }: RepoTreeProps) {
                 ? 'offline'
                 : 'stopped'
 
-        const repoEnvs = envs?.filter((e) => e.repoID === repo.slug) ?? []
+        // Env repoIDs are path-derived (e.g. "spawntree"), repo.name matches that
+        const repoEnvs = envs?.filter((e) => e.repoID === repo.name) ?? []
 
         return (
           <Collapsible.Root
