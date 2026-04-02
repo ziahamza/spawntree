@@ -76,7 +76,7 @@ export interface WebRepo {
   remoteUrl?: string
   cloneCount: number
   activeEnvCount: number
-  overallStatus: 'running' | 'stopped' | 'crashed' | 'offline'
+  overallStatus: 'running' | 'starting' | 'stopped' | 'crashed' | 'offline'
   updatedAt: string
 }
 
