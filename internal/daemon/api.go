@@ -427,9 +427,9 @@ func (a *App) handleWebListRepos(w http.ResponseWriter, _ *http.Request) {
 			// Envs in ListEnvs are active (in-memory). Check service statuses.
 			for _, env := range envs {
 				for _, svc := range env.Services {
-					if svc.Status == "running" {
+					if svc.Status == ServiceStatusRunning {
 						status = "running"
-					} else if svc.Status == "crashed" && status != "running" {
+					} else if svc.Status == ServiceStatusFailed && status != "running" {
 						status = "crashed"
 					}
 				}
