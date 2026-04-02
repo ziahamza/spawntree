@@ -7,78 +7,99 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 type App struct {
 	envManager      *EnvManager
-	logStreamer     *LogStreamer
+	logStreamer      *LogStreamer
 	infraManager    *InfraManager
 	registryManager *RegistryManager
+	db              *DB
 	startedAt       time.Time
 	version         string
+	router          chi.Router
 }
 
-func NewApp(envManager *EnvManager, logStreamer *LogStreamer, infraManager *InfraManager, registryManager *RegistryManager, version string) *App {
-	return &App{
+func NewApp(envManager *EnvManager, logStreamer *LogStreamer, infraManager *InfraManager, registryManager *RegistryManager, db *DB, version string) *App {
+	a := &App{
 		envManager:      envManager,
-		logStreamer:     logStreamer,
+		logStreamer:      logStreamer,
 		infraManager:    infraManager,
 		registryManager: registryManager,
+		db:              db,
 		startedAt:       time.Now().UTC(),
 		version:         version,
 	}
+	a.router = a.buildRouter()
+	return a
 }
 
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch {
-	case r.URL.Path == "/" && r.Method == http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-		return
-	case r.URL.Path == "/openapi.yaml" && r.Method == http.MethodGet:
-		w.Header().Set("Content-Type", "application/yaml")
-		_, _ = w.Write(OpenAPIYAML())
-		return
-	case r.URL.Path == "/api/v1/daemon" && r.Method == http.MethodGet:
-		a.handleDaemonInfo(w)
-		return
-	case r.URL.Path == "/api/v1/envs":
-		a.handleEnvs(w, r)
-		return
-	case r.URL.Path == "/api/v1/infra" && r.Method == http.MethodGet:
-		a.handleInfraStatus(w, r)
-		return
-	case r.URL.Path == "/api/v1/infra/stop" && r.Method == http.MethodPost:
-		a.handleInfraStop(w, r)
-		return
-	case r.URL.Path == "/api/v1/db/templates" && r.Method == http.MethodGet:
-		a.handleListTemplates(w)
-		return
-	case r.URL.Path == "/api/v1/db/dump" && r.Method == http.MethodPost:
-		a.handleDumpDB(w, r)
-		return
-	case r.URL.Path == "/api/v1/db/restore" && r.Method == http.MethodPost:
-		a.handleRestoreDB(w, r)
-		return
-	case r.URL.Path == "/api/v1/registry/repos":
-		a.handleRegistryRepos(w, r)
-		return
-	case r.URL.Path == "/api/v1/tunnels":
-		a.handleTunnels(w, r)
-		return
-	case r.URL.Path == "/api/v1/tunnels/status" && r.Method == http.MethodGet:
-		writeJSON(w, http.StatusOK, ListTunnelStatusesResponse{Statuses: a.registryManager.ListTunnelStatuses()})
-		return
-	case strings.HasPrefix(r.URL.Path, "/api/v1/repos/"):
-		a.handleRepoScoped(w, r)
-		return
-	default:
-		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", "Route not found", nil)
-	}
+	a.router.ServeHTTP(w, r)
 }
 
-func (a *App) handleDaemonInfo(w http.ResponseWriter) {
+func (a *App) buildRouter() chi.Router {
+	r := chi.NewRouter()
+	r.Use(middleware.Recoverer)
+
+	// Health check (must stay before SPA fallback for CLI compatibility)
+	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+
+	// API routes
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/daemon", a.handleDaemonInfo)
+		r.Get("/envs", a.handleListEnvs)
+		r.Post("/envs", a.handleCreateEnv)
+		r.Get("/infra", a.handleInfraStatus)
+		r.Post("/infra/stop", a.handleInfraStop)
+		r.Get("/db/templates", a.handleListTemplates)
+		r.Post("/db/dump", a.handleDumpDB)
+		r.Post("/db/restore", a.handleRestoreDB)
+		r.Get("/registry/repos", a.handleListRegistryRepos)
+		r.Post("/registry/repos", a.handleRegisterRepo)
+		r.Get("/tunnels", a.handleListTunnels)
+		r.Post("/tunnels", a.handleUpsertTunnel)
+		r.Put("/tunnels", a.handleUpsertTunnel)
+		r.Get("/tunnels/status", a.handleListTunnelStatuses)
+
+		// Repo-scoped endpoints
+		r.Get("/repos/{repoID}/envs", a.handleListRepoEnvs)
+		r.Get("/repos/{repoID}/envs/{envID}", a.handleGetEnv)
+		r.Delete("/repos/{repoID}/envs/{envID}", a.handleDeleteEnv)
+		r.Post("/repos/{repoID}/envs/{envID}/down", a.handleDownEnv)
+		r.Get("/repos/{repoID}/envs/{envID}/logs", a.handleLogStream)
+
+		// New web UI endpoints
+		r.Post("/discover", a.handleDiscover)
+		r.Get("/web/repos", a.handleWebListRepos)
+		r.Get("/web/repos/{repoSlug}", a.handleWebGetRepo)
+		r.Get("/web/repos/{repoSlug}/clones", a.handleWebListClones)
+		r.Patch("/web/repos/{repoSlug}/clones/{cloneID}", a.handleWebRelinkClone)
+		r.Delete("/web/repos/{repoSlug}/clones/{cloneID}", a.handleWebDeleteClone)
+		r.Post("/web/repos/add", a.handleWebAddFolder)
+	})
+
+	// OpenAPI spec
+	r.Get("/openapi.yaml", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/yaml")
+		_, _ = w.Write(OpenAPIYAML())
+	})
+
+	// SPA fallback: serve embedded frontend for non-API routes
+	r.Get("/*", a.handleSPA)
+
+	return r
+}
+
+// --- Existing API handlers (migrated from switch/case) ---
+
+func (a *App) handleDaemonInfo(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, RuntimeInfo{
 		Version:    a.version,
 		PID:        os.Getpid(),
@@ -88,25 +109,22 @@ func (a *App) handleDaemonInfo(w http.ResponseWriter) {
 	})
 }
 
-func (a *App) handleEnvs(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		writeJSON(w, http.StatusOK, ListEnvsResponse{Envs: a.envManager.ListEnvs("")})
-	case http.MethodPost:
-		var req CreateEnvRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body", nil)
-			return
-		}
-		env, err := a.envManager.CreateEnv(r.Context(), req)
-		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-			return
-		}
-		writeJSON(w, http.StatusCreated, CreateEnvResponse{Env: env})
-	default:
-		writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", nil)
+func (a *App) handleListEnvs(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, ListEnvsResponse{Envs: a.envManager.ListEnvs("")})
+}
+
+func (a *App) handleCreateEnv(w http.ResponseWriter, r *http.Request) {
+	var req CreateEnvRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body", nil)
+		return
 	}
+	env, err := a.envManager.CreateEnv(r.Context(), req)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusCreated, CreateEnvResponse{Env: env})
 }
 
 func (a *App) handleInfraStatus(w http.ResponseWriter, r *http.Request) {
@@ -143,7 +161,7 @@ func (a *App) handleInfraStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, StopInfraResponse{OK: true})
 }
 
-func (a *App) handleListTemplates(w http.ResponseWriter) {
+func (a *App) handleListTemplates(w http.ResponseWriter, _ *http.Request) {
 	pg, err := a.infraManager.EnsurePostgres(context.Background(), "17")
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
@@ -194,111 +212,85 @@ func (a *App) handleRestoreDB(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, RestoreDBResponse{OK: true})
 }
 
-func (a *App) handleRegistryRepos(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		writeJSON(w, http.StatusOK, ListRegisteredReposResponse{Repos: a.registryManager.ListRepos()})
-	case http.MethodPost:
-		var req RegisterRepoRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body", nil)
-			return
-		}
-		repo, err := a.registryManager.RegisterRepo(req.RepoPath, req.ConfigPath)
-		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-			return
-		}
-		writeJSON(w, http.StatusCreated, RegisterRepoResponse{Repo: repo})
-	default:
-		writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", nil)
-	}
+func (a *App) handleListRegistryRepos(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, ListRegisteredReposResponse{Repos: a.registryManager.ListRepos()})
 }
 
-func (a *App) handleTunnels(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		writeJSON(w, http.StatusOK, ListTunnelsResponse{Tunnels: a.registryManager.ListTunnels()})
-	case http.MethodPost, http.MethodPut:
-		var req UpsertTunnelRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body", nil)
-			return
-		}
-		tunnel, err := a.registryManager.UpsertTunnel(req)
-		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-			return
-		}
-		writeJSON(w, http.StatusOK, UpsertTunnelResponse{Tunnel: tunnel})
-	default:
-		writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", nil)
+func (a *App) handleRegisterRepo(w http.ResponseWriter, r *http.Request) {
+	var req RegisterRepoRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body", nil)
+		return
 	}
+	repo, err := a.registryManager.RegisterRepo(req.RepoPath, req.ConfigPath)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusCreated, RegisterRepoResponse{Repo: repo})
 }
 
-func (a *App) handleRepoScoped(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 5 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "repos" {
-		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", "Route not found", nil)
-		return
-	}
-	repoID := parts[3]
-	if parts[4] != "envs" {
-		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", "Route not found", nil)
-		return
-	}
-	if len(parts) == 5 && r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, ListEnvsResponse{Envs: a.envManager.ListEnvs(repoID)})
-		return
-	}
-	if len(parts) < 6 {
-		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", "Route not found", nil)
-		return
-	}
-	envID := parts[5]
-	if len(parts) == 6 {
-		switch r.Method {
-		case http.MethodGet:
-			env, err := a.envManager.GetEnv(repoID, envID)
-			if err != nil {
-				writeAPIError(w, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
-				return
-			}
-			writeJSON(w, http.StatusOK, GetEnvResponse{Env: env})
-		case http.MethodDelete:
-			if err := a.envManager.DeleteEnv(r.Context(), repoID, envID); err != nil {
-				writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-				return
-			}
-			writeJSON(w, http.StatusOK, DeleteEnvResponse{OK: true})
-		default:
-			writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", nil)
-		}
-		return
-	}
-	switch parts[6] {
-	case "down":
-		if r.Method != http.MethodPost {
-			writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", nil)
-			return
-		}
-		if err := a.envManager.DownEnv(r.Context(), repoID, envID); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-			return
-		}
-		writeJSON(w, http.StatusOK, DownEnvResponse{OK: true})
-	case "logs":
-		if r.Method != http.MethodGet {
-			writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", nil)
-			return
-		}
-		a.handleLogStream(w, r, repoID, envID)
-	default:
-		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", "Route not found", nil)
-	}
+func (a *App) handleListTunnels(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, ListTunnelsResponse{Tunnels: a.registryManager.ListTunnels()})
 }
 
-func (a *App) handleLogStream(w http.ResponseWriter, r *http.Request, repoID, envID string) {
+func (a *App) handleUpsertTunnel(w http.ResponseWriter, r *http.Request) {
+	var req UpsertTunnelRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body", nil)
+		return
+	}
+	tunnel, err := a.registryManager.UpsertTunnel(req)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, UpsertTunnelResponse{Tunnel: tunnel})
+}
+
+func (a *App) handleListTunnelStatuses(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, ListTunnelStatusesResponse{Statuses: a.registryManager.ListTunnelStatuses()})
+}
+
+func (a *App) handleListRepoEnvs(w http.ResponseWriter, r *http.Request) {
+	repoID := chi.URLParam(r, "repoID")
+	writeJSON(w, http.StatusOK, ListEnvsResponse{Envs: a.envManager.ListEnvs(repoID)})
+}
+
+func (a *App) handleGetEnv(w http.ResponseWriter, r *http.Request) {
+	repoID := chi.URLParam(r, "repoID")
+	envID := chi.URLParam(r, "envID")
+	env, err := a.envManager.GetEnv(repoID, envID)
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, GetEnvResponse{Env: env})
+}
+
+func (a *App) handleDeleteEnv(w http.ResponseWriter, r *http.Request) {
+	repoID := chi.URLParam(r, "repoID")
+	envID := chi.URLParam(r, "envID")
+	if err := a.envManager.DeleteEnv(r.Context(), repoID, envID); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, DeleteEnvResponse{OK: true})
+}
+
+func (a *App) handleDownEnv(w http.ResponseWriter, r *http.Request) {
+	repoID := chi.URLParam(r, "repoID")
+	envID := chi.URLParam(r, "envID")
+	if err := a.envManager.DownEnv(r.Context(), repoID, envID); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, DownEnvResponse{OK: true})
+}
+
+func (a *App) handleLogStream(w http.ResponseWriter, r *http.Request) {
+	repoID := chi.URLParam(r, "repoID")
+	envID := chi.URLParam(r, "envID")
 	if _, err := a.envManager.GetEnv(repoID, envID); err != nil {
 		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
 		return
@@ -355,6 +347,301 @@ func (a *App) handleLogStream(w http.ResponseWriter, r *http.Request, repoID, en
 	}
 }
 
+// --- New web UI endpoints ---
+
+func (a *App) handleDiscover(w http.ResponseWriter, _ *http.Request) {
+	if a.db == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "DB_NOT_AVAILABLE", "Database not initialized", nil)
+		return
+	}
+
+	start := time.Now()
+	clones, err := a.db.ListAllClones()
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+
+	var warnings []DiscoverWarning
+	discoveredCount := 0
+
+	for _, clone := range clones {
+		if !dirExists(clone.Path) {
+			_ = a.db.UpdateCloneStatus(clone.ID, "missing")
+			warnings = append(warnings, DiscoverWarning{
+				Type:    "missing_clone",
+				RepoID:  clone.RepoID,
+				CloneID: clone.ID,
+				Path:    clone.Path,
+				Message: "Clone not found at path",
+			})
+			continue
+		}
+
+		_ = a.db.UpdateCloneStatus(clone.ID, "active")
+
+		worktrees, err := discoverWorktrees(clone.Path, clone.ID)
+		if err != nil {
+			continue
+		}
+		_ = a.db.ReplaceWorktrees(clone.ID, worktrees)
+		discoveredCount += len(worktrees)
+	}
+
+	writeJSON(w, http.StatusOK, DiscoverResult{
+		Warnings:            warnings,
+		DiscoveredWorktrees: discoveredCount,
+		ValidatedClones:     len(clones),
+		DurationMs:          time.Since(start).Milliseconds(),
+	})
+}
+
+func (a *App) handleWebListRepos(w http.ResponseWriter, _ *http.Request) {
+	if a.db == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"repos": []any{}})
+		return
+	}
+	repos, err := a.db.ListRepos()
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if repos == nil {
+		repos = []Repo{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"repos": repos})
+}
+
+func (a *App) handleWebGetRepo(w http.ResponseWriter, r *http.Request) {
+	if a.db == nil {
+		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", "Database not initialized", nil)
+		return
+	}
+	slug := chi.URLParam(r, "repoSlug")
+	repo, err := a.db.GetRepoBySlug(slug)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if repo == nil {
+		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", "Repo not found", nil)
+		return
+	}
+	clones, _ := a.db.ListClones(repo.ID)
+	if clones == nil {
+		clones = []Clone{}
+	}
+	allWorktrees := map[string][]Worktree{}
+	for _, c := range clones {
+		wts, _ := a.db.ListWorktrees(c.ID)
+		if wts == nil {
+			wts = []Worktree{}
+		}
+		allWorktrees[c.ID] = wts
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"repo":      repo,
+		"clones":    clones,
+		"worktrees": allWorktrees,
+	})
+}
+
+func (a *App) handleWebListClones(w http.ResponseWriter, r *http.Request) {
+	if a.db == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"clones": []any{}})
+		return
+	}
+	slug := chi.URLParam(r, "repoSlug")
+	repo, err := a.db.GetRepoBySlug(slug)
+	if err != nil || repo == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"clones": []Clone{}})
+		return
+	}
+	clones, _ := a.db.ListClones(repo.ID)
+	if clones == nil {
+		clones = []Clone{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"clones": clones})
+}
+
+func (a *App) handleWebRelinkClone(w http.ResponseWriter, r *http.Request) {
+	if a.db == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "DB_NOT_AVAILABLE", "Database not initialized", nil)
+		return
+	}
+	cloneID := chi.URLParam(r, "cloneID")
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := decodeJSON(r, &body); err != nil || body.Path == "" {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing path field", nil)
+		return
+	}
+
+	gitRoot, err := ValidateGitRepo(body.Path)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Not a Git repository", nil)
+		return
+	}
+
+	if err := a.db.UpdateClonePath(cloneID, gitRoot); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": gitRoot})
+}
+
+func (a *App) handleWebDeleteClone(w http.ResponseWriter, r *http.Request) {
+	if a.db == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "DB_NOT_AVAILABLE", "Database not initialized", nil)
+		return
+	}
+	cloneID := chi.URLParam(r, "cloneID")
+	slug := chi.URLParam(r, "repoSlug")
+
+	// Check for running envs in this clone
+	repo, _ := a.db.GetRepoBySlug(slug)
+	if repo != nil {
+		envs := a.envManager.ListEnvs(string(DeriveRepoID(slug)))
+		if len(envs) > 0 {
+			writeAPIError(w, http.StatusConflict, "CONFLICT", "Cannot delete clone with running environments. Stop them first.", nil)
+			return
+		}
+	}
+
+	if err := a.db.DeleteClone(cloneID); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// AddFolderRequest is the request body for POST /api/v1/web/repos/add.
+type AddFolderRequest struct {
+	Path       string `json:"path"`
+	RemoteName string `json:"remoteName,omitempty"` // optional, for multi-remote repos
+}
+
+// AddFolderResponse is returned from POST /api/v1/web/repos/add.
+type AddFolderResponse struct {
+	Repo    Repo        `json:"repo"`
+	Clone   Clone       `json:"clone"`
+	Remotes []GitRemote `json:"remotes,omitempty"` // populated if multiple remotes detected
+}
+
+func (a *App) handleWebAddFolder(w http.ResponseWriter, r *http.Request) {
+	if a.db == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "DB_NOT_AVAILABLE", "Database not initialized", nil)
+		return
+	}
+
+	var req AddFolderRequest
+	if err := decodeJSON(r, &req); err != nil || req.Path == "" {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing path field", nil)
+		return
+	}
+
+	gitRoot, err := ValidateGitRepo(req.Path)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "NOT_GIT_REPO", "Not a Git repository", nil)
+		return
+	}
+
+	info, remotes, err := DetectRepoInfo(gitRoot)
+	if err != nil {
+		info = RemoteInfo{Provider: "local", Repo: sanitizeID(gitRoot)}
+	}
+
+	// If multiple remotes and no preference specified, return the list
+	if len(remotes) > 1 && req.RemoteName != "" {
+		for _, rm := range remotes {
+			if rm.Name == req.RemoteName {
+				info = ParseRemoteURL(rm.URL)
+				break
+			}
+		}
+	}
+
+	// Try to enrich with gh metadata
+	if info.Provider == "github" && info.Owner != "" && info.Repo != "" {
+		defBranch, desc := TryGHMetadata(info.Owner, info.Repo)
+		if defBranch != "" {
+			info.Repo = info.Repo // keep repo name
+			_ = defBranch
+			_ = desc
+		}
+	}
+
+	repo := Repo{
+		ID:       info.CanonicalID(),
+		Slug:     info.Slug(),
+		Name:     info.Repo,
+		Provider: info.Provider,
+		Owner:    info.Owner,
+		RemoteURL: info.URL,
+	}
+
+	if info.Provider == "github" && info.Owner != "" {
+		defBranch, desc := TryGHMetadata(info.Owner, info.Repo)
+		repo.DefaultBranch = defBranch
+		repo.Description = desc
+	}
+
+	if err := a.db.UpsertRepo(repo); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+
+	clone := Clone{
+		ID:     DeriveCloneID(gitRoot),
+		RepoID: repo.ID,
+		Path:   gitRoot,
+		Status: "active",
+	}
+	if err := a.db.UpsertClone(clone); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+
+	// Also register in the daemon's config-based registry for env management
+	_, _ = a.registryManager.RegisterRepo(gitRoot, "spawntree.yaml")
+
+	resp := AddFolderResponse{
+		Repo:  repo,
+		Clone: clone,
+	}
+	if len(remotes) > 1 {
+		resp.Remotes = remotes
+	}
+
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+// handleSPA serves the embedded SPA for non-API routes.
+// This is a placeholder — the actual embed is in cmd/spawntreed/spa.go.
+func (a *App) handleSPA(w http.ResponseWriter, r *http.Request) {
+	// The actual SPA serving is handled by SPAHandler set during init.
+	// If no SPA is embedded (noui build), return a JSON message.
+	if spaHandler != nil {
+		spaHandler.ServeHTTP(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"error":   "Web UI not built",
+		"message": "Run pnpm build in packages/web/ first, then rebuild the daemon.",
+	})
+}
+
+// spaHandler is set by the spa_embed.go file when the UI is compiled in.
+var spaHandler http.Handler
+
+// SetSPAHandler sets the handler for serving the embedded SPA assets.
+func SetSPAHandler(h http.Handler) {
+	spaHandler = h
+}
+
+// --- Helpers ---
+
 func writeSSELine(w http.ResponseWriter, line LogLine) {
 	payload, _ := json.Marshal(line)
 	_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
@@ -378,4 +665,28 @@ func decodeJSON(r *http.Request, value any) error {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(value)
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func discoverWorktrees(clonePath, cloneID string) ([]Worktree, error) {
+	wts, err := listGitWorktrees(clonePath)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	worktrees := make([]Worktree, 0, len(wts))
+	for _, wt := range wts {
+		worktrees = append(worktrees, Worktree{
+			Path:         wt.Path,
+			CloneID:      cloneID,
+			Branch:       wt.Branch,
+			HeadRef:      wt.HeadRef,
+			DiscoveredAt: now,
+		})
+	}
+	return worktrees, nil
 }
