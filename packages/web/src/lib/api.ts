@@ -116,7 +116,10 @@ export function useDaemonInfo() {
 export function useEnvs() {
   return useQuery<EnvListItem[]>({
     queryKey: ['envs'],
-    queryFn: () => apiFetch<EnvListItem[]>('/envs'),
+    queryFn: async () => {
+      const res = await apiFetch<{ envs: EnvListItem[] }>('/envs')
+      return res.envs ?? []
+    },
     refetchInterval: 5000,
   })
 }
@@ -124,7 +127,10 @@ export function useEnvs() {
 export function useRepoEnvs(repoID: string) {
   return useQuery<EnvListItem[]>({
     queryKey: ['repos', repoID, 'envs'],
-    queryFn: () => apiFetch<EnvListItem[]>(`/repos/${repoID}/envs`),
+    queryFn: async () => {
+      const res = await apiFetch<{ envs: EnvListItem[] }>(`/repos/${repoID}/envs`)
+      return res.envs ?? []
+    },
     refetchInterval: 5000,
     enabled: !!repoID,
   })
@@ -133,7 +139,10 @@ export function useRepoEnvs(repoID: string) {
 export function useEnvDetail(repoID: string, envID: string) {
   return useQuery<Env>({
     queryKey: ['repos', repoID, 'envs', envID],
-    queryFn: () => apiFetch<Env>(`/repos/${repoID}/envs/${envID}`),
+    queryFn: async () => {
+      const res = await apiFetch<{ env: Env }>(`/repos/${repoID}/envs/${envID}`)
+      return res.env
+    },
     refetchInterval: 5000,
     enabled: !!repoID && !!envID,
   })
@@ -150,7 +159,10 @@ export function useInfra() {
 export function useWebRepos() {
   return useQuery<WebRepo[]>({
     queryKey: ['web', 'repos'],
-    queryFn: () => apiFetch<WebRepo[]>('/web/repos'),
+    queryFn: async () => {
+      const res = await apiFetch<{ repos: WebRepo[] }>('/web/repos')
+      return res.repos ?? []
+    },
     refetchInterval: 5000,
   })
 }
