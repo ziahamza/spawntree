@@ -4,10 +4,10 @@
 
 ### Core
 - [ ] `--detach` mode (`spawntree up -d`, run in background)
-- [ ] `spawntree logs -f` live follow via SSE streaming
+- [ ] `spawntree logs -f` live follow via SSE streaming *(web UI covers this visually via LogViewer)*
 - [ ] Port-binding verification (detect when process binds to wrong port)
 - [ ] `spawntree doctor` (check Docker, git, node, mise)
-- [ ] `spawntree status --global` across all repos
+- [ ] `spawntree status --global` across all repos *(web UI covers this visually via Dashboard)*
 - [ ] Shell completions (bash, zsh, fish)
 
 ### Mise Integration
@@ -45,6 +45,16 @@
 - [ ] Document PORTLESS=0 behavior
 - [ ] CONTRIBUTING.md
 - [ ] ASCII architecture diagram in README
+
+## Web UI v2
+- [ ] Config overrides UI (global spawntree config editor in web)
+- [ ] Past run history browser (timeline of env starts/stops/crashes)
+- [ ] Health dashboard for infrastructure (PG/Redis detailed metrics)
+- [ ] Auth system (for Cloudflare tunnels / Tailscale remote access)
+- [ ] Frontend component tests (vitest in packages/web)
+- [ ] Wire canonical repo IDs to env listing (bridge two-level identity)
+- [ ] Light mode support
+- [ ] CSRF token protection for localhost API
 
 ## Future
 - [ ] Secret providers (1Password, Wrangler, Vercel, Aptible)
