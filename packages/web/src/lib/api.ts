@@ -227,11 +227,17 @@ export function useDiscover() {
   })
 }
 
+export interface AddFolderResult {
+  repo: WebRepo
+  clone: { id: string; repoId: string; path: string; status: string }
+  remotes?: { name: string; url: string }[]
+}
+
 export function useAddFolder() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: { path: string; remoteName?: string }) =>
-      apiFetch<WebRepo>('/web/repos/add', { method: 'POST', body: JSON.stringify(body) }),
+      apiFetch<AddFolderResult>('/web/repos/add', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['web', 'repos'] })
     },

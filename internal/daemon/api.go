@@ -555,7 +555,7 @@ func (a *App) handleWebAddFolder(w http.ResponseWriter, r *http.Request) {
 		info = RemoteInfo{Provider: "local", Repo: sanitizeID(gitRoot)}
 	}
 
-	// If multiple remotes and no preference specified, return the list
+	// If the user specified a preferred remote, use it instead of the default
 	if len(remotes) > 1 && req.RemoteName != "" {
 		for _, rm := range remotes {
 			if rm.Name == req.RemoteName {

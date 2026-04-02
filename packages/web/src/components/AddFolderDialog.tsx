@@ -59,10 +59,17 @@ export function AddFolderDialog({ open, onOpenChange }: AddFolderDialogProps) {
     setError(null)
 
     try {
-      await addFolder.mutateAsync({
+      const result = await addFolder.mutateAsync({
         path: path.trim(),
         remoteName: step === 'pickRemote' ? selectedRemote : undefined,
       })
+      // If multiple remotes returned and user hasn't picked one yet, show picker
+      if (result.remotes && result.remotes.length > 1 && step !== 'pickRemote') {
+        setRemotes(result.remotes.map((r) => ({ name: r.name, url: r.url })))
+        setSelectedRemote(result.remotes[0].name)
+        setStep('pickRemote')
+        return
+      }
       onOpenChange(false)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

@@ -14,7 +14,23 @@ interface LogViewerProps {
 }
 
 function parseLogLine(raw: string): LogLine {
-  // Try to parse structured log: "[HH:MM:SS] service: message"
+  // The server sends JSON-encoded LogLine objects: {ts, service, stream, line}
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed.line === 'string') {
+      const isError =
+        /error|err|fatal|panic/i.test(parsed.line) || parsed.stream === 'stderr'
+      return {
+        ts: parsed.ts ?? '',
+        service: parsed.service ?? '',
+        message: parsed.line,
+        isError,
+      }
+    }
+  } catch {
+    // Not JSON, fall through to plain-text parsing
+  }
+  // Fallback: try to parse structured log: "[HH:MM:SS] service: message"
   const m = raw.match(/^\[([^\]]+)\]\s+(\S+):\s+(.*)$/)
   if (m) {
     const [, ts, service, message] = m
