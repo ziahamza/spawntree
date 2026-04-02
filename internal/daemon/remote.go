@@ -131,9 +131,9 @@ func DetectRemotes(dir string) ([]GitRemote, error) {
 // returns all of them so the caller can ask the user to pick.
 // If no remotes exist, falls back to "local/<dirname>".
 func DetectRepoInfo(dir string) (RemoteInfo, []GitRemote, error) {
-	remotes, err := DetectRemotes(dir)
-	if err != nil || len(remotes) == 0 {
-		// No remotes, use local identity
+	remotes, _ := DetectRemotes(dir)
+	if len(remotes) == 0 {
+		// No remotes (or git error), use local identity
 		name := filepath.Base(dir)
 		return RemoteInfo{
 			Provider: "local",
@@ -172,7 +172,8 @@ func TryGHMetadata(owner, repo string) (defaultBranch, description string) {
 		return "", ""
 	}
 
-	cmd := exec.Command("gh", "api", fmt.Sprintf("repos/%s/%s", owner, repo),
+	apiPath := fmt.Sprintf("repos/%s/%s", owner, repo)
+	cmd := exec.Command("gh", "api", apiPath, //nolint:gosec // owner and repo validated by safeGHName regex above
 		"--jq", ".default_branch + \"\\n\" + (.description // \"\")")
 	out, err := cmd.Output()
 	if err != nil {

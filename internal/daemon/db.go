@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // SQLite driver for database/sql
 )
 
 // DB provides typed access to the spawntree SQLite database.
@@ -214,7 +214,7 @@ func (db *DB) DeleteClone(cloneID string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
 	if _, err := tx.Exec("DELETE FROM worktrees WHERE clone_id = ?", cloneID); err != nil {
 		return err
@@ -230,7 +230,7 @@ func (db *DB) ReplaceWorktrees(cloneID string, worktrees []Worktree) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
 	if _, err := tx.Exec("DELETE FROM worktrees WHERE clone_id = ?", cloneID); err != nil {
 		return err
