@@ -419,29 +419,40 @@ func (a *App) handleWebListRepos(w http.ResponseWriter, _ *http.Request) {
 	enriched := make([]WebRepoEnriched, 0, len(repos))
 	for _, repo := range repos {
 		clones, _ := a.db.ListClones(repo.ID)
-		activeCount := 0
+		runningEnvs := 0
 		status := "offline"
 		for _, clone := range clones {
 			envs := a.envManager.ListEnvs(string(DeriveRepoID(clone.Path)))
-			activeCount += len(envs)
-			// Envs in ListEnvs are active (in-memory). Check service statuses.
 			for _, env := range envs {
+				hasRunning := false
 				for _, svc := range env.Services {
-					if svc.Status == ServiceStatusRunning {
+					switch svc.Status {
+					case ServiceStatusRunning:
 						status = "running"
-					} else if svc.Status == ServiceStatusFailed && status != "running" {
-						status = "crashed"
+						hasRunning = true
+					case ServiceStatusStarting:
+						if status != "running" && status != "crashed" {
+							status = "starting"
+						}
+					case ServiceStatusFailed:
+						if status != "running" {
+							status = "crashed"
+						}
+					case ServiceStatusStopped:
+						if status == "offline" {
+							status = "stopped"
+						}
 					}
 				}
+				if hasRunning {
+					runningEnvs++
+				}
 			}
-		}
-		if activeCount > 0 && status == "offline" {
-			status = "running"
 		}
 		enriched = append(enriched, WebRepoEnriched{
 			Repo:           repo,
 			CloneCount:     len(clones),
-			ActiveEnvCount: activeCount,
+			ActiveEnvCount: runningEnvs,
 			OverallStatus:  status,
 		})
 	}
