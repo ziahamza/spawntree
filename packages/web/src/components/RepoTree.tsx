@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import * as Collapsible from '@radix-ui/react-collapsible'
 import { ChevronRight, FolderOpen, GitBranch } from 'lucide-react'
-import { useWebRepos, useEnvs } from '../lib/api'
+import { useWebRepos, useEnvs, deriveEnvStatus } from '../lib/api'
 import { StatusDot } from './StatusDot'
 import type { Status } from './StatusDot'
 
@@ -68,8 +68,8 @@ export function RepoTree({ onNavigate }: RepoTreeProps) {
                 ? 'offline'
                 : 'stopped'
 
-        // Env repoIDs are path-derived (e.g. "spawntree"), repo.name matches that
-        const repoEnvs = envs?.filter((e) => e.repoID === repo.name) ?? []
+        // Match envs to this repo by repoId (slug)
+        const repoEnvs = envs?.filter((e) => e.repoId === repo.slug) ?? []
 
         return (
           <Collapsible.Root
@@ -120,22 +120,15 @@ export function RepoTree({ onNavigate }: RepoTreeProps) {
                   </div>
                 ) : (
                   repoEnvs.map((env) => {
-                    const envPath = `/repos/${repo.slug}/envs/${env.id}`
+                    const envPath = `/repos/${repo.slug}/envs/${env.envId}`
                     const isEnvActive = currentPath === envPath
-                    const envStatus: Status =
-                      env.status === 'running'
-                        ? 'running'
-                        : env.status === 'starting'
-                          ? 'starting'
-                          : env.status === 'crashed'
-                            ? 'crashed'
-                            : 'stopped'
+                    const envStatus: Status = deriveEnvStatus(env)
 
                     return (
                       <Link
-                        key={env.id}
+                        key={env.envId}
                         to="/repos/$slug/envs/$envId"
-                        params={{ slug: repo.slug, envId: env.id }}
+                        params={{ slug: repo.slug, envId: env.envId }}
                         onClick={onNavigate}
                         className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs transition-colors ${
                           isEnvActive
@@ -144,7 +137,7 @@ export function RepoTree({ onNavigate }: RepoTreeProps) {
                         }`}
                       >
                         <StatusDot status={envStatus} className="flex-shrink-0" />
-                        <span className="truncate">{env.name}</span>
+                        <span className="truncate">{env.envId}</span>
                       </Link>
                     )
                   })

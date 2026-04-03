@@ -12,34 +12,33 @@ export interface DaemonInfo {
 export interface Service {
   name: string
   type: 'process' | 'postgres' | 'redis' | 'container' | 'external'
-  status: 'running' | 'stopped' | 'crashed' | 'starting'
-  command?: string
-  image?: string
+  status: 'running' | 'stopped' | 'failed' | 'starting'
   port?: number
-  proxyURL?: string
-  uptime?: number
-  lastLog?: string
+  pid?: number
+  url?: string
+  containerId?: string
 }
 
+// Matches Go EnvInfo struct JSON tags
 export interface Env {
-  id: string
-  repoID: string
-  name: string
-  status: 'running' | 'stopped' | 'crashed' | 'starting'
-  services: Service[]
-  configPath: string
+  envId: string
+  repoId: string
+  repoPath: string
+  branch: string
+  basePort: number
   createdAt: string
-  updatedAt: string
+  services: Service[]
 }
 
+// Alias fields for frontend convenience (mapped from Env)
 export interface EnvListItem {
-  id: string
-  repoID: string
-  name: string
-  status: 'running' | 'stopped' | 'crashed' | 'starting'
-  serviceCount: number
-  configPath: string
-  updatedAt: string
+  envId: string
+  repoId: string
+  repoPath: string
+  branch: string
+  basePort: number
+  createdAt: string
+  services: Service[]
 }
 
 export interface InfraStatus {
@@ -86,6 +85,14 @@ export interface WebRepoDetail {
   remoteUrl?: string
   clones: Clone[]
   worktrees: Record<string, Worktree[]>
+}
+
+export function deriveEnvStatus(env: EnvListItem): 'running' | 'starting' | 'crashed' | 'stopped' {
+  if (!env.services?.length) return 'stopped'
+  if (env.services.some(s => s.status === 'running')) return 'running'
+  if (env.services.some(s => s.status === 'starting')) return 'starting'
+  if (env.services.some(s => s.status === 'failed')) return 'crashed'
+  return 'stopped'
 }
 
 // ─── Fetch helpers ─────────────────────────────────────────────────────────────

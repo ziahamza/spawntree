@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { ChevronRight, Square, RotateCcw, Trash2 } from 'lucide-react'
-import { useEnvDetail, useStopEnv, useDeleteEnv, useWebRepoDetail } from '../lib/api'
+import { useEnvDetail, useStopEnv, useDeleteEnv, useWebRepoDetail, deriveEnvStatus } from '../lib/api'
 import { StatusDot } from '../components/StatusDot'
 import { ServiceCard } from '../components/ServiceCard'
 import { LogViewer } from '../components/LogViewer'
@@ -17,11 +17,8 @@ function formatUptime(seconds: number): string {
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`
 }
 
-function envStatus(status: string): Status {
-  if (status === 'running') return 'running'
-  if (status === 'starting') return 'starting'
-  if (status === 'crashed') return 'crashed'
-  return 'stopped'
+function envStatusToDisplay(status: ReturnType<typeof deriveEnvStatus>): Status {
+  return status
 }
 
 function EnvDetail() {
@@ -45,7 +42,7 @@ function EnvDetail() {
   }
 
   function handleDelete() {
-    if (!window.confirm(`Delete env "${env?.name}"? This cannot be undone.`)) return
+    if (!window.confirm(`Delete env "${env?.envId}"? This cannot be undone.`)) return
     deleteEnv.mutate({ repoID: slug, envID: envId })
   }
 
@@ -77,8 +74,8 @@ function EnvDetail() {
     )
   }
 
-  const status = envStatus(env.status)
-  const isRunning = env.status === 'running' || env.status === 'starting'
+  const status = envStatusToDisplay(deriveEnvStatus(env))
+  const isRunning = status === 'running' || status === 'starting'
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -98,19 +95,14 @@ function EnvDetail() {
             {repo?.name ?? slug}
           </Link>
           <ChevronRight className="w-3 h-3" />
-          <span className="text-foreground font-medium">{env.name}</span>
+          <span className="text-foreground font-medium">{env.envId}</span>
         </nav>
 
         {/* Title row */}
         <div className="flex items-center gap-3 flex-wrap">
           <StatusDot status={status} />
-          <h1 className="font-display text-xl font-semibold text-foreground">{env.name}</h1>
-          <span className="text-sm text-muted capitalize">{env.status}</span>
-          {env.services.some((s) => s.uptime != null) && (
-            <span className="text-xs text-muted ml-auto">
-              up {formatUptime(env.services.find((s) => s.uptime != null)!.uptime!)}
-            </span>
-          )}
+          <h1 className="font-display text-xl font-semibold text-foreground">{env.envId}</h1>
+          <span className="text-sm text-muted capitalize">{status}</span>
         </div>
 
         {/* Action buttons */}

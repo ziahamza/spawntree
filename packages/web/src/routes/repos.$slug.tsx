@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ChevronRight, GitBranch, Folder } from 'lucide-react'
-import { useWebRepoDetail, useDeleteClone, useRelinkClone } from '../lib/api'
+import { useWebRepoDetail, useDeleteClone, useRelinkClone, deriveEnvStatus } from '../lib/api'
 import { WarningBanner } from '../components/WarningBanner'
 import { StatusDot } from '../components/StatusDot'
 import type { Status } from '../components/StatusDot'
@@ -32,7 +32,7 @@ function WorktreeRow({ wt, slug }: { wt: Worktree; slug: string }) {
       {wt.envs.length > 0 && (
         <div className="mt-1 space-y-1">
           {wt.envs.map((env) => (
-            <EnvRow key={env.id} env={env} slug={slug} />
+            <EnvRow key={env.envId} env={env} slug={slug} />
           ))}
         </div>
       )}
@@ -41,16 +41,18 @@ function WorktreeRow({ wt, slug }: { wt: Worktree; slug: string }) {
 }
 
 function EnvRow({ env, slug }: { env: EnvListItem; slug: string }) {
+  const status = deriveEnvStatus(env)
+  const serviceCount = env.services?.length ?? 0
   return (
     <Link
       to="/repos/$slug/envs/$envId"
-      params={{ slug, envId: env.id }}
+      params={{ slug, envId: env.envId }}
       className="flex items-center gap-2 py-1.5 px-3 rounded-md text-xs hover:bg-surface transition-colors"
     >
-      <StatusDot status={envStatusDot(env.status)} />
-      <span className="text-foreground font-medium">{env.name}</span>
-      <span className="text-muted capitalize">{env.status}</span>
-      <span className="text-muted ml-auto">{env.serviceCount} svc</span>
+      <StatusDot status={envStatusDot(status)} />
+      <span className="text-foreground font-medium">{env.envId}</span>
+      <span className="text-muted capitalize">{status}</span>
+      <span className="text-muted ml-auto">{serviceCount} svc</span>
     </Link>
   )
 }

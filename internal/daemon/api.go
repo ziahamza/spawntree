@@ -622,11 +622,17 @@ func (a *App) handleWebAddFolder(w http.ResponseWriter, r *http.Request) {
 
 	// If the user specified a preferred remote, use it instead of the default
 	if len(remotes) > 1 && req.RemoteName != "" {
+		found := false
 		for _, rm := range remotes {
 			if rm.Name == req.RemoteName {
 				info = ParseRemoteURL(rm.URL)
+				found = true
 				break
 			}
+		}
+		if !found {
+			writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", fmt.Sprintf("Remote %q not found", req.RemoteName), nil)
+			return
 		}
 	}
 

@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Plus, Activity, Server } from 'lucide-react'
-import { useWebRepos, useEnvs } from '../lib/api'
+import { useWebRepos, useEnvs, deriveEnvStatus } from '../lib/api'
 import { StatusDot } from '../components/StatusDot'
 import { AddFolderDialog } from '../components/AddFolderDialog'
 import type { Status } from '../components/StatusDot'
@@ -24,10 +24,7 @@ function formatRelative(dateStr: string): string {
 }
 
 function envStatus(env: EnvListItem): Status {
-  if (env.status === 'running') return 'running'
-  if (env.status === 'starting') return 'starting'
-  if (env.status === 'crashed') return 'crashed'
-  return 'stopped'
+  return deriveEnvStatus(env)
 }
 
 function repoOverallStatus(repo: WebRepo): Status {
@@ -40,13 +37,18 @@ function repoOverallStatus(repo: WebRepo): Status {
 function RightNowSection({ envs }: { envs: EnvListItem[] }) {
   // Find most recently active/crashed env
   const candidates = [...envs].sort((a, b) => {
-    const priorityA = a.status === 'running' || a.status === 'starting' ? 0 : a.status === 'crashed' ? 1 : 2
-    const priorityB = b.status === 'running' || b.status === 'starting' ? 0 : b.status === 'crashed' ? 1 : 2
+    const statusA = deriveEnvStatus(a)
+    const statusB = deriveEnvStatus(b)
+    const priorityA = statusA === 'running' || statusA === 'starting' ? 0 : statusA === 'crashed' ? 1 : 2
+    const priorityB = statusB === 'running' || statusB === 'starting' ? 0 : statusB === 'crashed' ? 1 : 2
     if (priorityA !== priorityB) return priorityA - priorityB
-    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   })
   const env = candidates[0]
   if (!env) return null
+
+  const status = deriveEnvStatus(env)
+  const serviceCount = env.services?.length ?? 0
 
   return (
     <div className="mb-8">
@@ -57,19 +59,19 @@ function RightNowSection({ envs }: { envs: EnvListItem[] }) {
       <div className="rounded-lg border border-border bg-surface p-4">
         <div className="flex items-center gap-3 mb-3">
           <StatusDot status={envStatus(env)} />
-          <span className="font-semibold text-foreground">{env.name}</span>
-          <span className="text-xs text-muted capitalize">{env.status}</span>
-          <span className="text-xs text-muted ml-auto">{formatRelative(env.updatedAt)}</span>
+          <span className="font-semibold text-foreground">{env.envId}</span>
+          <span className="text-xs text-muted capitalize">{status}</span>
+          <span className="text-xs text-muted ml-auto">{formatRelative(env.createdAt)}</span>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted mb-4">
           <Server className="w-3 h-3" />
-          <span>{env.serviceCount} service{env.serviceCount !== 1 ? 's' : ''}</span>
-          <span className="font-mono ml-2 text-muted/70 truncate">{env.configPath}</span>
+          <span>{serviceCount} service{serviceCount !== 1 ? 's' : ''}</span>
+          <span className="font-mono ml-2 text-muted/70 truncate">{env.repoPath}</span>
         </div>
         <div className="flex gap-2">
           <Link
             to="/repos/$slug/envs/$envId"
-            params={{ slug: env.repoID, envId: env.id }}
+            params={{ slug: env.repoId, envId: env.envId }}
             className="px-3 py-1.5 text-xs rounded-md border border-border text-muted hover:text-foreground hover:border-foreground/30 transition-colors"
           >
             View
@@ -148,9 +150,10 @@ function Dashboard() {
     )
   }
 
-  const activeEnvs = envs?.filter(
-    (e) => e.status === 'running' || e.status === 'starting' || e.status === 'crashed',
-  ) ?? []
+  const activeEnvs = envs?.filter((e) => {
+    const s = deriveEnvStatus(e)
+    return s === 'running' || s === 'starting' || s === 'crashed'
+  }) ?? []
 
   return (
     <div className="p-6 max-w-4xl mx-auto w-full">
