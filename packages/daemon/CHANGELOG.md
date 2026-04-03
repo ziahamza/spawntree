@@ -1,5 +1,21 @@
 # spawntree-daemon
 
+## 0.2.0
+
+### Minor Changes
+
+- [#6](https://github.com/ziahamza/spawntree/pull/6) [`fd91fd0`](https://github.com/ziahamza/spawntree/commit/fd91fd0de3800f9ed481ee2f43079cbf33ae353d) Thanks [@ziahamza](https://github.com/ziahamza)! - Add web admin dashboard served by the daemon
+
+  - Web dashboard at `http://localhost:<port>` shows all repos, environments, and services
+  - SQLite database for persistent repo/clone/worktree tracking across daemon restarts
+  - Real-time SSE log streaming with service filtering
+  - Start, stop, and restart environments from the browser
+  - Add local folders with automatic git remote detection (GitHub, GitLab, Bitbucket)
+  - Infrastructure status page for Postgres and Redis
+  - Mobile-responsive layout with hamburger drawer sidebar
+  - chi router migration from manual switch/case routing
+  - `--tags noui` build flag for API-only daemon builds
+
 ## 0.1.2
 
 ### Patch Changes
