@@ -517,6 +517,14 @@ func (a *App) handleWebRelinkClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cloneID := chi.URLParam(r, "cloneID")
+
+	// Verify clone exists
+	existing, err := a.db.GetClone(cloneID)
+	if err != nil || existing == nil {
+		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", "Clone not found", nil)
+		return
+	}
+
 	var body struct {
 		Path string `json:"path"`
 	}
