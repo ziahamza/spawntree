@@ -30,3 +30,7 @@ Thumbs.db
 
 # Coverage
 coverage/
+.gstack/
+spawntreed
+packages/web/node_modules/
+packages/web/dist/

@@ -85,6 +85,50 @@ func (w *WorktreeManager) Remove(envName string) error {
 	return nil
 }
 
+// GitWorktreeInfo holds parsed output from `git worktree list --porcelain`.
+type GitWorktreeInfo struct {
+	Path    string
+	Branch  string
+	HeadRef string
+}
+
+// listGitWorktrees runs `git worktree list --porcelain` and parses the output.
+func listGitWorktrees(dir string) ([]GitWorktreeInfo, error) {
+	out, err := gitOutput(dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+
+	var worktrees []GitWorktreeInfo
+	var current GitWorktreeInfo
+
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			if current.Path != "" {
+				worktrees = append(worktrees, current)
+			}
+			current = GitWorktreeInfo{Path: strings.TrimPrefix(line, "worktree ")}
+		case strings.HasPrefix(line, "HEAD "):
+			current.HeadRef = strings.TrimPrefix(line, "HEAD ")
+		case strings.HasPrefix(line, "branch "):
+			ref := strings.TrimPrefix(line, "branch ")
+			// Strip refs/heads/ prefix
+			current.Branch = strings.TrimPrefix(ref, "refs/heads/")
+		case line == "detached":
+			current.Branch = ""
+		}
+	}
+	if current.Path != "" {
+		worktrees = append(worktrees, current)
+	}
+
+	return worktrees, nil
+}
+
 func gitOutput(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
