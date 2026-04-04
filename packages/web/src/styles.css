@@ -1,5 +1,46 @@
 @import "tailwindcss";
 
+/* Self-hosted fonts */
+@font-face {
+  font-family: 'Mona Sans';
+  src: url('/fonts/MonaSans-Variable.woff2') format('woff2');
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Hubot Sans';
+  src: url('/fonts/HubotSans-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Hubot Sans';
+  src: url('/fonts/HubotSans-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Hubot Sans';
+  src: url('/fonts/HubotSans-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme {
   --color-background: #0D1117;
   --color-foreground: #E6EDF3;
