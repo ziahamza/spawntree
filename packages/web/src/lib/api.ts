@@ -461,7 +461,7 @@ export function useSuggestConfig() {
 
 export function useStartConfigPreview() {
   return useMutation({
-    mutationFn: (body: { repoPath: string; content: string }) =>
+    mutationFn: (body: { repoPath: string; content: string; serviceName?: string }) =>
       apiFetch<ConfigPreviewResult>('/web/config/preview/start', {
         method: 'POST',
         body: JSON.stringify(body),

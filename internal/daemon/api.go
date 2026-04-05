@@ -879,7 +879,7 @@ func (a *App) handleWebStartConfigPreview(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "repoPath and content are required", nil)
 		return
 	}
-	result, err := a.startPreviewSession(req.RepoPath, req.Content)
+	result, err := a.startPreviewSession(req.RepoPath, req.Content, req.ServiceName)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "PREVIEW_FAILED", err.Error(), nil)
 		return

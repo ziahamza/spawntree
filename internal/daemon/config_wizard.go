@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type ConfigTestRequest struct {
@@ -36,8 +38,9 @@ type ConfigSaveResponse struct {
 }
 
 type ConfigPreviewRequest struct {
-	RepoPath string `json:"repoPath"`
-	Content  string `json:"content"`
+	RepoPath    string `json:"repoPath"`
+	Content     string `json:"content"`
+	ServiceName string `json:"serviceName,omitempty"`
 }
 
 type ConfigPreviewResponse struct {
@@ -51,11 +54,12 @@ type ConfigPreviewStopRequest struct {
 }
 
 type ConfigPreviewSession struct {
-	ID         string
-	RepoID     string
-	EnvID      string
-	RepoPath   string
-	ConfigPath string
+	ID          string
+	RepoID      string
+	EnvID       string
+	RepoPath    string
+	ConfigPath  string
+	ServiceName string
 }
 
 type ConfigTestServiceResult struct {
@@ -152,6 +156,58 @@ func validateConfigForWizard(repoPath, content string) error {
 
 func previewSessionID() string {
 	return fmt.Sprintf("config-preview-%d", time.Now().UnixNano())
+}
+
+func previewConfigContent(repoPath, content, serviceName string) (string, error) {
+	if strings.TrimSpace(serviceName) == "" {
+		return content, nil
+	}
+
+	envVars, err := LoadEnv("config-preview", repoPath, nil)
+	if err != nil {
+		return "", err
+	}
+	config, err := ParseConfig([]byte(content), envVars)
+	if err != nil {
+		return "", err
+	}
+	if _, ok := config.Services[serviceName]; !ok {
+		return "", fmt.Errorf("service %q not found", serviceName)
+	}
+
+	selected := map[string]bool{}
+	var visit func(string)
+	visit = func(name string) {
+		if selected[name] {
+			return
+		}
+		selected[name] = true
+		for _, dep := range config.Services[name].DependsOn {
+			if _, ok := config.Services[dep]; ok {
+				visit(dep)
+			}
+		}
+	}
+	visit(serviceName)
+
+	filtered := struct {
+		Proxy    *ProxySettings           `yaml:"proxy,omitempty"`
+		Services map[string]ServiceConfig `yaml:"services"`
+	}{
+		Proxy:    config.Proxy,
+		Services: map[string]ServiceConfig{},
+	}
+	for _, name := range config.OrderedServiceNames() {
+		if selected[string(name)] {
+			filtered.Services[string(name)] = config.Services[string(name)]
+		}
+	}
+
+	out, err := yaml.Marshal(filtered)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 func previewURLForConfigTest(service ServiceInfo) string {
@@ -272,7 +328,7 @@ func (a *App) stopPreviewSession(id string) error {
 	return nil
 }
 
-func (a *App) startPreviewSession(repoPath, content string) (ConfigPreviewResponse, error) {
+func (a *App) startPreviewSession(repoPath, content, serviceName string) (ConfigPreviewResponse, error) {
 	if err := validateConfigForWizard(repoPath, content); err != nil {
 		return ConfigPreviewResponse{}, err
 	}
@@ -280,7 +336,7 @@ func (a *App) startPreviewSession(repoPath, content string) (ConfigPreviewRespon
 	a.previewMu.Lock()
 	idsToStop := make([]string, 0)
 	for id, session := range a.previewSessions {
-		if session.RepoPath == repoPath {
+		if session.RepoPath == repoPath && session.ServiceName == serviceName {
 			idsToStop = append(idsToStop, id)
 		}
 	}
@@ -295,7 +351,12 @@ func (a *App) startPreviewSession(repoPath, content string) (ConfigPreviewRespon
 	}
 	tempPath := tempFile.Name()
 	_ = tempFile.Close()
-	if err := writeConfigFile(tempPath, content); err != nil {
+	previewContent, err := previewConfigContent(repoPath, content, serviceName)
+	if err != nil {
+		_ = os.Remove(tempPath)
+		return ConfigPreviewResponse{}, err
+	}
+	if err := writeConfigFile(tempPath, previewContent); err != nil {
 		_ = os.Remove(tempPath)
 		return ConfigPreviewResponse{}, err
 	}
@@ -315,11 +376,12 @@ func (a *App) startPreviewSession(repoPath, content string) (ConfigPreviewRespon
 	}
 
 	session := ConfigPreviewSession{
-		ID:         string(envID),
-		RepoID:     string(env.RepoID),
-		EnvID:      string(env.EnvID),
-		RepoPath:   env.RepoPath,
-		ConfigPath: tempPath,
+		ID:          string(envID),
+		RepoID:      string(env.RepoID),
+		EnvID:       string(env.EnvID),
+		RepoPath:    env.RepoPath,
+		ConfigPath:  tempPath,
+		ServiceName: serviceName,
 	}
 	a.previewMu.Lock()
 	a.previewSessions[session.ID] = session

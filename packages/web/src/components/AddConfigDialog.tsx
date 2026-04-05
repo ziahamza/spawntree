@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { CheckCircle2, ExternalLink, Link2, Loader2, Settings2, Square, Wand2, X, XCircle } from 'lucide-react'
+import {
+  CheckCircle2,
+  ExternalLink,
+  Link2,
+  Loader2,
+  Play,
+  Settings2,
+  Square,
+  Wand2,
+  X,
+  XCircle,
+} from 'lucide-react'
 import {
   useSaveConfig,
   useSuggestConfig,
@@ -11,6 +22,7 @@ import {
   type ConfigServiceSuggestion,
   type ConfigSignal,
   type ConfigTestServiceResult,
+  type Env,
 } from '../lib/api'
 
 interface AddConfigDialogProps {
@@ -20,7 +32,6 @@ interface AddConfigDialogProps {
 }
 
 type EditorTab = 'suggested' | 'yaml'
-
 type ServiceDraft = ConfigServiceSuggestion
 
 function starterServices(): ServiceDraft[] {
@@ -45,9 +56,7 @@ function yamlQuote(value: string) {
 
 function servicesToYaml(services: ServiceDraft[]) {
   const enabled = services.filter((service) => service.selected)
-  if (enabled.length === 0) {
-    return 'services: {}\n'
-  }
+  if (enabled.length === 0) return 'services: {}\n'
 
   const lines = ['services:']
   for (const service of enabled) {
@@ -77,13 +86,8 @@ function servicesToYaml(services: ServiceDraft[]) {
 }
 
 function normalizeServices(services: ConfigServiceSuggestion[] | undefined) {
-  if (!services || services.length === 0) {
-    return starterServices()
-  }
-  return services.map((service) => ({
-    ...service,
-    dependsOn: service.dependsOn ?? [],
-  }))
+  if (!services || services.length === 0) return starterServices()
+  return services.map((service) => ({ ...service, dependsOn: service.dependsOn ?? [] }))
 }
 
 function signalTone(kind: string) {
@@ -131,27 +135,38 @@ function LivePreviewLogs({
     params.set('service', service)
     params.set('lines', '20')
     if (repoPath) params.set('repoPath', repoPath)
+
     const es = new EventSource(`/api/v1/repos/${repoID}/envs/${envID}/logs?${params.toString()}`)
     es.onmessage = (event) => {
       try {
         const parsed = JSON.parse(event.data)
         const line = typeof parsed?.line === 'string' ? parsed.line : String(event.data)
-        setLines((prev) => [...prev.slice(-19), line])
+        setLines((prev) => [...prev.slice(-399), line])
       } catch {
-        setLines((prev) => [...prev.slice(-19), String(event.data)])
+        setLines((prev) => [...prev.slice(-399), String(event.data)])
       }
     }
     es.onerror = () => {
       es.close()
     }
+
     return () => es.close()
   }, [repoID, envID, repoPath, service])
 
   return (
-    <pre className="text-[11px] font-mono text-foreground bg-background rounded-md p-2 overflow-auto max-h-40 whitespace-pre-wrap">
+    <pre className="text-[11px] font-mono text-foreground bg-background rounded-md p-2 overflow-auto max-h-56 whitespace-pre-wrap">
       {lines.length > 0 ? lines.join('\n') : 'Waiting for logs…'}
     </pre>
   )
+}
+
+type PreviewState = {
+  previewId: string
+  repoID: string
+  envID: string
+  repoPath?: string
+  serviceName?: string
+  env: Env
 }
 
 export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialogProps) {
@@ -162,7 +177,7 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
   const [tab, setTab] = useState<EditorTab>('suggested')
   const [rawContent, setRawContent] = useState(servicesToYaml(starterServices()))
   const [rawDirty, setRawDirty] = useState(false)
-  const [preview, setPreview] = useState<{ previewId: string; repoID: string; envID: string; repoPath?: string } | null>(null)
+  const [preview, setPreview] = useState<PreviewState | null>(null)
 
   const suggestConfig = useSuggestConfig()
   const testConfig = useTestConfig()
@@ -173,11 +188,10 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
 
   const generatedContent = useMemo(() => servicesToYaml(services), [services])
   const currentContent = rawDirty ? rawContent : generatedContent
+  const livePreviewEnv = previewEnv.data ?? preview?.env ?? null
 
   useEffect(() => {
-    if (!rawDirty) {
-      setRawContent(generatedContent)
-    }
+    if (!rawDirty) setRawContent(generatedContent)
   }, [generatedContent, rawDirty])
 
   useEffect(() => {
@@ -235,15 +249,38 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     [services],
   )
 
+  function missingHealthchecksFor(serviceName?: string) {
+    if (!serviceName) return missingHealthchecks
+
+    const required = new Set<string>()
+    const visit = (name: string) => {
+      const draft = services.find((service) => service.name === name)
+      if (!draft || required.has(name)) return
+      required.add(name)
+      for (const dependency of draft.dependsOn ?? []) visit(dependency)
+    }
+    visit(serviceName)
+
+    return services
+      .filter((service) => required.has(service.name) && requiresHealthcheck(service) && !service.healthcheckUrl?.trim())
+      .map((service) => service.name)
+  }
+
   const canSave =
     !!repoPath &&
     lastVerifiedContent === currentContent &&
-    !!preview &&
-    previewEnv.data?.services.every((service) => service.status === 'running') &&
+    !!testConfig.data?.ok &&
     !saveConfig.isPending &&
     missingHealthchecks.length === 0
 
+  async function stopActivePreview() {
+    if (!preview?.previewId) return
+    await stopPreview.mutateAsync({ previewId: preview.previewId }).catch(() => {})
+    setPreview(null)
+  }
+
   function updateService(id: string, patch: Partial<ServiceDraft>) {
+    void stopActivePreview()
     setServices((prev) => prev.map((service) => (service.id === id ? { ...service, ...patch } : service)))
     setRawDirty(false)
     setLastVerifiedContent(null)
@@ -252,31 +289,21 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
   async function handleTest() {
     if (!repoPath) return
     const result = await testConfig.mutateAsync({ repoPath, content: currentContent })
-    if (result.ok) {
-      setLastVerifiedContent(currentContent)
-    }
+    if (result.ok) setLastVerifiedContent(currentContent)
   }
 
-  async function handlePreview() {
+  async function handlePreview(serviceName?: string) {
     if (!repoPath) return
-    if (preview?.previewId) {
-      await stopPreview.mutateAsync({ previewId: preview.previewId }).catch(() => {})
-      setPreview(null)
-    }
-    const result = await startPreview.mutateAsync({ repoPath, content: currentContent })
+    await stopActivePreview()
+    const result = await startPreview.mutateAsync({ repoPath, content: currentContent, serviceName })
     setPreview({
       previewId: result.previewId,
       repoID: result.env.repoId,
       envID: result.env.envId,
       repoPath: result.env.repoPath,
+      serviceName,
+      env: result.env,
     })
-    setLastVerifiedContent(currentContent)
-  }
-
-  async function handleStopPreview() {
-    if (!preview?.previewId) return
-    await stopPreview.mutateAsync({ previewId: preview.previewId }).catch(() => {})
-    setPreview(null)
   }
 
   async function handleSave() {
@@ -307,7 +334,7 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
           </div>
 
           <Dialog.Description className="text-xs text-muted mb-4 flex-shrink-0">
-            Suggestions are preloaded from workspace files, version files, package scripts, and compose files. Test the config live before save.
+            Suggestions are preloaded from workspace files, version files, package scripts, and compose files. Run services here and debug them in place before saving.
           </Dialog.Description>
 
           {repoPath && (
@@ -369,128 +396,202 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
             >
               YAML
             </button>
-            {suggestConfig.isPending && (
-              <span className="ml-auto flex items-center gap-2 text-xs text-muted">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                Scanning repo
-              </span>
-            )}
+            <div className="ml-auto flex items-center gap-2">
+              {preview && !preview.serviceName && (
+                <button
+                  type="button"
+                  onClick={stopActivePreview}
+                  disabled={stopPreview.isPending}
+                  className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground hover:border-foreground/30 disabled:opacity-50"
+                >
+                  <Square className="w-3 h-3" />
+                  Stop All
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => handlePreview()}
+                disabled={!repoPath || startPreview.isPending || stopPreview.isPending || missingHealthchecks.length > 0}
+                className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground hover:border-foreground/30 disabled:opacity-50"
+              >
+                <Play className="w-3 h-3" />
+                Run All
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 min-h-0 overflow-auto">
             {tab === 'suggested' ? (
               <div className="space-y-3 pr-1">
-                {services.map((service) => (
-                  <div key={service.id} className="rounded-lg border border-border bg-background p-4">
-                    <div className="flex items-start gap-3 mb-3">
-                      <input
-                        type="checkbox"
-                        checked={service.selected}
-                        onChange={(e) => updateService(service.id, { selected: e.target.checked })}
-                        className="mt-1"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 flex-wrap mb-1">
-                          <input
-                            value={service.name}
-                            onChange={(e) => updateService(service.id, { name: e.target.value })}
-                            className="px-2 py-1 rounded-md border border-border bg-surface text-sm text-foreground min-w-[180px]"
-                          />
-                          <select
-                            value={service.type}
-                            onChange={(e) => updateService(service.id, { type: e.target.value as ServiceDraft['type'] })}
-                            className="px-2 py-1 rounded-md border border-border bg-surface text-xs text-foreground"
-                          >
-                            <option value="process">process</option>
-                            <option value="container">container</option>
-                            <option value="postgres">postgres</option>
-                            <option value="redis">redis</option>
-                          </select>
-                          <span className="text-[11px] text-muted">{sourceLabel(service.source)}</span>
-                        </div>
-                        {service.reason && (
-                          <p className="text-[11px] text-muted mb-2 flex items-center gap-1">
-                            <Wand2 className="w-3 h-3" />
-                            {service.reason}
-                          </p>
-                        )}
+                {services.map((service) => {
+                  const activePreview = preview?.serviceName === service.name
+                  const liveService =
+                    activePreview
+                      ? (livePreviewEnv?.services.find((item) => item.name === service.name) ?? preview?.env.services.find((item) => item.name === service.name) ?? null)
+                      : null
+                  const previewURL = previewURLForService(liveService ?? {})
+                  const testService = testConfig.data?.services?.find((item) => item.name === service.name) ?? null
+                  const serviceMissingHealthchecks = missingHealthchecksFor(service.name)
 
-                        {service.type === 'process' && (
-                          <input
-                            value={service.command ?? ''}
-                            onChange={(e) => updateService(service.id, { command: e.target.value })}
-                            placeholder="command"
-                            className="w-full px-2 py-1.5 rounded-md border border-border bg-surface text-xs font-mono text-foreground mb-2"
-                          />
-                        )}
-
-                        {service.type === 'container' && (
-                          <input
-                            value={service.image ?? ''}
-                            onChange={(e) => updateService(service.id, { image: e.target.value })}
-                            placeholder="image"
-                            className="w-full px-2 py-1.5 rounded-md border border-border bg-surface text-xs font-mono text-foreground mb-2"
-                          />
-                        )}
-
-                        {(service.type === 'process' || service.type === 'container') && (
-                          <div className="grid sm:grid-cols-2 gap-2">
+                  return (
+                    <div key={service.id} className="rounded-lg border border-border bg-background p-4">
+                      <div className="flex items-start gap-3 mb-3">
+                        <input
+                          type="checkbox"
+                          checked={service.selected}
+                          onChange={(e) => updateService(service.id, { selected: e.target.checked })}
+                          className="mt-1"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
                             <input
-                              type="number"
-                              value={service.port ?? ''}
-                              onChange={(e) =>
-                                updateService(service.id, {
-                                  port: e.target.value ? Number(e.target.value) : undefined,
-                                })
-                              }
-                              placeholder="port"
-                              className="px-2 py-1.5 rounded-md border border-border bg-surface text-xs text-foreground"
+                              value={service.name}
+                              onChange={(e) => updateService(service.id, { name: e.target.value })}
+                              className="px-2 py-1 rounded-md border border-border bg-surface text-sm text-foreground min-w-[180px]"
                             />
-                            <input
-                              value={service.dependsOn?.join(', ') ?? ''}
-                              onChange={(e) =>
-                                updateService(service.id, {
-                                  dependsOn: e.target.value
-                                    .split(',')
-                                    .map((value) => value.trim())
-                                    .filter(Boolean),
-                                })
-                              }
-                              placeholder="depends_on (comma separated)"
-                              className="px-2 py-1.5 rounded-md border border-border bg-surface text-xs text-foreground"
-                            />
-                            <input
-                              value={service.healthcheckUrl ?? ''}
-                              onChange={(e) =>
-                                updateService(service.id, {
-                                  healthcheckUrl: e.target.value,
-                                })
-                              }
-                              placeholder="healthcheck URL"
-                              className="sm:col-span-2 px-2 py-1.5 rounded-md border border-border bg-surface text-xs font-mono text-foreground"
-                            />
+                            <select
+                              value={service.type}
+                              onChange={(e) => updateService(service.id, { type: e.target.value as ServiceDraft['type'] })}
+                              className="px-2 py-1 rounded-md border border-border bg-surface text-xs text-foreground"
+                            >
+                              <option value="process">process</option>
+                              <option value="container">container</option>
+                              <option value="postgres">postgres</option>
+                              <option value="redis">redis</option>
+                            </select>
+                            <span className="text-[11px] text-muted">{sourceLabel(service.source)}</span>
                           </div>
-                        )}
 
-                        {preview && previewEnv.data && (() => {
-                          const previewService = previewEnv.data.services.find((item) => item.name === service.name)
-                          const previewURL = previewService ? previewURLForService(previewService) : null
-                          const testService = testConfig.data?.services?.find((item) => item.name === service.name)
-                          if (!previewService && !testService) return null
-                          return (
+                          {service.reason && (
+                            <p className="text-[11px] text-muted mb-2 flex items-center gap-1">
+                              <Wand2 className="w-3 h-3" />
+                              {service.reason}
+                            </p>
+                          )}
+
+                          {(service.type === 'process' || service.type === 'container') && (
+                            <div className="mb-2 flex items-stretch gap-2">
+                              <div className="flex items-center gap-2 flex-1 rounded-md border border-border bg-surface px-2">
+                                <span className="text-muted font-mono text-xs">$</span>
+                                <input
+                                  value={service.type === 'process' ? (service.command ?? '') : (service.image ?? '')}
+                                  onChange={(e) =>
+                                    updateService(service.id, service.type === 'process'
+                                      ? { command: e.target.value }
+                                      : { image: e.target.value })
+                                  }
+                                  placeholder={service.type === 'process' ? 'command' : 'image'}
+                                  className="w-full bg-transparent py-1.5 text-xs font-mono text-foreground focus:outline-none"
+                                />
+                              </div>
+
+                              {activePreview ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={stopActivePreview}
+                                    disabled={stopPreview.isPending}
+                                    className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground hover:border-foreground/30 disabled:opacity-50"
+                                  >
+                                    <Square className="w-3 h-3" />
+                                    Stop
+                                  </button>
+                                  <div className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs">
+                                    {previewURL ? (
+                                      <>
+                                        <a
+                                          href={previewURL}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1 text-blue hover:underline"
+                                        >
+                                          <ExternalLink className="w-3 h-3" />
+                                          Open
+                                        </a>
+                                        <button
+                                          type="button"
+                                          className="inline-flex items-center gap-1 text-blue hover:underline"
+                                          onClick={async () => {
+                                            try {
+                                              await navigator.clipboard.writeText(previewURL)
+                                            } catch {
+                                              window.prompt('Copy preview URL', previewURL)
+                                            }
+                                          }}
+                                        >
+                                          <Link2 className="w-3 h-3" />
+                                          Copy
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <span className="text-muted">Link pending…</span>
+                                    )}
+                                  </div>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handlePreview(service.name)}
+                                  disabled={!service.selected || startPreview.isPending || stopPreview.isPending || serviceMissingHealthchecks.length > 0}
+                                  className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground hover:border-foreground/30 disabled:opacity-50"
+                                >
+                                  <Play className="w-3 h-3" />
+                                  Run This
+                                </button>
+                              )}
+                            </div>
+                          )}
+
+                          {(service.type === 'process' || service.type === 'container') && (
+                            <div className="grid sm:grid-cols-2 gap-2">
+                              <input
+                                type="number"
+                                value={service.port ?? ''}
+                                onChange={(e) =>
+                                  updateService(service.id, {
+                                    port: e.target.value ? Number(e.target.value) : undefined,
+                                  })
+                                }
+                                placeholder="port"
+                                className="px-2 py-1.5 rounded-md border border-border bg-surface text-xs text-foreground"
+                              />
+                              <input
+                                value={service.dependsOn?.join(', ') ?? ''}
+                                onChange={(e) =>
+                                  updateService(service.id, {
+                                    dependsOn: e.target.value
+                                      .split(',')
+                                      .map((value) => value.trim())
+                                      .filter(Boolean),
+                                  })
+                                }
+                                placeholder="depends_on (comma separated)"
+                                className="px-2 py-1.5 rounded-md border border-border bg-surface text-xs text-foreground"
+                              />
+                              <input
+                                value={service.healthcheckUrl ?? ''}
+                                onChange={(e) => updateService(service.id, { healthcheckUrl: e.target.value })}
+                                placeholder="healthcheck URL"
+                                className="sm:col-span-2 px-2 py-1.5 rounded-md border border-border bg-surface text-xs font-mono text-foreground"
+                              />
+                            </div>
+                          )}
+
+                          {serviceMissingHealthchecks.length > 0 && (
+                            <p className="mt-2 text-[11px] text-orange">
+                              Add healthchecks before running this service. Missing: {serviceMissingHealthchecks.join(', ')}
+                            </p>
+                          )}
+
+                          {activePreview && (
                             <div className="mt-3 rounded-md border border-border bg-surface p-3 space-y-2">
                               <div className="flex items-center gap-2 flex-wrap text-xs">
-                                {previewService?.status === 'running' ? (
-                                  <span className="inline-flex items-center gap-1 text-green">
-                                    <CheckCircle2 className="w-3 h-3" />
-                                    Healthcheck passed
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 text-orange">
-                                    <XCircle className="w-3 h-3" />
-                                    {previewService?.status ?? 'not started'}
-                                  </span>
-                                )}
+                                <span className={`inline-flex items-center gap-1 ${
+                                  liveService?.status === 'running' ? 'text-green' : 'text-orange'
+                                }`}>
+                                  {liveService?.status === 'running' ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                                  {liveService?.status ?? 'starting'}
+                                </span>
                                 {testService && (
                                   <span className={`inline-flex items-center gap-1 ${testService.probeOk ? 'text-green' : 'text-orange'}`}>
                                     {testService.probeOk ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
@@ -502,38 +603,17 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
                                   </span>
                                 )}
                               </div>
-                              {previewURL && (
-                                <div className="flex items-center gap-3 text-xs">
-                                  <a
-                                    href={previewURL}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 text-blue hover:underline"
-                                  >
-                                    <ExternalLink className="w-3 h-3" />
-                                    Open preview
-                                  </a>
-                                  <button
-                                    type="button"
-                                    className="inline-flex items-center gap-1 text-blue hover:underline"
-                                    onClick={async () => {
-                                      try {
-                                        await navigator.clipboard.writeText(previewURL)
-                                      } catch {
-                                        window.prompt('Copy preview URL', previewURL)
-                                      }
-                                    }}
-                                  >
-                                    <Link2 className="w-3 h-3" />
-                                    Copy link
-                                  </button>
-                                </div>
-                              )}
+
                               {testService?.probeBodyPreview && (
                                 <pre className="text-[11px] font-mono text-muted bg-background rounded-md p-2 overflow-auto whitespace-pre-wrap">
                                   {testService.probeBodyPreview}
                                 </pre>
                               )}
+
+                              {testService?.probeError && (
+                                <p className="text-[11px] text-orange">{testService.probeError}</p>
+                              )}
+
                               <div>
                                 <p className="text-[11px] text-muted mb-1">Live logs</p>
                                 <LivePreviewLogs
@@ -544,17 +624,18 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
                                 />
                               </div>
                             </div>
-                          )
-                        })()}
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             ) : (
               <textarea
                 value={rawContent}
                 onChange={(e) => {
+                  void stopActivePreview()
                   setRawContent(e.target.value)
                   setRawDirty(true)
                   setLastVerifiedContent(null)
@@ -565,9 +646,14 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
             )}
           </div>
 
-          {(testConfig.error || saveConfig.error) && (
+          {(testConfig.error || saveConfig.error || startPreview.error || stopPreview.error) && (
             <p className="mt-3 text-xs text-red bg-red/10 border border-red/30 rounded-md px-3 py-2 whitespace-pre-wrap flex-shrink-0">
-              {(testConfig.error?.message ?? saveConfig.error?.message) || 'Request failed'}
+              {(
+                testConfig.error?.message ??
+                saveConfig.error?.message ??
+                startPreview.error?.message ??
+                stopPreview.error?.message
+              ) || 'Request failed'}
             </p>
           )}
 
@@ -580,71 +666,9 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
           {testConfig.data?.ok && lastVerifiedContent === currentContent && (
             <div className="mt-3 flex items-center gap-2 text-xs text-green bg-green/10 border border-green/30 rounded-md px-3 py-2 flex-shrink-0">
               <CheckCircle2 className="w-3 h-3" />
-              <span>
-                Verified live. Services: {verificationSummary || 'none'}
-              </span>
+              <span>Verified live. Services: {verificationSummary || 'none'}</span>
             </div>
           )}
-
-          {testConfig.data?.services?.length && !preview ? (
-            <div className="mt-3 rounded-lg border border-border bg-background p-4 space-y-4 flex-shrink-0">
-              <h3 className="text-xs font-medium text-muted uppercase tracking-wider">Live Preview</h3>
-              {testConfig.data.services.map((service) => (
-                <div key={service.name} className="rounded-md border border-border bg-surface p-3">
-                  <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <span className="font-semibold text-sm text-foreground">{service.name}</span>
-                    <span className="text-[11px] text-muted">{service.type}</span>
-                    <span className={`text-[11px] ${service.probeOk ? 'text-green' : 'text-orange'}`}>
-                      {service.probeError
-                        ? `GET / failed`
-                        : service.probeStatusCode
-                          ? `GET / -> ${service.probeStatusCode}`
-                          : 'No probe'}
-                    </span>
-                  </div>
-                  {service.previewUrl && (
-                    <div className="flex items-center gap-3 text-xs mb-2">
-                      <a
-                        href={service.previewUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue hover:underline"
-                      >
-                        Open preview
-                      </a>
-                      <button
-                        type="button"
-                        className="text-blue hover:underline"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(service.previewUrl!)
-                          } catch {
-                            window.prompt('Copy preview URL', service.previewUrl)
-                          }
-                        }}
-                      >
-                        Copy link
-                      </button>
-                    </div>
-                  )}
-                  {service.probeBodyPreview && (
-                    <pre className="text-[11px] font-mono text-muted bg-background rounded-md p-2 overflow-auto mb-2 whitespace-pre-wrap">
-                      {service.probeBodyPreview}
-                    </pre>
-                  )}
-                  {service.probeError && (
-                    <p className="text-[11px] text-orange mb-2">{service.probeError}</p>
-                  )}
-                  <div>
-                    <p className="text-[11px] text-muted mb-1">Recent logs</p>
-                    <pre className="text-[11px] font-mono text-foreground bg-background rounded-md p-2 overflow-auto max-h-40 whitespace-pre-wrap">
-                      {service.logs.length > 0 ? service.logs.join('\n') : 'No logs yet'}
-                    </pre>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
 
           <div className="flex justify-end gap-2 pt-4 flex-shrink-0">
             <button
@@ -655,24 +679,6 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
             >
               {testConfig.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
               {testConfig.isPending ? 'Testing…' : 'Test Config'}
-            </button>
-            <button
-              type="button"
-              onClick={preview ? handleStopPreview : handlePreview}
-              disabled={!repoPath || startPreview.isPending || stopPreview.isPending || saveConfig.isPending || missingHealthchecks.length > 0}
-              className="flex items-center gap-2 px-4 py-2 text-xs rounded-md border border-border text-muted hover:text-foreground hover:border-foreground/30 transition-colors disabled:opacity-50 min-h-[36px]"
-            >
-              {(startPreview.isPending || stopPreview.isPending) && <Loader2 className="w-3 h-3 animate-spin" />}
-              {preview ? (
-                <>
-                  <Square className="w-3 h-3" />
-                  Stop Preview
-                </>
-              ) : startPreview.isPending ? (
-                'Starting Preview…'
-              ) : (
-                'Run Preview'
-              )}
             </button>
             <button
               type="button"
