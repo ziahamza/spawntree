@@ -88,6 +88,7 @@ func (a *App) buildRouter() chi.Router {
 		r.Post("/web/repos/{repoSlug}/worktrees/archive", a.handleWebArchiveWorktree)
 		r.Post("/web/repos/probe", a.handleWebProbePath)
 		r.Post("/web/repos/add", a.handleWebAddFolder)
+		r.Post("/web/config/suggest", a.handleWebSuggestConfig)
 		r.Post("/web/config/test", a.handleWebTestConfig)
 		r.Post("/web/config/save", a.handleWebSaveConfig)
 	})

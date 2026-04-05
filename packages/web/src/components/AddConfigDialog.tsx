@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { CheckCircle2, Loader2, Settings2, X } from 'lucide-react'
-import { useSaveConfig, useTestConfig } from '../lib/api'
+import { CheckCircle2, Loader2, Settings2, Wand2, X } from 'lucide-react'
+import {
+  useSaveConfig,
+  useSuggestConfig,
+  useTestConfig,
+  type ConfigServiceSuggestion,
+  type ConfigSignal,
+} from '../lib/api'
 
 interface AddConfigDialogProps {
   open: boolean
@@ -9,28 +15,139 @@ interface AddConfigDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-function starterConfig() {
-  return `services:
-  app:
-    type: process
-    command: npm run dev
-    port: 3000
-`
+type EditorTab = 'suggested' | 'yaml'
+
+type ServiceDraft = ConfigServiceSuggestion
+
+function starterServices(): ServiceDraft[] {
+  return [
+    {
+      id: 'starter-app',
+      name: 'app',
+      type: 'process',
+      command: 'npm run dev',
+      port: 3000,
+      selected: true,
+      reason: 'starter config',
+      source: '.',
+    },
+  ]
+}
+
+function yamlQuote(value: string) {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
+function servicesToYaml(services: ServiceDraft[]) {
+  const enabled = services.filter((service) => service.selected)
+  if (enabled.length === 0) {
+    return 'services: {}\n'
+  }
+
+  const lines = ['services:']
+  for (const service of enabled) {
+    lines.push(`  ${service.name}:`)
+    lines.push(`    type: ${service.type}`)
+    if (service.type === 'process' && service.command) {
+      lines.push(`    command: ${yamlQuote(service.command)}`)
+    }
+    if (service.type === 'container' && service.image) {
+      lines.push(`    image: ${yamlQuote(service.image)}`)
+    }
+    if ((service.type === 'process' || service.type === 'container') && service.port) {
+      lines.push(`    port: ${service.port}`)
+    }
+    if (service.dependsOn && service.dependsOn.length > 0) {
+      lines.push('    depends_on:')
+      for (const dependency of service.dependsOn) {
+        lines.push(`      - ${dependency}`)
+      }
+    }
+  }
+  return `${lines.join('\n')}\n`
+}
+
+function normalizeServices(services: ConfigServiceSuggestion[] | undefined) {
+  if (!services || services.length === 0) {
+    return starterServices()
+  }
+  return services.map((service) => ({
+    ...service,
+    dependsOn: service.dependsOn ?? [],
+  }))
+}
+
+function signalTone(kind: string) {
+  switch (kind) {
+    case 'toolchain':
+      return 'text-blue border-blue/30 bg-blue/10'
+    case 'workspace':
+      return 'text-green border-green/30 bg-green/10'
+    case 'compose':
+      return 'text-orange border-orange/30 bg-orange/10'
+    default:
+      return 'text-muted border-border bg-background'
+  }
+}
+
+function sourceLabel(source?: string) {
+  return source && source !== '.' ? source : 'repo root'
 }
 
 export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialogProps) {
-  const [content, setContent] = useState(starterConfig())
+  const [services, setServices] = useState<ServiceDraft[]>(starterServices())
+  const [signals, setSignals] = useState<ConfigSignal[]>([])
   const [saveInRepo, setSaveInRepo] = useState(true)
   const [lastVerifiedContent, setLastVerifiedContent] = useState<string | null>(null)
+  const [tab, setTab] = useState<EditorTab>('suggested')
+  const [rawContent, setRawContent] = useState(servicesToYaml(starterServices()))
+  const [rawDirty, setRawDirty] = useState(false)
 
+  const suggestConfig = useSuggestConfig()
   const testConfig = useTestConfig()
   const saveConfig = useSaveConfig()
 
+  const generatedContent = useMemo(() => servicesToYaml(services), [services])
+  const currentContent = rawDirty ? rawContent : generatedContent
+
+  useEffect(() => {
+    if (!rawDirty) {
+      setRawContent(generatedContent)
+    }
+  }, [generatedContent, rawDirty])
+
   useEffect(() => {
     if (!open) return
-    setContent(starterConfig())
+
     setSaveInRepo(true)
     setLastVerifiedContent(null)
+    setTab('suggested')
+    setSignals([])
+    setServices(starterServices())
+    setRawDirty(false)
+    setRawContent(servicesToYaml(starterServices()))
+
+    if (!repoPath) return
+
+    let cancelled = false
+    suggestConfig
+      .mutateAsync({ repoPath })
+      .then((result) => {
+        if (cancelled) return
+        const nextServices = normalizeServices(result.services)
+        setSignals(result.signals ?? [])
+        setServices(nextServices)
+        setRawDirty(false)
+        setRawContent(servicesToYaml(nextServices))
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSignals([])
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [open, repoPath])
 
   const verificationSummary = useMemo(() => {
@@ -38,13 +155,23 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     return testConfig.data.serviceNames.join(', ')
   }, [testConfig.data])
 
-  const canSave = !!repoPath && lastVerifiedContent === content && !!testConfig.data?.ok && !saveConfig.isPending
+  const canSave =
+    !!repoPath &&
+    lastVerifiedContent === currentContent &&
+    !!testConfig.data?.ok &&
+    !saveConfig.isPending
+
+  function updateService(id: string, patch: Partial<ServiceDraft>) {
+    setServices((prev) => prev.map((service) => (service.id === id ? { ...service, ...patch } : service)))
+    setRawDirty(false)
+    setLastVerifiedContent(null)
+  }
 
   async function handleTest() {
     if (!repoPath) return
-    const result = await testConfig.mutateAsync({ repoPath, content })
+    const result = await testConfig.mutateAsync({ repoPath, content: currentContent })
     if (result.ok) {
-      setLastVerifiedContent(content)
+      setLastVerifiedContent(currentContent)
     }
   }
 
@@ -52,7 +179,7 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     if (!repoPath || !canSave) return
     await saveConfig.mutateAsync({
       repoPath,
-      content,
+      content: currentContent,
       saveMode: saveInRepo ? 'repo' : 'global',
     })
     onOpenChange(false)
@@ -62,8 +189,8 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(92vw,860px)] bg-surface border border-border rounded-xl shadow-2xl p-6 focus:outline-none">
-          <div className="flex items-center justify-between mb-5">
+        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(94vw,980px)] max-h-[88vh] bg-surface border border-border rounded-xl shadow-2xl p-6 focus:outline-none overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between mb-5 flex-shrink-0">
             <div className="flex items-center gap-2">
               <Settings2 className="w-4 h-4 text-blue" />
               <Dialog.Title className="font-display font-semibold text-sm text-foreground">
@@ -75,17 +202,17 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
             </Dialog.Close>
           </div>
 
-          <Dialog.Description className="text-xs text-muted mb-4">
-            Test the config against this repo before saving. Saving stays disabled until the live test passes.
+          <Dialog.Description className="text-xs text-muted mb-4 flex-shrink-0">
+            Suggestions are preloaded from workspace files, version files, package scripts, and compose files. Test the config live before save.
           </Dialog.Description>
 
           {repoPath && (
-            <p className="text-[11px] font-mono text-muted mb-4 truncate" title={repoPath}>
+            <p className="text-[11px] font-mono text-muted mb-4 truncate flex-shrink-0" title={repoPath}>
               {repoPath}
             </p>
           )}
 
-          <label className="flex items-start gap-2 rounded-md border border-border p-3 text-xs text-muted mb-4">
+          <label className="flex items-start gap-2 rounded-md border border-border p-3 text-xs text-muted mb-4 flex-shrink-0">
             <input
               type="checkbox"
               checked={saveInRepo}
@@ -100,23 +227,163 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
             </span>
           </label>
 
-          <textarea
-            value={content}
-            onChange={(e) => {
-              setContent(e.target.value)
-            }}
-            spellCheck={false}
-            className="w-full min-h-[320px] px-3 py-3 text-sm font-mono bg-background border border-border rounded-md text-foreground placeholder:text-muted focus:outline-none focus:border-blue/50 focus:ring-1 focus:ring-blue/30"
-          />
+          {signals.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-4 flex-shrink-0">
+              {signals.map((signal, index) => (
+                <div
+                  key={`${signal.kind}:${signal.label}:${index}`}
+                  className={`px-2.5 py-1 rounded-md border text-[11px] ${signalTone(signal.kind)}`}
+                  title={signal.detail}
+                >
+                  <span className="font-medium">{signal.label}</span>
+                  <span className="ml-1 opacity-80">{signal.detail}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 mb-4 flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setTab('suggested')}
+              className={`px-3 py-1.5 rounded-md text-xs border transition-colors ${
+                tab === 'suggested'
+                  ? 'bg-blue/10 border-blue/30 text-blue'
+                  : 'border-border text-muted hover:text-foreground hover:border-foreground/30'
+              }`}
+            >
+              Suggested
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('yaml')}
+              className={`px-3 py-1.5 rounded-md text-xs border transition-colors ${
+                tab === 'yaml'
+                  ? 'bg-blue/10 border-blue/30 text-blue'
+                  : 'border-border text-muted hover:text-foreground hover:border-foreground/30'
+              }`}
+            >
+              YAML
+            </button>
+            {suggestConfig.isPending && (
+              <span className="ml-auto flex items-center gap-2 text-xs text-muted">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Scanning repo
+              </span>
+            )}
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-auto">
+            {tab === 'suggested' ? (
+              <div className="space-y-3 pr-1">
+                {services.map((service) => (
+                  <div key={service.id} className="rounded-lg border border-border bg-background p-4">
+                    <div className="flex items-start gap-3 mb-3">
+                      <input
+                        type="checkbox"
+                        checked={service.selected}
+                        onChange={(e) => updateService(service.id, { selected: e.target.checked })}
+                        className="mt-1"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <input
+                            value={service.name}
+                            onChange={(e) => updateService(service.id, { name: e.target.value })}
+                            className="px-2 py-1 rounded-md border border-border bg-surface text-sm text-foreground min-w-[180px]"
+                          />
+                          <select
+                            value={service.type}
+                            onChange={(e) => updateService(service.id, { type: e.target.value as ServiceDraft['type'] })}
+                            className="px-2 py-1 rounded-md border border-border bg-surface text-xs text-foreground"
+                          >
+                            <option value="process">process</option>
+                            <option value="container">container</option>
+                            <option value="postgres">postgres</option>
+                            <option value="redis">redis</option>
+                          </select>
+                          <span className="text-[11px] text-muted">{sourceLabel(service.source)}</span>
+                        </div>
+                        {service.reason && (
+                          <p className="text-[11px] text-muted mb-2 flex items-center gap-1">
+                            <Wand2 className="w-3 h-3" />
+                            {service.reason}
+                          </p>
+                        )}
+
+                        {service.type === 'process' && (
+                          <input
+                            value={service.command ?? ''}
+                            onChange={(e) => updateService(service.id, { command: e.target.value })}
+                            placeholder="command"
+                            className="w-full px-2 py-1.5 rounded-md border border-border bg-surface text-xs font-mono text-foreground mb-2"
+                          />
+                        )}
+
+                        {service.type === 'container' && (
+                          <input
+                            value={service.image ?? ''}
+                            onChange={(e) => updateService(service.id, { image: e.target.value })}
+                            placeholder="image"
+                            className="w-full px-2 py-1.5 rounded-md border border-border bg-surface text-xs font-mono text-foreground mb-2"
+                          />
+                        )}
+
+                        {(service.type === 'process' || service.type === 'container') && (
+                          <div className="grid sm:grid-cols-2 gap-2">
+                            <input
+                              type="number"
+                              value={service.port ?? ''}
+                              onChange={(e) =>
+                                updateService(service.id, {
+                                  port: e.target.value ? Number(e.target.value) : undefined,
+                                })
+                              }
+                              placeholder="port"
+                              className="px-2 py-1.5 rounded-md border border-border bg-surface text-xs text-foreground"
+                            />
+                            <input
+                              value={service.dependsOn?.join(', ') ?? ''}
+                              onChange={(e) =>
+                                updateService(service.id, {
+                                  dependsOn: e.target.value
+                                    .split(',')
+                                    .map((value) => value.trim())
+                                    .filter(Boolean),
+                                })
+                              }
+                              placeholder="depends_on (comma separated)"
+                              className="px-2 py-1.5 rounded-md border border-border bg-surface text-xs text-foreground"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <textarea
+                value={rawContent}
+                onChange={(e) => {
+                  setRawContent(e.target.value)
+                  setRawDirty(true)
+                  setLastVerifiedContent(null)
+                }}
+                spellCheck={false}
+                className="w-full min-h-[420px] px-3 py-3 text-sm font-mono bg-background border border-border rounded-md text-foreground placeholder:text-muted focus:outline-none focus:border-blue/50 focus:ring-1 focus:ring-blue/30"
+              />
+            )}
+          </div>
 
           {(testConfig.error || saveConfig.error) && (
-            <p className="mt-3 text-xs text-red bg-red/10 border border-red/30 rounded-md px-3 py-2 whitespace-pre-wrap">
+            <p className="mt-3 text-xs text-red bg-red/10 border border-red/30 rounded-md px-3 py-2 whitespace-pre-wrap flex-shrink-0">
               {(testConfig.error?.message ?? saveConfig.error?.message) || 'Request failed'}
             </p>
           )}
 
-          {testConfig.data?.ok && lastVerifiedContent === content && (
-            <div className="mt-3 flex items-center gap-2 text-xs text-green bg-green/10 border border-green/30 rounded-md px-3 py-2">
+          {testConfig.data?.ok && lastVerifiedContent === currentContent && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-green bg-green/10 border border-green/30 rounded-md px-3 py-2 flex-shrink-0">
               <CheckCircle2 className="w-3 h-3" />
               <span>
                 Verified live. Services: {verificationSummary || 'none'}
@@ -124,7 +391,7 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
             </div>
           )}
 
-          <div className="flex justify-end gap-2 pt-4">
+          <div className="flex justify-end gap-2 pt-4 flex-shrink-0">
             <button
               type="button"
               onClick={handleTest}

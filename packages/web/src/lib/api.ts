@@ -316,6 +316,30 @@ export interface ConfigTestResult {
   serviceNames: string[]
 }
 
+export interface ConfigSignal {
+  kind: string
+  label: string
+  detail: string
+}
+
+export interface ConfigServiceSuggestion {
+  id: string
+  name: string
+  type: 'process' | 'container' | 'postgres' | 'redis'
+  command?: string
+  image?: string
+  port?: number
+  dependsOn?: string[]
+  source?: string
+  reason?: string
+  selected: boolean
+}
+
+export interface ConfigSuggestResult {
+  signals: ConfigSignal[]
+  services: ConfigServiceSuggestion[]
+}
+
 export interface ConfigSaveResult {
   ok: boolean
   configPath: string
@@ -398,6 +422,16 @@ export function useTestConfig() {
   return useMutation({
     mutationFn: (body: { repoPath: string; content: string }) =>
       apiFetch<ConfigTestResult>('/web/config/test', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+  })
+}
+
+export function useSuggestConfig() {
+  return useMutation({
+    mutationFn: (body: { repoPath: string }) =>
+      apiFetch<ConfigSuggestResult>('/web/config/suggest', {
         method: 'POST',
         body: JSON.stringify(body),
       }),
