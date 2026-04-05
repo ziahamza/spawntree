@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X, Loader2, FolderPlus } from 'lucide-react'
-import { useAddFolder } from '../lib/api'
+import { useAddFolder, useProbeAddPath } from '../lib/api'
 
 interface AddFolderDialogProps {
   open: boolean
@@ -36,9 +36,20 @@ export function AddFolderDialog({ open, onOpenChange }: AddFolderDialogProps) {
   const [error, setError] = useState<string | null>(null)
   const [remotes, setRemotes] = useState<RemoteOption[]>([])
   const [selectedRemote, setSelectedRemote] = useState('')
+  const [scanChildren, setScanChildren] = useState(false)
+  const [scanChildrenTouched, setScanChildrenTouched] = useState(false)
+  const [probe, setProbe] = useState<{
+    path: string
+    exists: boolean
+    isGitRepo: boolean
+    canScanChildren: boolean
+    childRepoCount: number
+  } | null>(null)
 
   const inputRef = useRef<HTMLInputElement>(null)
   const addFolder = useAddFolder()
+  const probePath = useProbeAddPath()
+  const probeSeq = useRef(0)
 
   useEffect(() => {
     if (open) {
@@ -47,9 +58,39 @@ export function AddFolderDialog({ open, onOpenChange }: AddFolderDialogProps) {
       setError(null)
       setRemotes([])
       setSelectedRemote('')
+      setScanChildren(false)
+      setScanChildrenTouched(false)
+      setProbe(null)
       setTimeout(() => inputRef.current?.focus(), 50)
     }
   }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const trimmed = path.trim()
+    if (!trimmed) {
+      setProbe(null)
+      if (!scanChildrenTouched) setScanChildren(false)
+      return
+    }
+
+    const seq = ++probeSeq.current
+    const timer = setTimeout(async () => {
+      try {
+        const result = await probePath.mutateAsync({ path: trimmed })
+        if (probeSeq.current !== seq) return
+        setProbe(result)
+        if (!scanChildrenTouched) {
+          setScanChildren(!result.isGitRepo)
+        }
+      } catch {
+        if (probeSeq.current !== seq) return
+        setProbe(null)
+      }
+    }, 250)
+
+    return () => clearTimeout(timer)
+  }, [path, open, probePath, scanChildrenTouched])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -62,6 +103,7 @@ export function AddFolderDialog({ open, onOpenChange }: AddFolderDialogProps) {
       const result = await addFolder.mutateAsync({
         path: path.trim(),
         remoteName: step === 'pickRemote' ? selectedRemote : undefined,
+        scanChildren: probe?.isGitRepo ? false : scanChildren,
       })
       // If multiple remotes returned and user hasn't picked one yet, show picker
       if (result.remotes && result.remotes.length > 1 && step !== 'pickRemote') {
@@ -125,6 +167,27 @@ export function AddFolderDialog({ open, onOpenChange }: AddFolderDialogProps) {
                 className="w-full px-3 py-2 text-sm font-mono bg-background border border-border rounded-md text-foreground placeholder:text-muted focus:outline-none focus:border-blue/50 focus:ring-1 focus:ring-blue/30 disabled:opacity-50"
               />
             </div>
+
+            {probe && probe.exists && !probe.isGitRepo && (
+              <label className="flex items-start gap-2 rounded-md border border-border p-3 text-xs text-muted">
+                <input
+                  type="checkbox"
+                  checked={scanChildren}
+                  onChange={(e) => {
+                    setScanChildren(e.target.checked)
+                    setScanChildrenTouched(true)
+                  }}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block text-foreground mb-1">Watch one level deep for Git repos</span>
+                  <span>
+                    spawntree will keep scanning this folder and auto-import repos it finds.
+                    {probe.childRepoCount > 0 ? ` Currently sees ${probe.childRepoCount} repo${probe.childRepoCount === 1 ? '' : 's'}.` : ''}
+                  </span>
+                </span>
+              </label>
+            )}
 
             {/* Remote picker */}
             {step === 'pickRemote' && remotes.length > 0 && (

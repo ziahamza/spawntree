@@ -60,13 +60,30 @@ export interface Clone {
   path: string
   branch?: string
   missing: boolean
+  git?: GitPathInfo
+  envs: EnvListItem[]
   worktrees: Worktree[]
 }
 
 export interface Worktree {
   path: string
   branch: string
+  git?: GitPathInfo
   envs: EnvListItem[]
+}
+
+export interface GitPathInfo {
+  branch: string
+  headRef: string
+  activityAt: string
+  insertions: number
+  deletions: number
+  hasUncommittedChanges: boolean
+  isMergedIntoBase: boolean
+  isBaseOutOfDate: boolean
+  isBaseBranch: boolean
+  canArchive: boolean
+  baseRefName?: string
 }
 
 export interface WebRepo {
@@ -84,7 +101,6 @@ export interface WebRepoDetail {
   name: string
   remoteUrl?: string
   clones: Clone[]
-  worktrees: Record<string, Worktree[]>
 }
 
 export function deriveEnvStatus(env: EnvListItem): 'running' | 'starting' | 'crashed' | 'stopped' {
@@ -144,11 +160,13 @@ export function useRepoEnvs(repoID: string) {
   })
 }
 
-export function useEnvDetail(repoID: string, envID: string) {
+export function useEnvDetail(repoID: string, envID: string, repoPath?: string) {
   return useQuery<Env>({
-    queryKey: ['repos', repoID, 'envs', envID],
+    queryKey: ['repos', repoID, 'envs', envID, repoPath],
     queryFn: async () => {
-      const res = await apiFetch<{ env: Env }>(`/repos/${repoID}/envs/${envID}`)
+      const res = await apiFetch<{ env: Env }>(
+        `/repos/${repoID}/envs/${envID}${repoPath ? `?repoPath=${encodeURIComponent(repoPath)}` : ''}`,
+      )
       return res.env
     },
     refetchInterval: 5000,
@@ -175,7 +193,7 @@ export function useWebRepos() {
   })
 }
 
-export function useWebRepoDetail(slug: string) {
+export function useWebRepoDetail(slug: string, enabled = true) {
   return useQuery<WebRepoDetail>({
     queryKey: ['web', 'repos', slug],
     queryFn: async () => {
@@ -183,28 +201,40 @@ export function useWebRepoDetail(slug: string) {
         repo: WebRepo
         clones: Array<{ id: string; repoId: string; path: string; status: string; lastSeenAt: string }>
         worktrees: Record<string, Array<{ path: string; branch: string; headRef: string }>>
+        envs: EnvListItem[]
+        gitPaths: Record<string, GitPathInfo>
       }>(`/web/repos/${slug}`)
+      const envs = res.envs ?? []
+      const gitPaths = res.gitPaths ?? {}
+      const activityScore = (path: string) => Date.parse(gitPaths[path]?.activityAt ?? '') || 0
       // Transform backend shapes to frontend types
-      const clones: Clone[] = (res.clones ?? []).map((c) => ({
-        id: c.id,
-        path: c.path,
-        missing: c.status === 'missing',
-        worktrees: (res.worktrees?.[c.id] ?? []).map((wt) => ({
-          path: wt.path,
-          branch: wt.branch,
-          envs: [], // Envs are fetched separately per clone via the envs API
-        })),
-      }))
+      const clones: Clone[] = (res.clones ?? [])
+        .map((c) => ({
+          id: c.id,
+          path: c.path,
+          missing: c.status === 'missing',
+          git: gitPaths[c.path],
+          envs: envs.filter((env) => env.repoPath === c.path),
+          worktrees: (res.worktrees?.[c.id] ?? [])
+            .filter((wt) => wt.path !== c.path)
+            .map((wt) => ({
+              path: wt.path,
+              branch: wt.branch || gitPaths[wt.path]?.branch || 'detached',
+              git: gitPaths[wt.path],
+              envs: envs.filter((env) => env.repoPath === wt.path),
+            }))
+            .sort((a, b) => activityScore(b.path) - activityScore(a.path)),
+        }))
+        .sort((a, b) => activityScore(b.path) - activityScore(a.path))
       return {
         slug: res.repo.slug,
         name: res.repo.name,
         remoteUrl: res.repo.remoteUrl,
         clones,
-        worktrees: res.worktrees ?? {},
       }
     },
     refetchInterval: 5000,
-    enabled: !!slug,
+    enabled: !!slug && enabled,
   })
 }
 
@@ -213,7 +243,7 @@ export function useWebRepoDetail(slug: string) {
 export function useCreateEnv() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { configPath: string; envName?: string }) =>
+    mutationFn: (body: { repoPath: string; configFile?: string; envId?: string }) =>
       apiFetch<Env>('/envs', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['envs'] })
@@ -225,12 +255,16 @@ export function useCreateEnv() {
 export function useStopEnv() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ repoID, envID }: { repoID: string; envID: string }) =>
-      apiFetch<void>(`/repos/${repoID}/envs/${envID}/down`, { method: 'POST' }),
+    mutationFn: ({ repoID, envID, repoPath }: { repoID: string; envID: string; repoPath?: string }) =>
+      apiFetch<void>(
+        `/repos/${repoID}/envs/${envID}/down${repoPath ? `?repoPath=${encodeURIComponent(repoPath)}` : ''}`,
+        { method: 'POST' },
+      ),
     onSuccess: (_data, { repoID, envID }) => {
       qc.invalidateQueries({ queryKey: ['repos', repoID, 'envs', envID] })
       qc.invalidateQueries({ queryKey: ['repos', repoID, 'envs'] })
       qc.invalidateQueries({ queryKey: ['envs'] })
+      qc.invalidateQueries({ queryKey: ['web', 'repos'] })
     },
   })
 }
@@ -238,8 +272,10 @@ export function useStopEnv() {
 export function useDeleteEnv() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ repoID, envID }: { repoID: string; envID: string }) =>
-      apiFetch<void>(`/repos/${repoID}/envs/${envID}`, { method: 'DELETE' }),
+    mutationFn: ({ repoID, envID, repoPath }: { repoID: string; envID: string; repoPath?: string }) =>
+      apiFetch<void>(`/repos/${repoID}/envs/${envID}${repoPath ? `?repoPath=${encodeURIComponent(repoPath)}` : ''}`, {
+        method: 'DELETE',
+      }),
     onSuccess: (_data, { repoID }) => {
       qc.invalidateQueries({ queryKey: ['repos', repoID, 'envs'] })
       qc.invalidateQueries({ queryKey: ['envs'] })
@@ -260,19 +296,50 @@ export function useDiscover() {
 }
 
 export interface AddFolderResult {
-  repo: WebRepo
-  clone: { id: string; repoId: string; path: string; status: string }
+  repo?: WebRepo
+  clone?: { id: string; repoId: string; path: string; status: string }
+  watchedPath?: { path: string; scanChildren: boolean }
+  importedCount?: number
   remotes?: { name: string; url: string }[]
+}
+
+export interface AddFolderProbeResult {
+  path: string
+  exists: boolean
+  isGitRepo: boolean
+  canScanChildren: boolean
+  childRepoCount: number
+}
+
+export interface ConfigTestResult {
+  ok: boolean
+  serviceNames: string[]
+}
+
+export interface ConfigSaveResult {
+  ok: boolean
+  configPath: string
+  saveMode: 'repo' | 'global'
 }
 
 export function useAddFolder() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { path: string; remoteName?: string }) =>
+    mutationFn: (body: { path: string; remoteName?: string; scanChildren?: boolean }) =>
       apiFetch<AddFolderResult>('/web/repos/add', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['web', 'repos'] })
     },
+  })
+}
+
+export function useProbeAddPath() {
+  return useMutation({
+    mutationFn: (body: { path: string }) =>
+      apiFetch<AddFolderProbeResult>('/web/repos/probe', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
   })
 }
 
@@ -307,6 +374,47 @@ export function useDeleteClone() {
     onSuccess: (_data, { repoSlug }) => {
       qc.invalidateQueries({ queryKey: ['web', 'repos', repoSlug] })
       qc.invalidateQueries({ queryKey: ['web', 'repos'] })
+    },
+  })
+}
+
+export function useArchiveWorktree() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ repoSlug, path }: { repoSlug: string; path: string }) =>
+      apiFetch<void>(`/web/repos/${repoSlug}/worktrees/archive`, {
+        method: 'POST',
+        body: JSON.stringify({ path }),
+      }),
+    onSuccess: (_data, { repoSlug }) => {
+      qc.invalidateQueries({ queryKey: ['web', 'repos', repoSlug] })
+      qc.invalidateQueries({ queryKey: ['web', 'repos'] })
+      qc.invalidateQueries({ queryKey: ['envs'] })
+    },
+  })
+}
+
+export function useTestConfig() {
+  return useMutation({
+    mutationFn: (body: { repoPath: string; content: string }) =>
+      apiFetch<ConfigTestResult>('/web/config/test', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+  })
+}
+
+export function useSaveConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { repoPath: string; content: string; saveMode: 'repo' | 'global' }) =>
+      apiFetch<ConfigSaveResult>('/web/config/save', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['web', 'repos'] })
+      qc.invalidateQueries({ queryKey: ['envs'] })
     },
   })
 }

@@ -44,20 +44,20 @@ func NewEnvManager(state *StateStore, portRegistry *PortRegistry, logStreamer *L
 }
 
 func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvInfo, error) {
-	configPath := req.ConfigFile
-	if configPath == "" {
-		configPath = "spawntree.yaml"
+	repoPath := req.RepoPath
+	if repoPath == "" {
+		repoPath = "."
 	}
-	if !filepath.IsAbs(configPath) {
-		configPath = filepath.Join(req.RepoPath, configPath)
-	}
-	configDir := filepath.Dir(configPath)
-
-	gitRoot, err := ValidateGitRepo(configDir)
+	repoPath, err := normalizeInputPath(repoPath)
 	if err != nil {
 		return EnvInfo{}, err
 	}
-	branch := BranchName(CurrentBranch(gitRoot))
+
+	gitRoot, err := ValidateGitRepo(repoPath)
+	if err != nil {
+		return EnvInfo{}, err
+	}
+	branch := BranchName(CurrentBranch(repoPath))
 	repoID := DeriveRepoID(gitRoot)
 	safeBranch := EnvID(strings.ReplaceAll(string(branch), "/", "-"))
 	envID := req.EnvID
@@ -75,11 +75,15 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 		return m.toEnvInfo(existing), nil
 	}
 
+	configPath, err := m.resolveConfigPath(gitRoot, repoPath, req.ConfigFile)
+	if err != nil {
+		return EnvInfo{}, err
+	}
 	content, err := os.ReadFile(configPath)
 	if err != nil {
 		return EnvInfo{}, err
 	}
-	envVars, err := LoadEnv(string(envID), configDir, req.EnvOverrides)
+	envVars, err := LoadEnv(string(envID), repoPath, req.EnvOverrides)
 	if err != nil {
 		return EnvInfo{}, err
 	}
@@ -100,8 +104,8 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 		return EnvInfo{}, err
 	}
 
-	serviceCwd := configDir
-	worktreePath := gitRoot
+	serviceCwd := repoPath
+	worktreePath := repoPath
 	if envID != safeBranch || req.Prefix != "" {
 		wm := NewWorktreeManager(gitRoot)
 		if err := wm.EnsureGitignore(); err != nil {
@@ -111,8 +115,8 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 		if err != nil {
 			return EnvInfo{}, err
 		}
-		if strings.HasPrefix(configDir, gitRoot) {
-			relative := strings.TrimPrefix(configDir, gitRoot)
+		if strings.HasPrefix(repoPath, gitRoot) {
+			relative := strings.TrimPrefix(repoPath, gitRoot)
 			relative = strings.TrimPrefix(relative, string(os.PathSeparator))
 			if relative != "" {
 				serviceCwd = filepath.Join(worktreePath, relative)
@@ -237,7 +241,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 	managed := &ManagedEnv{
 		EnvID:             envID,
 		RepoID:            repoID,
-		RepoPath:          gitRoot,
+		RepoPath:          worktreePath,
 		Branch:            branch,
 		BasePort:          basePort,
 		CreatedAt:         time.Now().UTC().Format(time.RFC3339),
@@ -328,6 +332,29 @@ func (m *EnvManager) ListEnvs(repoID string) []EnvInfo {
 
 func (m *EnvManager) getManaged(repoID RepoID, envID EnvID) (*ManagedEnv, error) {
 	return m.state.GetManagedEnv(repoID, envID)
+}
+
+func (m *EnvManager) resolveConfigPath(gitRoot, repoPath, configFile string) (string, error) {
+	if configFile == "" {
+		configFile = "spawntree.yaml"
+	}
+	if filepath.IsAbs(configFile) {
+		return configFile, nil
+	}
+
+	candidate := filepath.Join(repoPath, configFile)
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate, nil
+	}
+
+	if registered := m.state.GetRegisteredRepo(gitRoot); registered != nil && registered.ConfigPath != "" {
+		if filepath.IsAbs(registered.ConfigPath) {
+			return registered.ConfigPath, nil
+		}
+		return filepath.Join(gitRoot, registered.ConfigPath), nil
+	}
+
+	return candidate, nil
 }
 
 func (m *EnvManager) buildServiceEnvVars(name ServiceName, serviceConfig ServiceConfig, baseEnvVars map[string]string, envID EnvID, worktreePath string, basePort Port, config SpawntreeConfig) map[string]string {

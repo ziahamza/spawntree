@@ -8,6 +8,9 @@ import { LogViewer } from '../components/LogViewer'
 import type { Status } from '../components/StatusDot'
 
 export const Route = createFileRoute('/repos/$slug/envs/$envId')({
+  validateSearch: (search: Record<string, unknown>) => ({
+    repoPath: typeof search.repoPath === 'string' ? search.repoPath : undefined,
+  }),
   component: EnvDetail,
 })
 
@@ -23,27 +26,28 @@ function envStatusToDisplay(status: ReturnType<typeof deriveEnvStatus>): Status 
 
 function EnvDetail() {
   const { slug, envId } = Route.useParams()
+  const { repoPath } = Route.useSearch()
   const [activeService, setActiveService] = useState<string | null>(null)
 
-  const { data: env, isLoading, error } = useEnvDetail(slug, envId)
+  const { data: env, isLoading, error } = useEnvDetail(slug, envId, repoPath)
   const { data: repo } = useWebRepoDetail(slug)
   const stopEnv = useStopEnv()
   const deleteEnv = useDeleteEnv()
 
   function handleStop() {
     if (!env) return
-    stopEnv.mutate({ repoID: slug, envID: envId })
+    stopEnv.mutate({ repoID: slug, envID: envId, repoPath })
   }
 
   function handleRestart() {
     if (!env) return
     // Stop then navigate away (restart = stop + let daemon restart via config)
-    stopEnv.mutate({ repoID: slug, envID: envId })
+    stopEnv.mutate({ repoID: slug, envID: envId, repoPath })
   }
 
   function handleDelete() {
     if (!window.confirm(`Delete env "${env?.envId}"? This cannot be undone.`)) return
-    deleteEnv.mutate({ repoID: slug, envID: envId })
+    deleteEnv.mutate({ repoID: slug, envID: envId, repoPath })
   }
 
   function handleServiceClick(name: string) {
@@ -177,7 +181,7 @@ function EnvDetail() {
           )}
         </div>
         <div className="h-full min-h-0 flex flex-col" style={{ height: 'calc(100% - 36px)' }}>
-          <LogViewer repoID={slug} envID={envId} activeService={activeService} />
+          <LogViewer repoID={slug} envID={envId} repoPath={repoPath} activeService={activeService} />
         </div>
       </div>
     </div>
