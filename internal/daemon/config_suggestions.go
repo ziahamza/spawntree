@@ -262,9 +262,9 @@ func discoverPackageCandidates(root string) (*packageCandidate, []packageCandida
 	candidates := []packageCandidate{}
 	var rootCandidate *packageCandidate
 
-	filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return nil
+	filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
 		if entry.IsDir() {
 			name := entry.Name()
@@ -282,31 +282,29 @@ func discoverPackageCandidates(root string) (*packageCandidate, []packageCandida
 		if strings.Contains(path, string(filepath.Separator)+"node_modules"+string(filepath.Separator)) {
 			return nil
 		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		var pkg packageJSONFile
-		if err := json.Unmarshal(content, &pkg); err != nil {
-			return nil
-		}
-		dir := filepath.Dir(path)
-		rel, _ := filepath.Rel(root, dir)
-		if rel == "." {
-			rel = ""
-		}
-		candidate := packageCandidate{
-			Dir:     dir,
-			RelDir:  rel,
-			Name:    pkg.Name,
-			Scripts: pkg.Scripts,
-			IsRoot:  rel == "",
-		}
-		if candidate.IsRoot {
-			copy := candidate
-			rootCandidate = &copy
-		} else {
-			candidates = append(candidates, candidate)
+		content, readErr := os.ReadFile(path)
+		if readErr == nil {
+			var pkg packageJSONFile
+			if unmarshalErr := json.Unmarshal(content, &pkg); unmarshalErr == nil {
+				dir := filepath.Dir(path)
+				rel, _ := filepath.Rel(root, dir)
+				if rel == "." {
+					rel = ""
+				}
+				candidate := packageCandidate{
+					Dir:     dir,
+					RelDir:  rel,
+					Name:    pkg.Name,
+					Scripts: pkg.Scripts,
+					IsRoot:  rel == "",
+				}
+				if candidate.IsRoot {
+					copy := candidate
+					rootCandidate = &copy
+				} else {
+					candidates = append(candidates, candidate)
+				}
+			}
 		}
 		return nil
 	})
@@ -319,9 +317,9 @@ func discoverPackageCandidates(root string) (*packageCandidate, []packageCandida
 
 func discoverComposeFiles(root string) []composeFile {
 	out := []composeFile{}
-	filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return nil
+	filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
 		if entry.IsDir() {
 			name := entry.Name()
@@ -336,34 +334,32 @@ func discoverComposeFiles(root string) []composeFile {
 		if entry.Name() != "docker-compose.yml" && entry.Name() != "docker-compose.yaml" {
 			return nil
 		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		var raw struct {
-			Services map[string]struct {
-				Image       string   `yaml:"image"`
-				Ports       []string `yaml:"ports"`
-				Healthcheck any      `yaml:"healthcheck"`
-			} `yaml:"services"`
-		}
-		if err := yaml.Unmarshal(content, &raw); err != nil {
-			return nil
-		}
-		rel, _ := filepath.Rel(root, path)
-		item := composeFile{
-			Path:     filepath.Dir(path),
-			RelPath:  rel,
-			Services: map[string]composeService{},
-		}
-		for name, svc := range raw.Services {
-			item.Services[name] = composeService{
-				Image:     svc.Image,
-				Ports:     svc.Ports,
-				HasHealth: svc.Healthcheck != nil,
+		content, readErr := os.ReadFile(path)
+		if readErr == nil {
+			var raw struct {
+				Services map[string]struct {
+					Image       string   `yaml:"image"`
+					Ports       []string `yaml:"ports"`
+					Healthcheck any      `yaml:"healthcheck"`
+				} `yaml:"services"`
+			}
+			if unmarshalErr := yaml.Unmarshal(content, &raw); unmarshalErr == nil {
+				rel, _ := filepath.Rel(root, path)
+				item := composeFile{
+					Path:     filepath.Dir(path),
+					RelPath:  rel,
+					Services: map[string]composeService{},
+				}
+				for name, svc := range raw.Services {
+					item.Services[name] = composeService{
+						Image:     svc.Image,
+						Ports:     svc.Ports,
+						HasHealth: svc.Healthcheck != nil,
+					}
+				}
+				out = append(out, item)
 			}
 		}
-		out = append(out, item)
 		return nil
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].RelPath < out[j].RelPath })
@@ -697,7 +693,9 @@ func appendUnique(values []string, candidate string) []string {
 
 func rootScriptWorthShowing(command string) bool {
 	lower := strings.ToLower(command)
-	return !(strings.Contains(lower, "turbo run dev") || strings.Contains(lower, "turbo watch build") || strings.Contains(lower, "pnpm -r"))
+	return !strings.Contains(lower, "turbo run dev") &&
+		!strings.Contains(lower, "turbo watch build") &&
+		!strings.Contains(lower, "pnpm -r")
 }
 
 func relativeSource(root, dir string) string {
