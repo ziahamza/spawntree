@@ -48,9 +48,15 @@ jobs:
         run: pnpm run lint:go
 
       - name: Go test
-        run: go test ./...
+        run: go test -tags noui ./...
 
-      - name: Build
+      - name: Build web UI
+        run: cd packages/web && pnpm build
+
+      - name: Go build (with embedded SPA)
+        run: go build ./cmd/spawntreed/
+
+      - name: Build packages
         run: pnpm build
 
       - name: Test
@@ -65,5 +71,5 @@ jobs:
           commit: "chore: version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }} # Expires Jul 2, 2026 — rotate before then
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

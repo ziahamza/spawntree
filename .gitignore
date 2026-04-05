@@ -32,5 +32,6 @@ Thumbs.db
 coverage/
 .gstack/
 spawntreed
+cmd/spawntreed/web/
 packages/web/node_modules/
 packages/web/dist/

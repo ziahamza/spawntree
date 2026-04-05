@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -474,13 +475,21 @@ func (a *App) handleWebGetRepo(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", "Repo not found", nil)
 		return
 	}
-	clones, _ := a.db.ListClones(repo.ID)
+	clones, err := a.db.ListClones(repo.ID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
 	if clones == nil {
 		clones = []Clone{}
 	}
 	allWorktrees := map[string][]Worktree{}
 	for _, c := range clones {
-		wts, _ := a.db.ListWorktrees(c.ID)
+		wts, err := a.db.ListWorktrees(c.ID)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+			return
+		}
 		if wts == nil {
 			wts = []Worktree{}
 		}
@@ -500,11 +509,19 @@ func (a *App) handleWebListClones(w http.ResponseWriter, r *http.Request) {
 	}
 	slug := chi.URLParam(r, "repoSlug")
 	repo, err := a.db.GetRepoBySlug(slug)
-	if err != nil || repo == nil {
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if repo == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"clones": []Clone{}})
 		return
 	}
-	clones, _ := a.db.ListClones(repo.ID)
+	clones, err := a.db.ListClones(repo.ID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
 	if clones == nil {
 		clones = []Clone{}
 	}
@@ -683,10 +700,8 @@ func (a *App) handleWebAddFolder(w http.ResponseWriter, r *http.Request) {
 // handleSPA serves the embedded SPA for non-API routes.
 // This is a placeholder — the actual embed is in cmd/spawntreed/spa.go.
 func (a *App) handleSPA(w http.ResponseWriter, r *http.Request) {
-	// The actual SPA serving is handled by SPAHandler set during init.
-	// If no SPA is embedded (noui build), return a JSON message.
-	if spaHandler != nil {
-		spaHandler.ServeHTTP(w, r)
+	if h, ok := spaHandlerValue.Load().(http.Handler); ok && h != nil {
+		h.ServeHTTP(w, r)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
@@ -695,12 +710,13 @@ func (a *App) handleSPA(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// spaHandler is set by the spa_embed.go file when the UI is compiled in.
-var spaHandler http.Handler
+// spaHandlerValue stores the embedded SPA handler, set by spa_embed.go init().
+// Uses atomic.Value for safe concurrent access between init() and HTTP handlers.
+var spaHandlerValue atomic.Value
 
 // SetSPAHandler sets the handler for serving the embedded SPA assets.
 func SetSPAHandler(h http.Handler) {
-	spaHandler = h
+	spaHandlerValue.Store(h)
 }
 
 // --- Helpers ---
