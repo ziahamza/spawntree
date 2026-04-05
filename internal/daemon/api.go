@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,6 +26,8 @@ type App struct {
 	startedAt       time.Time
 	version         string
 	router          chi.Router
+	previewMu       sync.Mutex
+	previewSessions map[string]ConfigPreviewSession
 }
 
 func NewApp(envManager *EnvManager, logStreamer *LogStreamer, infraManager *InfraManager, registryManager *RegistryManager, db *DB, version string) *App {
@@ -36,6 +39,7 @@ func NewApp(envManager *EnvManager, logStreamer *LogStreamer, infraManager *Infr
 		db:              db,
 		startedAt:       time.Now().UTC(),
 		version:         version,
+		previewSessions: map[string]ConfigPreviewSession{},
 	}
 	a.router = a.buildRouter()
 	return a
@@ -90,6 +94,8 @@ func (a *App) buildRouter() chi.Router {
 		r.Post("/web/repos/add", a.handleWebAddFolder)
 		r.Post("/web/config/suggest", a.handleWebSuggestConfig)
 		r.Post("/web/config/test", a.handleWebTestConfig)
+		r.Post("/web/config/preview/start", a.handleWebStartConfigPreview)
+		r.Post("/web/config/preview/stop", a.handleWebStopConfigPreview)
 		r.Post("/web/config/save", a.handleWebSaveConfig)
 	})
 
@@ -865,6 +871,33 @@ func (a *App) handleWebTestConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *App) handleWebStartConfigPreview(w http.ResponseWriter, r *http.Request) {
+	var req ConfigPreviewRequest
+	if err := decodeJSON(r, &req); err != nil || req.RepoPath == "" || req.Content == "" {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "repoPath and content are required", nil)
+		return
+	}
+	result, err := a.startPreviewSession(req.RepoPath, req.Content)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "PREVIEW_FAILED", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *App) handleWebStopConfigPreview(w http.ResponseWriter, r *http.Request) {
+	var req ConfigPreviewStopRequest
+	if err := decodeJSON(r, &req); err != nil || req.PreviewID == "" {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "previewId is required", nil)
+		return
+	}
+	if err := a.stopPreviewSession(req.PreviewID); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (a *App) handleWebSaveConfig(w http.ResponseWriter, r *http.Request) {

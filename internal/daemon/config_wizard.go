@@ -35,6 +35,29 @@ type ConfigSaveResponse struct {
 	SaveMode   string `json:"saveMode"`
 }
 
+type ConfigPreviewRequest struct {
+	RepoPath string `json:"repoPath"`
+	Content  string `json:"content"`
+}
+
+type ConfigPreviewResponse struct {
+	OK        bool    `json:"ok"`
+	PreviewID string  `json:"previewId"`
+	Env       EnvInfo `json:"env"`
+}
+
+type ConfigPreviewStopRequest struct {
+	PreviewID string `json:"previewId"`
+}
+
+type ConfigPreviewSession struct {
+	ID         string
+	RepoID     string
+	EnvID      string
+	RepoPath   string
+	ConfigPath string
+}
+
 type ConfigTestServiceResult struct {
 	Name             string   `json:"name"`
 	Type             string   `json:"type"`
@@ -125,6 +148,10 @@ func validateConfigForWizard(repoPath, content string) error {
 		return fmt.Errorf("Add healthchecks before testing or saving. Missing: %s", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+func previewSessionID() string {
+	return fmt.Sprintf("config-preview-%d", time.Now().UnixNano())
 }
 
 func previewURLForConfigTest(service ServiceInfo) string {
@@ -227,5 +254,80 @@ func (a *App) runConfigTest(repoPath, content string) (ConfigTestResponse, error
 		OK:           true,
 		ServiceNames: serviceNames,
 		Services:     services,
+	}, nil
+}
+
+func (a *App) stopPreviewSession(id string) error {
+	a.previewMu.Lock()
+	session, ok := a.previewSessions[id]
+	if ok {
+		delete(a.previewSessions, id)
+	}
+	a.previewMu.Unlock()
+	if !ok {
+		return nil
+	}
+	_ = a.envManager.DeleteEnv(context.Background(), session.RepoID, session.EnvID)
+	_ = os.Remove(session.ConfigPath)
+	return nil
+}
+
+func (a *App) startPreviewSession(repoPath, content string) (ConfigPreviewResponse, error) {
+	if err := validateConfigForWizard(repoPath, content); err != nil {
+		return ConfigPreviewResponse{}, err
+	}
+
+	a.previewMu.Lock()
+	idsToStop := make([]string, 0)
+	for id, session := range a.previewSessions {
+		if session.RepoPath == repoPath {
+			idsToStop = append(idsToStop, id)
+		}
+	}
+	a.previewMu.Unlock()
+	for _, id := range idsToStop {
+		_ = a.stopPreviewSession(id)
+	}
+
+	tempFile, err := os.CreateTemp("", "spawntree-config-preview-*.yaml")
+	if err != nil {
+		return ConfigPreviewResponse{}, err
+	}
+	tempPath := tempFile.Name()
+	_ = tempFile.Close()
+	if err := writeConfigFile(tempPath, content); err != nil {
+		_ = os.Remove(tempPath)
+		return ConfigPreviewResponse{}, err
+	}
+
+	envID := EnvID(previewSessionID())
+	env, err := a.envManager.CreateEnv(
+		context.Background(),
+		CreateEnvRequest{
+			RepoPath:   repoPath,
+			EnvID:      envID,
+			ConfigFile: tempPath,
+		},
+	)
+	if err != nil {
+		_ = os.Remove(tempPath)
+		return ConfigPreviewResponse{}, err
+	}
+
+	session := ConfigPreviewSession{
+		ID:         string(envID),
+		RepoID:     string(env.RepoID),
+		EnvID:      string(env.EnvID),
+		RepoPath:   env.RepoPath,
+		ConfigPath: tempPath,
+	}
+	a.previewMu.Lock()
+	a.previewSessions[session.ID] = session
+	a.previewMu.Unlock()
+
+	return ConfigPreviewResponse{
+		OK:        true,
+		PreviewID: session.ID,
+		Env:       env,
 	}, nil
 }

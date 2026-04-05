@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { CheckCircle2, Loader2, Settings2, Wand2, X } from 'lucide-react'
+import { CheckCircle2, ExternalLink, Link2, Loader2, Settings2, Square, Wand2, X, XCircle } from 'lucide-react'
 import {
   useSaveConfig,
   useSuggestConfig,
+  useStartConfigPreview,
+  useStopConfigPreview,
   useTestConfig,
+  useEnvDetail,
   type ConfigServiceSuggestion,
   type ConfigSignal,
+  type ConfigTestServiceResult,
 } from '../lib/api'
 
 interface AddConfigDialogProps {
@@ -103,6 +107,53 @@ function requiresHealthcheck(service: ServiceDraft) {
   return service.selected && (service.type === 'process' || service.type === 'container')
 }
 
+function previewURLForService(service: { url?: string; type?: string }) {
+  if (service.type === 'postgres' || service.type === 'redis') return null
+  if (!service.url) return null
+  return /^https?:\/\//.test(service.url) ? service.url : null
+}
+
+function LivePreviewLogs({
+  repoID,
+  envID,
+  repoPath,
+  service,
+}: {
+  repoID: string
+  envID: string
+  repoPath?: string
+  service: string
+}) {
+  const [lines, setLines] = useState<string[]>([])
+
+  useEffect(() => {
+    const params = new URLSearchParams()
+    params.set('service', service)
+    params.set('lines', '20')
+    if (repoPath) params.set('repoPath', repoPath)
+    const es = new EventSource(`/api/v1/repos/${repoID}/envs/${envID}/logs?${params.toString()}`)
+    es.onmessage = (event) => {
+      try {
+        const parsed = JSON.parse(event.data)
+        const line = typeof parsed?.line === 'string' ? parsed.line : String(event.data)
+        setLines((prev) => [...prev.slice(-19), line])
+      } catch {
+        setLines((prev) => [...prev.slice(-19), String(event.data)])
+      }
+    }
+    es.onerror = () => {
+      es.close()
+    }
+    return () => es.close()
+  }, [repoID, envID, repoPath, service])
+
+  return (
+    <pre className="text-[11px] font-mono text-foreground bg-background rounded-md p-2 overflow-auto max-h-40 whitespace-pre-wrap">
+      {lines.length > 0 ? lines.join('\n') : 'Waiting for logs…'}
+    </pre>
+  )
+}
+
 export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialogProps) {
   const [services, setServices] = useState<ServiceDraft[]>(starterServices())
   const [signals, setSignals] = useState<ConfigSignal[]>([])
@@ -111,10 +162,14 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
   const [tab, setTab] = useState<EditorTab>('suggested')
   const [rawContent, setRawContent] = useState(servicesToYaml(starterServices()))
   const [rawDirty, setRawDirty] = useState(false)
+  const [preview, setPreview] = useState<{ previewId: string; repoID: string; envID: string; repoPath?: string } | null>(null)
 
   const suggestConfig = useSuggestConfig()
   const testConfig = useTestConfig()
+  const startPreview = useStartConfigPreview()
+  const stopPreview = useStopConfigPreview()
   const saveConfig = useSaveConfig()
+  const previewEnv = useEnvDetail(preview?.repoID ?? '', preview?.envID ?? '', preview?.repoPath)
 
   const generatedContent = useMemo(() => servicesToYaml(services), [services])
   const currentContent = rawDirty ? rawContent : generatedContent
@@ -135,6 +190,7 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     setServices(starterServices())
     setRawDirty(false)
     setRawContent(servicesToYaml(starterServices()))
+    setPreview(null)
 
     if (!repoPath) return
 
@@ -159,6 +215,13 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     }
   }, [open, repoPath])
 
+  useEffect(() => {
+    if (open) return
+    if (!preview?.previewId) return
+    void stopPreview.mutateAsync({ previewId: preview.previewId }).catch(() => {})
+    setPreview(null)
+  }, [open, preview?.previewId, stopPreview])
+
   const verificationSummary = useMemo(() => {
     if (!testConfig.data?.ok) return null
     return testConfig.data.serviceNames.join(', ')
@@ -175,7 +238,8 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
   const canSave =
     !!repoPath &&
     lastVerifiedContent === currentContent &&
-    !!testConfig.data?.ok &&
+    !!preview &&
+    previewEnv.data?.services.every((service) => service.status === 'running') &&
     !saveConfig.isPending &&
     missingHealthchecks.length === 0
 
@@ -191,6 +255,28 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     if (result.ok) {
       setLastVerifiedContent(currentContent)
     }
+  }
+
+  async function handlePreview() {
+    if (!repoPath) return
+    if (preview?.previewId) {
+      await stopPreview.mutateAsync({ previewId: preview.previewId }).catch(() => {})
+      setPreview(null)
+    }
+    const result = await startPreview.mutateAsync({ repoPath, content: currentContent })
+    setPreview({
+      previewId: result.previewId,
+      repoID: result.env.repoId,
+      envID: result.env.envId,
+      repoPath: result.env.repoPath,
+    })
+    setLastVerifiedContent(currentContent)
+  }
+
+  async function handleStopPreview() {
+    if (!preview?.previewId) return
+    await stopPreview.mutateAsync({ previewId: preview.previewId }).catch(() => {})
+    setPreview(null)
   }
 
   async function handleSave() {
@@ -385,6 +471,81 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
                             />
                           </div>
                         )}
+
+                        {preview && previewEnv.data && (() => {
+                          const previewService = previewEnv.data.services.find((item) => item.name === service.name)
+                          const previewURL = previewService ? previewURLForService(previewService) : null
+                          const testService = testConfig.data?.services?.find((item) => item.name === service.name)
+                          if (!previewService && !testService) return null
+                          return (
+                            <div className="mt-3 rounded-md border border-border bg-surface p-3 space-y-2">
+                              <div className="flex items-center gap-2 flex-wrap text-xs">
+                                {previewService?.status === 'running' ? (
+                                  <span className="inline-flex items-center gap-1 text-green">
+                                    <CheckCircle2 className="w-3 h-3" />
+                                    Healthcheck passed
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-orange">
+                                    <XCircle className="w-3 h-3" />
+                                    {previewService?.status ?? 'not started'}
+                                  </span>
+                                )}
+                                {testService && (
+                                  <span className={`inline-flex items-center gap-1 ${testService.probeOk ? 'text-green' : 'text-orange'}`}>
+                                    {testService.probeOk ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                                    {testService.probeError
+                                      ? 'GET / failed'
+                                      : testService.probeStatusCode
+                                        ? `GET / -> ${testService.probeStatusCode}`
+                                        : 'GET / not run'}
+                                  </span>
+                                )}
+                              </div>
+                              {previewURL && (
+                                <div className="flex items-center gap-3 text-xs">
+                                  <a
+                                    href={previewURL}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-blue hover:underline"
+                                  >
+                                    <ExternalLink className="w-3 h-3" />
+                                    Open preview
+                                  </a>
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center gap-1 text-blue hover:underline"
+                                    onClick={async () => {
+                                      try {
+                                        await navigator.clipboard.writeText(previewURL)
+                                      } catch {
+                                        window.prompt('Copy preview URL', previewURL)
+                                      }
+                                    }}
+                                  >
+                                    <Link2 className="w-3 h-3" />
+                                    Copy link
+                                  </button>
+                                </div>
+                              )}
+                              {testService?.probeBodyPreview && (
+                                <pre className="text-[11px] font-mono text-muted bg-background rounded-md p-2 overflow-auto whitespace-pre-wrap">
+                                  {testService.probeBodyPreview}
+                                </pre>
+                              )}
+                              <div>
+                                <p className="text-[11px] text-muted mb-1">Live logs</p>
+                                <LivePreviewLogs
+                                  repoID={preview.repoID}
+                                  envID={preview.envID}
+                                  repoPath={preview.repoPath}
+                                  service={service.name}
+                                />
+                              </div>
+                            </div>
+                          )
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -425,7 +586,7 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
             </div>
           )}
 
-          {testConfig.data?.services?.length ? (
+          {testConfig.data?.services?.length && !preview ? (
             <div className="mt-3 rounded-lg border border-border bg-background p-4 space-y-4 flex-shrink-0">
               <h3 className="text-xs font-medium text-muted uppercase tracking-wider">Live Preview</h3>
               {testConfig.data.services.map((service) => (
@@ -494,6 +655,24 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
             >
               {testConfig.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
               {testConfig.isPending ? 'Testing…' : 'Test Config'}
+            </button>
+            <button
+              type="button"
+              onClick={preview ? handleStopPreview : handlePreview}
+              disabled={!repoPath || startPreview.isPending || stopPreview.isPending || saveConfig.isPending || missingHealthchecks.length > 0}
+              className="flex items-center gap-2 px-4 py-2 text-xs rounded-md border border-border text-muted hover:text-foreground hover:border-foreground/30 transition-colors disabled:opacity-50 min-h-[36px]"
+            >
+              {(startPreview.isPending || stopPreview.isPending) && <Loader2 className="w-3 h-3 animate-spin" />}
+              {preview ? (
+                <>
+                  <Square className="w-3 h-3" />
+                  Stop Preview
+                </>
+              ) : startPreview.isPending ? (
+                'Starting Preview…'
+              ) : (
+                'Run Preview'
+              )}
             </button>
             <button
               type="button"

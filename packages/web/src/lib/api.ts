@@ -350,6 +350,12 @@ export interface ConfigTestServiceResult {
   logs: string[]
 }
 
+export interface ConfigPreviewResult {
+  ok: boolean
+  previewId: string
+  env: Env
+}
+
 export interface ConfigSuggestResult {
   signals: ConfigSignal[]
   services: ConfigServiceSuggestion[]
@@ -447,6 +453,26 @@ export function useSuggestConfig() {
   return useMutation({
     mutationFn: (body: { repoPath: string }) =>
       apiFetch<ConfigSuggestResult>('/web/config/suggest', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+  })
+}
+
+export function useStartConfigPreview() {
+  return useMutation({
+    mutationFn: (body: { repoPath: string; content: string }) =>
+      apiFetch<ConfigPreviewResult>('/web/config/preview/start', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+  })
+}
+
+export function useStopConfigPreview() {
+  return useMutation({
+    mutationFn: (body: { previewId: string }) =>
+      apiFetch<void>('/web/config/preview/stop', {
         method: 'POST',
         body: JSON.stringify(body),
       }),
