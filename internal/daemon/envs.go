@@ -106,10 +106,15 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 
 	serviceCwd := repoPath
 	worktreePath := repoPath
+	createdEphemeralWorktree := false
 	if envID != safeBranch || req.Prefix != "" {
 		wm := NewWorktreeManager(gitRoot)
 		if err := wm.EnsureGitignore(); err != nil {
 			return EnvInfo{}, err
+		}
+		targetWorktreePath := filepath.Join(gitRoot, ".spawntree", "envs", string(envID))
+		if _, err := os.Stat(targetWorktreePath); errors.Is(err, os.ErrNotExist) {
+			createdEphemeralWorktree = true
 		}
 		worktreePath, err = wm.Create(string(envID))
 		if err != nil {
@@ -128,6 +133,10 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 
 	for _, name := range config.OrderedServiceNames() {
 		if err := m.logStreamer.InitService(repoID, envID, string(name)); err != nil {
+			if createdEphemeralWorktree {
+				_ = NewWorktreeManager(gitRoot).Remove(string(envID))
+			}
+			_ = m.portRegistry.Free(envKey)
 			return EnvInfo{}, err
 		}
 	}
@@ -151,11 +160,13 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 			}
 			pgRunner, err := m.infraManager.EnsurePostgres(ctx, version)
 			if err != nil {
+				m.cleanupFailedCreate(ctx, repoID, envID, envKey, nil, nil, gitRoot, createdEphemeralWorktree)
 				return EnvInfo{}, err
 			}
 			dbName := strings.ToLower(fmt.Sprintf("spawntree_%s_%s_%s", repoID, envID, name))
 			dbName = sanitizeDBName(dbName)
 			if err := pgRunner.CreateDatabase(dbName); err != nil {
+				m.cleanupFailedCreate(ctx, repoID, envID, envKey, nil, nil, gitRoot, createdEphemeralWorktree)
 				return EnvInfo{}, err
 			}
 			postgresDatabases[name] = dbName
@@ -165,6 +176,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 			}
 			if resolvedForkFrom != "" {
 				if err := pgRunner.ForkFrom(ctx, dbName, resolvedForkFrom); err != nil {
+					m.cleanupFailedCreate(ctx, repoID, envID, envKey, nil, nil, gitRoot, createdEphemeralWorktree)
 					return EnvInfo{}, err
 				}
 			}
@@ -187,6 +199,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 			}
 			redisRunner, err := m.infraManager.EnsureRedis(ctx)
 			if err != nil {
+				m.cleanupFailedCreate(ctx, repoID, envID, envKey, nil, nil, gitRoot, createdEphemeralWorktree)
 				return EnvInfo{}, err
 			}
 			dbIndex := redisRunner.AllocateDBIndex(envKey)
@@ -200,6 +213,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 
 	serviceOrder, err := topologicalSort(config)
 	if err != nil {
+		m.cleanupFailedCreate(ctx, repoID, envID, envKey, nil, nil, gitRoot, createdEphemeralWorktree)
 		return EnvInfo{}, err
 	}
 	services := map[ServiceName]Service{}
@@ -216,11 +230,12 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 		resolved := ResolveServiceConfig(serviceConfig, serviceEnv)
 		service, err := m.createService(name, resolved, serviceEnv, serviceCwd, repoID, envID, port)
 		if err != nil {
+			m.cleanupFailedCreate(ctx, repoID, envID, envKey, services, serviceOrder, gitRoot, createdEphemeralWorktree)
 			return EnvInfo{}, err
 		}
 		services[name] = service
 		if err := service.Start(ctx); err != nil {
-			_ = m.stopServices(ctx, services, reverse(serviceOrder[:indexOfService(serviceOrder, name)+1]))
+			m.cleanupFailedCreate(ctx, repoID, envID, envKey, services, serviceOrder[:indexOfService(serviceOrder, name)+1], gitRoot, createdEphemeralWorktree)
 			return EnvInfo{}, err
 		}
 		if resolved.Healthcheck != nil {
@@ -229,7 +244,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 				timeout = resolved.Healthcheck.Timeout
 			}
 			if !waitForHealthy(ctx, service, time.Duration(timeout)*time.Second) {
-				_ = m.stopServices(ctx, services, reverse(serviceOrder[:indexOfService(serviceOrder, name)+1]))
+				m.cleanupFailedCreate(ctx, repoID, envID, envKey, services, serviceOrder[:indexOfService(serviceOrder, name)+1], gitRoot, createdEphemeralWorktree)
 				return EnvInfo{}, fmt.Errorf("healthcheck failed for %q after %ds", name, timeout)
 			}
 		}
@@ -332,6 +347,31 @@ func (m *EnvManager) ListEnvs(repoID string) []EnvInfo {
 
 func (m *EnvManager) getManaged(repoID RepoID, envID EnvID) (*ManagedEnv, error) {
 	return m.state.GetManagedEnv(repoID, envID)
+}
+
+func (m *EnvManager) cleanupFailedCreate(
+	ctx context.Context,
+	repoID RepoID,
+	envID EnvID,
+	envKey EnvKey,
+	services map[ServiceName]Service,
+	startedOrder []ServiceName,
+	gitRoot string,
+	removeWorktree bool,
+) {
+	if len(startedOrder) > 0 && len(services) > 0 {
+		_ = m.stopServices(ctx, services, reverse(startedOrder))
+	}
+	for _, hostname := range m.proxy.RegisteredHostnames() {
+		if strings.Contains(hostname, "-"+string(envID)+".localhost") {
+			m.proxy.Unregister(hostname)
+		}
+	}
+	m.logStreamer.CloseEnv(repoID, envID)
+	_ = m.portRegistry.Free(envKey)
+	if removeWorktree {
+		_ = NewWorktreeManager(gitRoot).Remove(string(envID))
+	}
 }
 
 func (m *EnvManager) resolveConfigPath(gitRoot, repoPath, configFile string) (string, error) {

@@ -60,6 +60,7 @@ type ConfigPreviewSession struct {
 	RepoPath    string
 	ConfigPath  string
 	ServiceName string
+	Env         EnvInfo
 }
 
 type ConfigTestServiceResult struct {
@@ -251,6 +252,70 @@ func collectServiceLogs(streamer *LogStreamer, repoID RepoID, envID EnvID, servi
 	return lines
 }
 
+func buildProvisionalPreviewEnv(a *App, repoPath, content, serviceName string) (EnvInfo, error) {
+	repoPath, err := normalizeInputPath(repoPath)
+	if err != nil {
+		return EnvInfo{}, err
+	}
+	gitRoot, err := ValidateGitRepo(repoPath)
+	if err != nil {
+		return EnvInfo{}, err
+	}
+	branch := BranchName(CurrentBranch(repoPath))
+	repoID := DeriveRepoID(gitRoot)
+	envID := EnvID(previewSessionID())
+
+	envVars, err := LoadEnv(string(envID), repoPath, nil)
+	if err != nil {
+		return EnvInfo{}, err
+	}
+	config, err := ParseConfig([]byte(content), envVars)
+	if err != nil {
+		return EnvInfo{}, err
+	}
+	basePort, err := a.envManager.portRegistry.Allocate(NewEnvKey(repoID, envID))
+	if err != nil {
+		return EnvInfo{}, err
+	}
+
+	services := make([]ServiceInfo, 0)
+	for _, name := range config.OrderedServiceNames() {
+		serviceConfig := config.Services[string(name)]
+		if serviceConfig.Type == ServiceTypePostgres || serviceConfig.Type == ServiceTypeRedis {
+			continue
+		}
+		port, err := a.envManager.portRegistry.GetPhysicalPort(basePort, indexOfService(config.OrderedServiceNames(), name))
+		if err != nil {
+			return EnvInfo{}, err
+		}
+		url := fmt.Sprintf("http://127.0.0.1:%d", port)
+		if serviceConfig.Type == ServiceTypeExternal {
+			url = serviceConfig.URL
+		} else if a.envManager.proxy.IsRunning() {
+			url = fmt.Sprintf("http://%s:%d", serviceRouteHost(name, envID), a.envManager.proxy.Port())
+		}
+		_ = a.logStreamer.InitService(repoID, envID, string(name))
+		a.logStreamer.AddLine(repoID, envID, string(name), "system", "[spawntree] Starting preview...")
+		services = append(services, ServiceInfo{
+			Name:   name,
+			Type:   serviceConfig.Type,
+			Status: ServiceStatusStarting,
+			Port:   port,
+			URL:    url,
+		})
+	}
+
+	return EnvInfo{
+		EnvID:     envID,
+		RepoID:    repoID,
+		RepoPath:  repoPath,
+		Branch:    branch,
+		BasePort:  basePort,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Services:  services,
+	}, nil
+}
+
 func (a *App) runConfigTest(repoPath, content string) (ConfigTestResponse, error) {
 	if err := validateConfigForWizard(repoPath, content); err != nil {
 		return ConfigTestResponse{}, err
@@ -324,6 +389,8 @@ func (a *App) stopPreviewSession(id string) error {
 		return nil
 	}
 	_ = a.envManager.DeleteEnv(context.Background(), session.RepoID, session.EnvID)
+	_ = a.envManager.portRegistry.Free(NewEnvKey(RepoID(session.RepoID), EnvID(session.EnvID)))
+	a.logStreamer.CloseEnv(RepoID(session.RepoID), EnvID(session.EnvID))
 	_ = os.Remove(session.ConfigPath)
 	return nil
 }
@@ -361,35 +428,51 @@ func (a *App) startPreviewSession(repoPath, content, serviceName string) (Config
 		return ConfigPreviewResponse{}, err
 	}
 
-	envID := EnvID(previewSessionID())
-	env, err := a.envManager.CreateEnv(
-		context.Background(),
-		CreateEnvRequest{
-			RepoPath:   repoPath,
-			EnvID:      envID,
-			ConfigFile: tempPath,
-		},
-	)
+	env, err := buildProvisionalPreviewEnv(a, repoPath, previewContent, serviceName)
 	if err != nil {
 		_ = os.Remove(tempPath)
 		return ConfigPreviewResponse{}, err
 	}
 
 	session := ConfigPreviewSession{
-		ID:          string(envID),
+		ID:          string(env.EnvID),
 		RepoID:      string(env.RepoID),
 		EnvID:       string(env.EnvID),
 		RepoPath:    env.RepoPath,
 		ConfigPath:  tempPath,
 		ServiceName: serviceName,
+		Env:         env,
 	}
 	a.previewMu.Lock()
 	a.previewSessions[session.ID] = session
 	a.previewMu.Unlock()
 
+	go func(previewEnv EnvInfo, configPath string) {
+		realEnv, err := a.envManager.CreateEnv(
+			context.Background(),
+			CreateEnvRequest{
+				RepoPath:   previewEnv.RepoPath,
+				EnvID:      previewEnv.EnvID,
+				ConfigFile: configPath,
+			},
+		)
+		if err != nil {
+			for _, service := range previewEnv.Services {
+				a.logStreamer.AddLine(previewEnv.RepoID, previewEnv.EnvID, string(service.Name), "system", fmt.Sprintf("[spawntree] Preview failed: %s", err.Error()))
+			}
+			return
+		}
+		a.previewMu.Lock()
+		if current, ok := a.previewSessions[string(previewEnv.EnvID)]; ok {
+			current.Env = realEnv
+			a.previewSessions[string(previewEnv.EnvID)] = current
+		}
+		a.previewMu.Unlock()
+	}(env, tempPath)
+
 	return ConfigPreviewResponse{
 		OK:        true,
 		PreviewID: session.ID,
-		Env:       env,
+		Env:       session.Env,
 	}, nil
 }

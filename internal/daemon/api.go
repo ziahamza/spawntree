@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1046,6 +1047,19 @@ func (a *App) resolveRepoEnv(repoRef, envID, repoPath string) (EnvInfo, string, 
 		return candidate, string(candidate.RepoID), nil
 	}
 
+	a.previewMu.Lock()
+	for _, session := range a.previewSessions {
+		if session.EnvID != envID {
+			continue
+		}
+		if repoPath != "" && session.RepoPath != repoPath {
+			continue
+		}
+		a.previewMu.Unlock()
+		return session.Env, session.RepoID, nil
+	}
+	a.previewMu.Unlock()
+
 	return EnvInfo{}, "", fmt.Errorf("environment %q not found for repo %q", envID, repoRef)
 }
 
@@ -1163,6 +1177,10 @@ func discoverWorktrees(clonePath, cloneID string) ([]Worktree, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	worktrees := make([]Worktree, 0, len(wts))
 	for _, wt := range wts {
+		if strings.Contains(wt.Path, string(os.PathSeparator)+".spawntree"+string(os.PathSeparator)+"envs"+string(os.PathSeparator)+"config-preview-") ||
+			strings.Contains(wt.Path, string(os.PathSeparator)+".spawntree"+string(os.PathSeparator)+"envs"+string(os.PathSeparator)+"config-test-") {
+			continue
+		}
 		worktrees = append(worktrees, Worktree{
 			Path:         wt.Path,
 			CloneID:      cloneID,

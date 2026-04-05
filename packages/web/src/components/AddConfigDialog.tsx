@@ -170,7 +170,7 @@ type PreviewState = {
 }
 
 export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialogProps) {
-  const [services, setServices] = useState<ServiceDraft[]>(starterServices())
+  const [services, setServices] = useState<ServiceDraft[]>([])
   const [signals, setSignals] = useState<ConfigSignal[]>([])
   const [saveInRepo, setSaveInRepo] = useState(true)
   const [lastVerifiedContent, setLastVerifiedContent] = useState<string | null>(null)
@@ -178,6 +178,7 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
   const [rawContent, setRawContent] = useState(servicesToYaml(starterServices()))
   const [rawDirty, setRawDirty] = useState(false)
   const [preview, setPreview] = useState<PreviewState | null>(null)
+  const [suggestionsReady, setSuggestionsReady] = useState(false)
 
   const suggestConfig = useSuggestConfig()
   const testConfig = useTestConfig()
@@ -201,10 +202,11 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     setLastVerifiedContent(null)
     setTab('suggested')
     setSignals([])
-    setServices(starterServices())
+    setServices([])
     setRawDirty(false)
     setRawContent(servicesToYaml(starterServices()))
     setPreview(null)
+    setSuggestionsReady(false)
 
     if (!repoPath) return
 
@@ -218,10 +220,13 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
         setServices(nextServices)
         setRawDirty(false)
         setRawContent(servicesToYaml(nextServices))
+        setSuggestionsReady(true)
       })
       .catch(() => {
         if (cancelled) return
         setSignals([])
+        setServices(starterServices())
+        setSuggestionsReady(true)
       })
 
     return () => {
@@ -422,6 +427,21 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
 
           <div className="flex-1 min-h-0 overflow-auto">
             {tab === 'suggested' ? (
+              !suggestionsReady ? (
+                <div className="space-y-3 pr-1">
+                  {[1, 2, 3].map((index) => (
+                    <div key={index} className="rounded-lg border border-border bg-background p-4 animate-pulse">
+                      <div className="h-4 w-32 bg-surface rounded mb-3" />
+                      <div className="h-10 bg-surface rounded mb-2" />
+                      <div className="grid sm:grid-cols-2 gap-2">
+                        <div className="h-9 bg-surface rounded" />
+                        <div className="h-9 bg-surface rounded" />
+                        <div className="sm:col-span-2 h-9 bg-surface rounded" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
               <div className="space-y-3 pr-1">
                 {services.map((service) => {
                   const activePreview = preview?.serviceName === service.name
@@ -536,7 +556,7 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
                                   className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground hover:border-foreground/30 disabled:opacity-50"
                                 >
                                   <Play className="w-3 h-3" />
-                                  Run This
+                                  Run {service.name}
                                 </button>
                               )}
                             </div>
@@ -631,6 +651,7 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
                   )
                 })}
               </div>
+              )
             ) : (
               <textarea
                 value={rawContent}
