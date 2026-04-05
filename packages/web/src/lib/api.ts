@@ -314,6 +314,7 @@ export interface AddFolderProbeResult {
 export interface ConfigTestResult {
   ok: boolean
   serviceNames: string[]
+  services: ConfigTestServiceResult[]
 }
 
 export interface ConfigSignal {
@@ -329,10 +330,24 @@ export interface ConfigServiceSuggestion {
   command?: string
   image?: string
   port?: number
+  healthcheckUrl?: string
   dependsOn?: string[]
   source?: string
   reason?: string
   selected: boolean
+}
+
+export interface ConfigTestServiceResult {
+  name: string
+  type: string
+  status: string
+  url?: string
+  previewUrl?: string
+  probeOk: boolean
+  probeStatusCode?: number
+  probeBodyPreview?: string
+  probeError?: string
+  logs: string[]
 }
 
 export interface ConfigSuggestResult {

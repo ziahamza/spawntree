@@ -25,16 +25,17 @@ type ConfigSignal struct {
 }
 
 type ConfigServiceSuggestion struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Type      string   `json:"type"`
-	Command   string   `json:"command,omitempty"`
-	Image     string   `json:"image,omitempty"`
-	Port      int      `json:"port,omitempty"`
-	DependsOn []string `json:"dependsOn,omitempty"`
-	Source    string   `json:"source,omitempty"`
-	Reason    string   `json:"reason,omitempty"`
-	Selected  bool     `json:"selected"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Type           string   `json:"type"`
+	Command        string   `json:"command,omitempty"`
+	Image          string   `json:"image,omitempty"`
+	Port           int      `json:"port,omitempty"`
+	HealthcheckURL string   `json:"healthcheckUrl,omitempty"`
+	DependsOn      []string `json:"dependsOn,omitempty"`
+	Source         string   `json:"source,omitempty"`
+	Reason         string   `json:"reason,omitempty"`
+	Selected       bool     `json:"selected"`
 }
 
 type ConfigSuggestResponse struct {
@@ -393,6 +394,9 @@ func suggestComposeServices(root string, files []composeFile) []ConfigServiceSug
 				s.Type = "container"
 				s.Image = svc.Image
 				s.Port = detectComposePort(svc.Ports)
+				if s.Port > 0 {
+					s.HealthcheckURL = "http://localhost:${PORT}"
+				}
 			}
 			if s.Name == "" {
 				s.Name = "service"
@@ -433,14 +437,15 @@ func suggestPackageServices(root, manager string, rootPkg *packageCandidate, pac
 		}
 		name := deriveServiceName(pkg)
 		s := ConfigServiceSuggestion{
-			ID:       fmt.Sprintf("pkg:%s:%s", pkg.RelDir, scriptName),
-			Name:     name,
-			Type:     "process",
-			Command:  command,
-			Port:     detectSuggestedPort(name, pkg.Scripts[scriptName]),
-			Source:   relativeSource(root, pkg.Dir),
-			Reason:   reason,
-			Selected: false,
+			ID:             fmt.Sprintf("pkg:%s:%s", pkg.RelDir, scriptName),
+			Name:           name,
+			Type:           "process",
+			Command:        command,
+			Port:           detectSuggestedPort(name, pkg.Scripts[scriptName]),
+			HealthcheckURL: "http://localhost:${PORT}",
+			Source:         relativeSource(root, pkg.Dir),
+			Reason:         reason,
+			Selected:       false,
 		}
 		suggestions = append(suggestions, s)
 	}
@@ -449,14 +454,15 @@ func suggestPackageServices(root, manager string, rootPkg *packageCandidate, pac
 		scriptName, command, reason := chooseScript(*rootPkg, manager)
 		if scriptName != "" && command != "" && (!hasNonRoot || rootScriptWorthShowing(rootPkg.Scripts[scriptName])) {
 			suggestions = append(suggestions, ConfigServiceSuggestion{
-				ID:       fmt.Sprintf("pkg:root:%s", scriptName),
-				Name:     deriveServiceName(*rootPkg),
-				Type:     "process",
-				Command:  command,
-				Port:     detectSuggestedPort("app", rootPkg.Scripts[scriptName]),
-				Source:   ".",
-				Reason:   reason,
-				Selected: !hasNonRoot,
+				ID:             fmt.Sprintf("pkg:root:%s", scriptName),
+				Name:           deriveServiceName(*rootPkg),
+				Type:           "process",
+				Command:        command,
+				Port:           detectSuggestedPort("app", rootPkg.Scripts[scriptName]),
+				HealthcheckURL: "http://localhost:${PORT}",
+				Source:         ".",
+				Reason:         reason,
+				Selected:       !hasNonRoot,
 			})
 		}
 	}

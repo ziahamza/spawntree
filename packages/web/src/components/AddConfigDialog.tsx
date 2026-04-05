@@ -27,6 +27,7 @@ function starterServices(): ServiceDraft[] {
       type: 'process',
       command: 'npm run dev',
       port: 3000,
+      healthcheckUrl: 'http://localhost:${PORT}',
       selected: true,
       reason: 'starter config',
       source: '.',
@@ -56,6 +57,10 @@ function servicesToYaml(services: ServiceDraft[]) {
     }
     if ((service.type === 'process' || service.type === 'container') && service.port) {
       lines.push(`    port: ${service.port}`)
+    }
+    if ((service.type === 'process' || service.type === 'container') && service.healthcheckUrl) {
+      lines.push('    healthcheck:')
+      lines.push(`      url: ${yamlQuote(service.healthcheckUrl)}`)
     }
     if (service.dependsOn && service.dependsOn.length > 0) {
       lines.push('    depends_on:')
@@ -92,6 +97,10 @@ function signalTone(kind: string) {
 
 function sourceLabel(source?: string) {
   return source && source !== '.' ? source : 'repo root'
+}
+
+function requiresHealthcheck(service: ServiceDraft) {
+  return service.selected && (service.type === 'process' || service.type === 'container')
 }
 
 export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialogProps) {
@@ -155,11 +164,20 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     return testConfig.data.serviceNames.join(', ')
   }, [testConfig.data])
 
+  const missingHealthchecks = useMemo(
+    () =>
+      services
+        .filter((service) => requiresHealthcheck(service) && !service.healthcheckUrl?.trim())
+        .map((service) => service.name),
+    [services],
+  )
+
   const canSave =
     !!repoPath &&
     lastVerifiedContent === currentContent &&
     !!testConfig.data?.ok &&
-    !saveConfig.isPending
+    !saveConfig.isPending &&
+    missingHealthchecks.length === 0
 
   function updateService(id: string, patch: Partial<ServiceDraft>) {
     setServices((prev) => prev.map((service) => (service.id === id ? { ...service, ...patch } : service)))
@@ -355,6 +373,16 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
                               placeholder="depends_on (comma separated)"
                               className="px-2 py-1.5 rounded-md border border-border bg-surface text-xs text-foreground"
                             />
+                            <input
+                              value={service.healthcheckUrl ?? ''}
+                              onChange={(e) =>
+                                updateService(service.id, {
+                                  healthcheckUrl: e.target.value,
+                                })
+                              }
+                              placeholder="healthcheck URL"
+                              className="sm:col-span-2 px-2 py-1.5 rounded-md border border-border bg-surface text-xs font-mono text-foreground"
+                            />
                           </div>
                         )}
                       </div>
@@ -382,6 +410,12 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
             </p>
           )}
 
+          {missingHealthchecks.length > 0 && (
+            <p className="mt-3 text-xs text-orange bg-orange/10 border border-orange/30 rounded-md px-3 py-2 whitespace-pre-wrap flex-shrink-0">
+              Add healthchecks before testing or saving. Missing: {missingHealthchecks.join(', ')}
+            </p>
+          )}
+
           {testConfig.data?.ok && lastVerifiedContent === currentContent && (
             <div className="mt-3 flex items-center gap-2 text-xs text-green bg-green/10 border border-green/30 rounded-md px-3 py-2 flex-shrink-0">
               <CheckCircle2 className="w-3 h-3" />
@@ -391,11 +425,71 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
             </div>
           )}
 
+          {testConfig.data?.services?.length ? (
+            <div className="mt-3 rounded-lg border border-border bg-background p-4 space-y-4 flex-shrink-0">
+              <h3 className="text-xs font-medium text-muted uppercase tracking-wider">Live Preview</h3>
+              {testConfig.data.services.map((service) => (
+                <div key={service.name} className="rounded-md border border-border bg-surface p-3">
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className="font-semibold text-sm text-foreground">{service.name}</span>
+                    <span className="text-[11px] text-muted">{service.type}</span>
+                    <span className={`text-[11px] ${service.probeOk ? 'text-green' : 'text-orange'}`}>
+                      {service.probeError
+                        ? `GET / failed`
+                        : service.probeStatusCode
+                          ? `GET / -> ${service.probeStatusCode}`
+                          : 'No probe'}
+                    </span>
+                  </div>
+                  {service.previewUrl && (
+                    <div className="flex items-center gap-3 text-xs mb-2">
+                      <a
+                        href={service.previewUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue hover:underline"
+                      >
+                        Open preview
+                      </a>
+                      <button
+                        type="button"
+                        className="text-blue hover:underline"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(service.previewUrl!)
+                          } catch {
+                            window.prompt('Copy preview URL', service.previewUrl)
+                          }
+                        }}
+                      >
+                        Copy link
+                      </button>
+                    </div>
+                  )}
+                  {service.probeBodyPreview && (
+                    <pre className="text-[11px] font-mono text-muted bg-background rounded-md p-2 overflow-auto mb-2 whitespace-pre-wrap">
+                      {service.probeBodyPreview}
+                    </pre>
+                  )}
+                  {service.probeError && (
+                    <p className="text-[11px] text-orange mb-2">{service.probeError}</p>
+                  )}
+                  <div>
+                    <p className="text-[11px] text-muted mb-1">Recent logs</p>
+                    <pre className="text-[11px] font-mono text-foreground bg-background rounded-md p-2 overflow-auto max-h-40 whitespace-pre-wrap">
+                      {service.logs.length > 0 ? service.logs.join('\n') : 'No logs yet'}
+                    </pre>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           <div className="flex justify-end gap-2 pt-4 flex-shrink-0">
             <button
               type="button"
               onClick={handleTest}
-              disabled={!repoPath || testConfig.isPending || saveConfig.isPending}
+              disabled={!repoPath || testConfig.isPending || saveConfig.isPending || missingHealthchecks.length > 0}
               className="flex items-center gap-2 px-4 py-2 text-xs rounded-md border border-border text-muted hover:text-foreground hover:border-foreground/30 transition-colors disabled:opacity-50 min-h-[36px]"
             >
               {testConfig.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
