@@ -10,14 +10,14 @@ import type {
   ServiceStatus,
   SpawntreeConfig,
 } from "spawntree-core";
-import { DockerRunner } from "../runners/docker-runner.js";
-import { ExternalRunner } from "../runners/external-runner.js";
-import { ProcessRunner } from "../runners/process-runner.js";
-import { loadRepoState, type RepoEnvRecord, type RepoState, saveRepoState } from "../state/global-state.js";
-import { InfraManager } from "./infra-manager.js";
-import { LogStreamer } from "./log-streamer.js";
-import { PortRegistry } from "./port-registry.js";
-import { ProxyManager } from "./proxy-manager.js";
+import { DockerRunner } from "../runners/docker-runner.ts";
+import { ExternalRunner } from "../runners/external-runner.ts";
+import { ProcessRunner } from "../runners/process-runner.ts";
+import { loadRepoState, type RepoEnvRecord, type RepoState, saveRepoState } from "../state/global-state.ts";
+import { InfraManager } from "./infra-manager.ts";
+import { LogStreamer } from "./log-streamer.ts";
+import { PortRegistry } from "./port-registry.ts";
+import { ProxyManager } from "./proxy-manager.ts";
 
 export interface ManagedEnv {
   envId: string;

@@ -1,2 +1,2 @@
-export { ApiClient, ApiClientError, createApiClient } from "./api/client.js";
-export * from "./api/types.js";
+export { ApiClient, ApiClientError, createApiClient } from "./api/client.ts";
+export * from "./api/types.ts";

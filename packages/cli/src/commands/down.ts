@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { getClient, getCurrentEnvId, getCurrentRepoId } from "../daemon-bridge.js";
+import { getClient, getCurrentEnvId, getCurrentRepoId } from "../daemon-bridge.ts";
 
 export function registerDownCommand(program: Command): void {
   program

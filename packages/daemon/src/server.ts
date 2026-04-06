@@ -15,8 +15,8 @@ import {
   RestoreDbRequest,
   StopInfraRequest,
 } from "spawntree-core";
-import { BadRequestError } from "./errors.js";
-import { DaemonService } from "./services/daemon-service.js";
+import { BadRequestError } from "./errors.ts";
+import { DaemonService } from "./services/daemon-service.ts";
 
 export function createApp(runtime: ManagedRuntime.ManagedRuntime<DaemonService, never>) {
   const app = new Hono();

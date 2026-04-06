@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { parseConfig } from "../src/config/parser.js";
-import { validateConfig } from "../src/config/schema.js";
-import { findVarRefs, substituteVars } from "../src/config/substitution.js";
+import { parseConfig } from "../src/config/parser.ts";
+import { validateConfig } from "../src/config/schema.ts";
+import { findVarRefs, substituteVars } from "../src/config/substitution.ts";
 
 describe("substituteVars", () => {
   it("replaces ${VAR} with value", () => {

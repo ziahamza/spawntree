@@ -53,7 +53,7 @@ import {
   type Worktree,
 } from "spawntree-core";
 import { parse as parseYaml } from "yaml";
-import { CatalogDatabase } from "../catalog/database.js";
+import { CatalogDatabase } from "../catalog/database.ts";
 import {
   canonicalRepoId,
   deriveCloneId,
@@ -69,15 +69,15 @@ import {
   repoSlug,
   tryGhMetadata,
   validateGitRepo,
-} from "../catalog/git.js";
-import { BadRequestError, ConflictError, InternalError, NotFoundError } from "../errors.js";
-import { DomainEvents } from "../events/domain-events.js";
-import { EnvManager, NotFoundError as EnvManagerNotFoundError } from "../managers/env-manager.js";
-import { InfraManager } from "../managers/infra-manager.js";
-import { LogStreamer } from "../managers/log-streamer.js";
-import { PortRegistry } from "../managers/port-registry.js";
-import { ProxyManager } from "../managers/proxy-manager.js";
-import { spawntreeHome } from "../state/global-state.js";
+} from "../catalog/git.ts";
+import { BadRequestError, ConflictError, InternalError, NotFoundError } from "../errors.ts";
+import { DomainEvents } from "../events/domain-events.ts";
+import { EnvManager, NotFoundError as EnvManagerNotFoundError } from "../managers/env-manager.ts";
+import { InfraManager } from "../managers/infra-manager.ts";
+import { LogStreamer } from "../managers/log-streamer.ts";
+import { PortRegistry } from "../managers/port-registry.ts";
+import { ProxyManager } from "../managers/proxy-manager.ts";
+import { spawntreeHome } from "../state/global-state.ts";
 
 const VERSION = "0.4.0";
 const WATCHED_PATH_SCAN_INTERVAL_MS = 30_000;

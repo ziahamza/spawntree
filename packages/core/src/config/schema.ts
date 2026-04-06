@@ -1,4 +1,4 @@
-import type { SpawntreeConfig } from "./parser.js";
+import type { SpawntreeConfig } from "./parser.ts";
 
 export interface ValidationError {
   path: string;

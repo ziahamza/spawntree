@@ -2,7 +2,7 @@ import Dockerode from "dockerode";
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { InfraStatus } from "spawntree-core";
-import { spawntreeHome } from "../state/global-state.js";
+import { spawntreeHome } from "../state/global-state.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers

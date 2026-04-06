@@ -1,7 +1,7 @@
 import Dockerode from "dockerode";
 import { PassThrough } from "node:stream";
 import type { Service, ServiceConfig, ServiceStatus } from "spawntree-core";
-import type { LogStreamer } from "../managers/log-streamer.js";
+import type { LogStreamer } from "../managers/log-streamer.ts";
 
 export interface DockerRunnerOptions {
   name: string;

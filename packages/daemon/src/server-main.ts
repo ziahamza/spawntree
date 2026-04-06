@@ -3,9 +3,9 @@
 import { getRequestListener } from "@hono/node-server";
 import { Layer, ManagedRuntime } from "effect";
 import { createServer } from "node:http";
-import { createApp } from "./server.js";
-import { DaemonService } from "./services/daemon-service.js";
-import { ensureDir, saveDaemonPid, saveRuntimeMetadata } from "./state/global-state.js";
+import { createApp } from "./server.ts";
+import { DaemonService } from "./services/daemon-service.ts";
+import { ensureDir, saveDaemonPid, saveRuntimeMetadata } from "./state/global-state.ts";
 
 async function main() {
   ensureDir();

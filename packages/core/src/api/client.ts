@@ -19,7 +19,7 @@ import {
   RestoreDbResponse,
   WebListReposResponse,
   WebRepoDetailResponse,
-} from "./schemas.js";
+} from "./schemas.ts";
 import type {
   AddFolderRequest,
   ArchiveWorktreeRequest,
@@ -34,7 +34,7 @@ import type {
   RelinkCloneRequest,
   RestoreDbRequest,
   StopInfraRequest,
-} from "./types.js";
+} from "./types.ts";
 
 export interface ApiClientOptions {
   baseUrl?: string;

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { registerDownCommand } from "./commands/down.js";
-import { registerInitCommand } from "./commands/init.js";
-import { registerLogsCommand } from "./commands/logs.js";
-import { registerRmCommand } from "./commands/rm.js";
-import { registerStatusCommand } from "./commands/status.js";
-import { registerUpCommand } from "./commands/up.js";
-import { getClient, getCurrentEnvId, getRepoPath } from "./daemon-bridge.js";
+import { registerDownCommand } from "./commands/down.ts";
+import { registerInitCommand } from "./commands/init.ts";
+import { registerLogsCommand } from "./commands/logs.ts";
+import { registerRmCommand } from "./commands/rm.ts";
+import { registerStatusCommand } from "./commands/status.ts";
+import { registerUpCommand } from "./commands/up.ts";
+import { getClient, getCurrentEnvId, getRepoPath } from "./daemon-bridge.ts";
 
 const program = new Command();
 

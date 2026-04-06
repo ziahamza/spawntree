@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev:daemon": "node packages/daemon/dist/server-main.js",
+    "dev:daemon:src": "node packages/daemon/src/server-main.ts",
+    "dev:web": "pnpm --filter spawntree-web exec vite dev",
+    "dev:web:qa": "cd packages/web && pnpm exec vite dev --host 127.0.0.1 --port 4217 --strictPort",
     "build": "pnpm --filter spawntree-core run build && pnpm --filter spawntree-daemon run build && pnpm --filter spawntree run build && pnpm --filter spawntree-web run build:only",
     "test": "vitest run",
     "test:watch": "vitest",

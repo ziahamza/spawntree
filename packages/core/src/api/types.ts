@@ -1,6 +1,6 @@
-import type { EnvInfo } from "./schemas.js";
+import type { EnvInfo } from "./schemas.ts";
 
-export * from "./schemas.js";
+export * from "./schemas.ts";
 
 export interface RepoInfo {
   repoId: string;

@@ -2,7 +2,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { PortAllocator } from "../src/env/ports.js";
+import { PortAllocator } from "../src/env/ports.ts";
 
 describe("PortAllocator", () => {
   let tempDir: string;

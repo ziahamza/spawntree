@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import type { LogLine } from "spawntree-core";
-import { getClient, getCurrentEnvId, getCurrentRepoId } from "../daemon-bridge.js";
+import { getClient, getCurrentEnvId, getCurrentRepoId } from "../daemon-bridge.ts";
 
 const SERVICE_COLORS: Record<string, string> = {};
 const COLOR_PALETTE = [

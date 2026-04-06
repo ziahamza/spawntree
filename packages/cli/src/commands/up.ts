@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { LogLine } from "spawntree-core";
-import { getClient, getCurrentEnvId, getCurrentRepoId, getRepoPath } from "../daemon-bridge.js";
+import { getClient, getCurrentEnvId, getCurrentRepoId, getRepoPath } from "../daemon-bridge.ts";
 
 const COLORS: Record<string, string> = {};
 const COLOR_PALETTE = [

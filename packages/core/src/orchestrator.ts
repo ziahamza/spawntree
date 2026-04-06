@@ -1,8 +1,8 @@
-import type { ServiceConfig, SpawntreeConfig } from "./config/parser.js";
-import { substituteVars } from "./config/substitution.js";
-import { PortAllocator } from "./env/ports.js";
-import type { Service, ServiceStatus } from "./services/interface.js";
-import { ProcessRunner } from "./services/process.js";
+import type { ServiceConfig, SpawntreeConfig } from "./config/parser.ts";
+import { substituteVars } from "./config/substitution.ts";
+import { PortAllocator } from "./env/ports.ts";
+import type { Service, ServiceStatus } from "./services/interface.ts";
+import { ProcessRunner } from "./services/process.ts";
 
 export interface OrchestratorOptions {
   config: SpawntreeConfig;

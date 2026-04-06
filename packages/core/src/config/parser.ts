@@ -1,5 +1,5 @@
 import { parse as parseYaml } from "yaml";
-import { substituteVars } from "./substitution.js";
+import { substituteVars } from "./substitution.ts";
 
 export interface ServiceConfig {
   type: "process" | "container" | "postgres" | "redis" | "external";

@@ -1,8 +1,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createWriteStream, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ServiceConfig } from "../config/parser.js";
-import type { Service, ServiceStatus } from "./interface.js";
+import type { ServiceConfig } from "../config/parser.ts";
+import type { Service, ServiceStatus } from "./interface.ts";
 
 export interface ProcessRunnerOptions {
   name: string;

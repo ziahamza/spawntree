@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import type { EnvInfo, ServiceInfo } from "spawntree-core";
-import { getClient, getCurrentEnvId, getCurrentRepoId } from "../daemon-bridge.js";
+import { getClient, getCurrentEnvId, getCurrentRepoId } from "../daemon-bridge.ts";
 
 export function registerStatusCommand(program: Command): void {
   program

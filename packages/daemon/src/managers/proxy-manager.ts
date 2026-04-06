@@ -1,4 +1,4 @@
-import { ProxyServer } from "../proxy/proxy-server.js";
+import { ProxyServer } from "../proxy/proxy-server.ts";
 
 const DEFAULT_PROXY_PORT = 1355;
 

@@ -1,4 +1,4 @@
-import { loadPortRegistry, type PortSlot, savePortRegistry } from "../state/global-state.js";
+import { loadPortRegistry, type PortSlot, savePortRegistry } from "../state/global-state.ts";
 
 const PORT_RANGE_SIZE = 100;
 const PORT_RANGE_START = 10000;

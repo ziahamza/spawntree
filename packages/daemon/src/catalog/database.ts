@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Clone, RegisteredRepo, Repo, WatchedPath, Worktree } from "spawntree-core";
-import { spawntreeHome } from "../state/global-state.js";
+import { spawntreeHome } from "../state/global-state.ts";
 
 type CloneRow = {
   id: string;

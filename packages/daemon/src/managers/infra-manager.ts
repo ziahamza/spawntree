@@ -1,7 +1,7 @@
 import type { InfraStatusResponse, PostgresInstanceInfo, RedisInstanceInfo } from "spawntree-core";
-import { PostgresRunner } from "../runners/postgres-runner.js";
-import { RedisRunner } from "../runners/redis-runner.js";
-import type { PortRegistry } from "./port-registry.js";
+import { PostgresRunner } from "../runners/postgres-runner.ts";
+import { RedisRunner } from "../runners/redis-runner.ts";
+import type { PortRegistry } from "./port-registry.ts";
 
 // Fixed well-known ports for shared infra (outside the dynamic range 10000+)
 // These are chosen to not conflict with the dynamic per-env port allocations.
