@@ -1,5 +1,8 @@
 import { Effect, ManagedRuntime, Schema } from "effect";
 import { type Context, Hono } from "hono";
+import { existsSync, readFileSync } from "node:fs";
+import { extname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   AddFolderRequest,
   ArchiveWorktreeRequest,
@@ -17,6 +20,9 @@ import {
 } from "spawntree-core";
 import { BadRequestError } from "./errors.ts";
 import { DaemonService } from "./services/daemon-service.ts";
+
+const webDistDir = resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
+const webIndexPath = resolve(webDistDir, "index.html");
 
 export function createApp(runtime: ManagedRuntime.ManagedRuntime<DaemonService, never>) {
   const app = new Hono();
@@ -203,9 +209,15 @@ export function createApp(runtime: ManagedRuntime.ManagedRuntime<DaemonService, 
     return runJson(runtime, context, DaemonService.use((service) => service.saveConfig(body)));
   });
 
+  app.get("*", (context) => serveWebAsset(context.req.path));
+
   app.onError((error) => apiErrorResponse(error));
 
   return app;
+}
+
+export function hasBundledWebApp() {
+  return existsSync(webIndexPath);
 }
 
 async function decodeBody<A extends Schema.Top>(schema: A, context: Context) {
@@ -278,4 +290,53 @@ function isTagged<T extends string>(
 
 function toErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function serveWebAsset(pathname: string) {
+  if (!hasBundledWebApp()) {
+    return new Response(
+      [
+        "spawntree web bundle not found.",
+        "",
+        "Run `pnpm build` to have the daemon serve the built UI,",
+        "or run `pnpm dev:web:qa` separately for live frontend development.",
+      ].join("\n"),
+      {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      },
+    );
+  }
+
+  const safePath = pathname === "/" ? webIndexPath : resolve(webDistDir, `.${pathname}`);
+  if (safePath.startsWith(webDistDir) && existsSync(safePath)) {
+    return new Response(readFileSync(safePath), {
+      headers: { "Content-Type": contentTypeFor(safePath) },
+    });
+  }
+
+  return new Response(readFileSync(webIndexPath), {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+function contentTypeFor(path: string) {
+  switch (extname(path)) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".js":
+      return "application/javascript; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".svg":
+      return "image/svg+xml";
+    case ".woff2":
+      return "font/woff2";
+    case ".png":
+      return "image/png";
+    default:
+      return "application/octet-stream";
+  }
 }

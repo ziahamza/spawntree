@@ -3,7 +3,7 @@
 import { getRequestListener } from "@hono/node-server";
 import { Layer, ManagedRuntime } from "effect";
 import { createServer } from "node:http";
-import { createApp } from "./server.ts";
+import { createApp, hasBundledWebApp } from "./server.ts";
 import { DaemonService } from "./services/daemon-service.ts";
 import { ensureDir, saveDaemonPid, saveRuntimeMetadata } from "./state/global-state.ts";
 
@@ -30,6 +30,14 @@ async function main() {
     startedAt: new Date().toISOString(),
     httpPort: port,
   });
+
+  const origin = `http://127.0.0.1:${port}`;
+  process.stderr.write(`[spawntree-daemon] API: ${origin}/api/v1/daemon\n`);
+  if (hasBundledWebApp()) {
+    process.stderr.write(`[spawntree-daemon] Web: ${origin}/\n`);
+  } else {
+    process.stderr.write("[spawntree-daemon] Web bundle not found. Run `pnpm build` to serve the UI from the daemon.\n");
+  }
 
   const shutdown = async (signal: string) => {
     process.stderr.write(`[spawntree-daemon] Received ${signal}, shutting down...\n`);
