@@ -89,6 +89,7 @@ export const CreateEnvRequest = Schema.Struct({
   prefix: Schema.optional(Schema.String),
   envOverrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   configFile: Schema.optional(Schema.String),
+  skipHealthcheckWait: Schema.optional(Schema.Boolean),
 });
 export type CreateEnvRequest = Schema.Schema.Type<typeof CreateEnvRequest>;
 

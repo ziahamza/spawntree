@@ -5,7 +5,7 @@ import { LogViewer } from "../components/LogViewer";
 import { ServiceCard } from "../components/ServiceCard";
 import { StatusDot } from "../components/StatusDot";
 import type { Status } from "../components/StatusDot";
-import { deriveEnvStatus, type Service, useDeleteEnv, useEnvDetail, useStopEnv, useWebRepoDetail } from "../lib/api";
+import { deriveEnvStatus, type Service, useDeleteEnv, useEnvDetail, useStopEnv, useWebRepoTree } from "../lib/api";
 
 export const Route = createFileRoute("/repos/$slug/envs/$envId")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -34,7 +34,7 @@ function EnvDetail() {
   const [activeService, setActiveService] = useState<string | null>(null);
 
   const { data: env, isLoading, error } = useEnvDetail(slug, envId, repoPath);
-  const { data: repo } = useWebRepoDetail(slug);
+  const { data: repo } = useWebRepoTree(slug);
   const stopEnv = useStopEnv();
   const deleteEnv = useDeleteEnv();
 

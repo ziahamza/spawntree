@@ -101,27 +101,49 @@ export class ProcessRunner implements Service {
 
     this.process.on("exit", (code, signal) => {
       if (this._status !== "stopped") {
-        this._status = "failed";
+        this._status = code === 0 ? "stopped" : "failed";
         emit("system", `[spawntree] Process exited with code=${code} signal=${signal}`);
       }
     });
 
     // Wait briefly for early crash detection
     await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const settle = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        callback();
+      };
       const timer = setTimeout(() => {
         this._status = "running";
-        resolve();
-      }, 500);
+        settle(resolve);
+      }, 100);
+
+      const markRunning = () => {
+        clearTimeout(timer);
+        this._status = "running";
+        settle(resolve);
+      };
 
       this.process!.on("error", (err) => {
         clearTimeout(timer);
-        reject(new Error(`Failed to start "${this.name}": ${err.message}`));
+        settle(() => reject(new Error(`Failed to start "${this.name}": ${err.message}`)));
       });
 
+      this.process!.stdout?.once("data", markRunning);
+      this.process!.stderr?.once("data", markRunning);
+
       this.process!.on("exit", (code) => {
+        if (this._status === "starting" && code === 0) {
+          clearTimeout(timer);
+          this._status = "stopped";
+          settle(resolve);
+          return;
+        }
+
         if (this._status === "starting") {
           clearTimeout(timer);
-          reject(new Error(`"${this.name}" exited immediately with code ${code}`));
+          settle(() => reject(new Error(`"${this.name}" exited immediately with code ${code}`)));
         }
       });
     });

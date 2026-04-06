@@ -315,7 +315,7 @@ export class EnvManager {
       try {
         await service.start();
 
-        if (service.healthcheck) {
+        if (service.healthcheck && !req.skipHealthcheckWait) {
           const timeout = serviceConfig.healthcheck?.timeout ?? 30;
           this.logStreamer.addLine(
             repoId,
@@ -329,6 +329,14 @@ export class EnvManager {
             throw new Error(`Healthcheck failed for "${name}" after ${timeout}s`);
           }
           this.logStreamer.addLine(repoId, envId, name, "system", "[spawntree] Healthcheck passed");
+        } else if (service.healthcheck && req.skipHealthcheckWait) {
+          this.logStreamer.addLine(
+            repoId,
+            envId,
+            name,
+            "system",
+            "[spawntree] Preview mode: skipping healthcheck wait",
+          );
         }
 
         // Register with reverse proxy for clean URLs

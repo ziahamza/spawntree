@@ -331,9 +331,13 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       });
 
       const listWebRepos = Effect.gen(function*() {
-        yield* syncWatchedPaths(catalog, envManager);
+        const startedAt = Date.now();
         const repos = yield* Effect.sync(() => catalog.listRepos());
         const enriched = repos.map((repo) => enrichRepo(repo, catalog, envManager));
+        log("repo list ready", {
+          repoCount: enriched.length,
+          durationMs: Date.now() - startedAt,
+        });
         return { repos: enriched };
       });
 
@@ -575,6 +579,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
                   repoPath,
                   envId: previewId,
                   configFile: configPath,
+                  skipHealthcheckWait: true,
                 }),
               catch: mapCreateEnvError,
             }).pipe(
@@ -590,7 +595,6 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
             env,
             });
             log("preview ready", { previewId, envId: env.envId, repoId: env.repoId, repoPath: env.repoPath });
-            publish({ type: "env.updated", repoId: env.repoId, envId: env.envId });
             return { ok: true, previewId, env };
           },
         );
@@ -608,7 +612,6 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           });
           previewSessions.delete(request.previewId);
           safeRemove(session.configPath);
-          publish({ type: "env.deleted", repoId: session.repoId, envId: session.envId });
         },
       );
 

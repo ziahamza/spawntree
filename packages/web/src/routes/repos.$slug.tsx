@@ -5,7 +5,7 @@ import { AddConfigDialog } from "../components/AddConfigDialog";
 import { StatusDot } from "../components/StatusDot";
 import type { Status } from "../components/StatusDot";
 import { WarningBanner } from "../components/WarningBanner";
-import { deriveEnvStatus, useCreateEnv, useDeleteClone, useRelinkClone, useWebRepoDetail } from "../lib/api";
+import { deriveEnvStatus, useCreateEnv, useDeleteClone, useRelinkClone, useWebRepoTree } from "../lib/api";
 import type { Clone, EnvListItem, Worktree } from "../lib/api";
 
 export const Route = createFileRoute("/repos/$slug")({
@@ -201,7 +201,7 @@ function CloneSection({
 function RepoDetail() {
   const { slug } = Route.useParams();
   const [configPath, setConfigPath] = useState<string | null>(null);
-  const { data: repo, isLoading, error } = useWebRepoDetail(slug);
+  const { data: repo, isLoading, error } = useWebRepoTree(slug);
   const relinkClone = useRelinkClone();
   const deleteClone = useDeleteClone();
 
