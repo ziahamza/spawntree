@@ -151,7 +151,7 @@ func validateConfigForWizard(repoPath, content string) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("Add healthchecks before testing or saving. Missing: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("add healthchecks before testing or saving. missing: %s", strings.Join(missing, ", "))
 	}
 	return nil
 }
