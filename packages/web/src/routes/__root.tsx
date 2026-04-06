@@ -33,12 +33,40 @@ function LiveUpdates() {
     const eventSource = createApiEventSource();
     debugLog("events", "connect");
 
-    eventSource.onmessage = () => {
-      debugLog("events", "invalidate queries");
-      void queryClient.invalidateQueries({ queryKey: ["daemon"] });
-      void queryClient.invalidateQueries({ queryKey: ["envs"] });
-      void queryClient.invalidateQueries({ queryKey: ["infra"] });
-      void queryClient.invalidateQueries({ queryKey: ["web", "repos"] });
+    eventSource.onmessage = (event) => {
+      let parsed: { type?: string; repoSlug?: string; repoId?: string } | null = null;
+      try {
+        parsed = JSON.parse(event.data);
+      } catch {
+        // fall through
+      }
+
+      debugLog("events", "message", parsed ?? event.data);
+
+      switch (parsed?.type) {
+        case "infra.updated":
+          void queryClient.invalidateQueries({ queryKey: ["infra"] });
+          break;
+        case "repo.updated":
+          void queryClient.invalidateQueries({ queryKey: ["web", "repos"] });
+          if (parsed.repoSlug) {
+            void queryClient.invalidateQueries({ queryKey: ["web", "repos", parsed.repoSlug] });
+          }
+          break;
+        case "env.updated":
+        case "env.deleted":
+          void queryClient.invalidateQueries({ queryKey: ["envs"] });
+          void queryClient.invalidateQueries({ queryKey: ["web", "repos"] });
+          if (parsed.repoSlug) {
+            void queryClient.invalidateQueries({ queryKey: ["web", "repos", parsed.repoSlug] });
+          }
+          if (parsed.repoId) {
+            void queryClient.invalidateQueries({ queryKey: ["repos", parsed.repoId] });
+          }
+          break;
+        default:
+          void queryClient.invalidateQueries({ queryKey: ["daemon"] });
+      }
     };
 
     eventSource.onerror = () => {

@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { CheckCircle2, ExternalLink, Link2, Loader2, Play, Settings2, Square, Wand2, X, XCircle } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { debugLog } from "../lib/debug";
 import {
   type ConfigServiceSuggestion,
@@ -173,6 +173,7 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
   const [rawDirty, setRawDirty] = useState(false);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [suggestionsReady, setSuggestionsReady] = useState(false);
+  const stoppingPreviewIdRef = useRef<string | null>(null);
 
   const suggestConfig = useSuggestConfig();
   const testConfig = useTestConfig();
@@ -238,8 +239,15 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
   useEffect(() => {
     if (open) return;
     if (!preview?.previewId) return;
-    void stopPreview.mutateAsync({ previewId: preview.previewId }).catch(() => {});
+    if (stoppingPreviewIdRef.current === preview.previewId) return;
+    const previewId = preview.previewId;
+    stoppingPreviewIdRef.current = previewId;
     setPreview(null);
+    void stopPreview.mutateAsync({ previewId }).catch(() => {}).finally(() => {
+      if (stoppingPreviewIdRef.current === previewId) {
+        stoppingPreviewIdRef.current = null;
+      }
+    });
   }, [open, preview?.previewId, stopPreview]);
 
   const verificationSummary = useMemo(() => {
@@ -282,9 +290,16 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
 
   async function stopActivePreview() {
     if (!preview?.previewId) return;
-    debugLog("config", "stop active preview", { previewId: preview.previewId });
-    await stopPreview.mutateAsync({ previewId: preview.previewId }).catch(() => {});
+    const previewId = preview.previewId;
+    if (stoppingPreviewIdRef.current === previewId) return;
+    debugLog("config", "stop active preview", { previewId });
+    stoppingPreviewIdRef.current = previewId;
     setPreview(null);
+    await stopPreview.mutateAsync({ previewId }).catch(() => {}).finally(() => {
+      if (stoppingPreviewIdRef.current === previewId) {
+        stoppingPreviewIdRef.current = null;
+      }
+    });
   }
 
   function updateService(id: string, patch: Partial<ServiceDraft>) {

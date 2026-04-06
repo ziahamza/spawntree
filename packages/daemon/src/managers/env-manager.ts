@@ -203,6 +203,7 @@ export class EnvManager {
     // Register log buffers for all services
     for (const name of serviceNames) {
       this.logStreamer.initService(repoId, envId, name);
+      this.logStreamer.addLine(repoId, envId, name, "system", "[spawntree] Service registered");
     }
 
     // First pass: resolve infra env vars (postgres/redis URLs) so they are available
@@ -310,15 +311,24 @@ export class EnvManager {
       services.set(name, service);
 
       console.log(`[spawntree-daemon]   Starting ${name} on port ${port}...`);
+      this.logStreamer.addLine(repoId, envId, name, "system", `[spawntree] Starting ${name} on port ${port}`);
       try {
         await service.start();
 
         if (service.healthcheck) {
           const timeout = serviceConfig.healthcheck?.timeout ?? 30;
+          this.logStreamer.addLine(
+            repoId,
+            envId,
+            name,
+            "system",
+            `[spawntree] Waiting for healthcheck (${timeout}s timeout)`,
+          );
           const healthy = await this.waitForHealthy(service, timeout * 1000);
           if (!healthy) {
             throw new Error(`Healthcheck failed for "${name}" after ${timeout}s`);
           }
+          this.logStreamer.addLine(repoId, envId, name, "system", "[spawntree] Healthcheck passed");
         }
 
         // Register with reverse proxy for clean URLs
@@ -326,10 +336,25 @@ export class EnvManager {
           await this.proxyManager.ensureRunning();
           const cleanUrl = this.proxyManager.register(repoId, envId, name, port);
           console.log(`[spawntree-daemon]   ${name} started → ${cleanUrl}`);
+          this.logStreamer.addLine(repoId, envId, name, "system", `[spawntree] ${name} started → ${cleanUrl}`);
         } catch {
           console.log(`[spawntree-daemon]   ${name} started (port ${port}, proxy unavailable)`);
+          this.logStreamer.addLine(
+            repoId,
+            envId,
+            name,
+            "system",
+            `[spawntree] ${name} started (port ${port}, proxy unavailable)`,
+          );
         }
       } catch (err) {
+        this.logStreamer.addLine(
+          repoId,
+          envId,
+          name,
+          "system",
+          `[spawntree] Failed to start ${name}: ${err instanceof Error ? err.message : String(err)}`,
+        );
         // Stop already-started services before bubbling
         // (only process services are in the map)
         await this.stopServices(services, serviceOrder.slice(0, serviceOrder.indexOf(name)));

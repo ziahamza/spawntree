@@ -65,7 +65,6 @@ export function useDaemonInfo() {
   return useQuery({
     queryKey: ["daemon"],
     queryFn: () => api.getDaemonInfo(),
-    refetchInterval: 10_000,
   });
 }
 
@@ -73,7 +72,6 @@ export function useEnvs() {
   return useQuery({
     queryKey: ["envs"],
     queryFn: async () => (await api.listEnvs()).envs,
-    refetchInterval: 10_000,
   });
 }
 
@@ -82,7 +80,6 @@ export function useRepoEnvs(repoID: string) {
     queryKey: ["repos", repoID, "envs"],
     queryFn: async () => (await api.listEnvs(repoID)).envs,
     enabled: !!repoID,
-    refetchInterval: 10_000,
   });
 }
 
@@ -91,7 +88,6 @@ export function useEnvDetail(repoID: string, envID: string, repoPath?: string) {
     queryKey: ["repos", repoID, "envs", envID, repoPath],
     queryFn: async () => (await api.getEnv(repoID, envID, repoPath)).env,
     enabled: !!repoID && !!envID,
-    refetchInterval: 10_000,
   });
 }
 
@@ -99,7 +95,6 @@ export function useInfra() {
   return useQuery({
     queryKey: ["infra"],
     queryFn: () => api.getInfraStatus(),
-    refetchInterval: 10_000,
   });
 }
 
@@ -107,7 +102,6 @@ export function useWebRepos() {
   return useQuery({
     queryKey: ["web", "repos"],
     queryFn: async () => (await api.listWebRepos()).repos,
-    refetchInterval: 10_000,
   });
 }
 
@@ -115,7 +109,6 @@ export function useWebRepoDetail(slug: string, enabled = true) {
   return useQuery({
     queryKey: ["web", "repos", slug],
     enabled: !!slug && enabled,
-    refetchInterval: 10_000,
     queryFn: async () => {
       const response = await api.getWebRepoDetail(slug);
       const activityScore = (path: string) => Date.parse(response.gitPaths[path]?.activityAt ?? "") || 0;
