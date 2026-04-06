@@ -273,6 +273,14 @@ export const WebRepoDetailResponse = Schema.Struct({
 });
 export type WebRepoDetailResponse = Schema.Schema.Type<typeof WebRepoDetailResponse>;
 
+export const WebRepoTreeResponse = Schema.Struct({
+  repo: Repo,
+  clones: Schema.Array(Clone),
+  worktrees: Schema.Record(CloneId, Schema.Array(Worktree)),
+  envs: Schema.Array(EnvInfo),
+});
+export type WebRepoTreeResponse = Schema.Schema.Type<typeof WebRepoTreeResponse>;
+
 export const AddFolderRequest = Schema.Struct({
   path: Schema.String,
   remoteName: Schema.optional(Schema.String),

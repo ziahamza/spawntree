@@ -50,6 +50,7 @@ import {
   type WebListReposResponse,
   type WebRepo,
   type WebRepoDetailResponse,
+  type WebRepoTreeResponse,
   type Worktree,
 } from "spawntree-core";
 import { parse as parseYaml } from "yaml";
@@ -113,6 +114,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
   dumpDb(request: DumpDbRequest): Effect.Effect<DumpDbResponse, DaemonError>;
   restoreDb(request: RestoreDbRequest): Effect.Effect<RestoreDbResponse, DaemonError>;
   readonly listWebRepos: Effect.Effect<WebListReposResponse, DaemonError>;
+  getWebRepoTree(repoSlug: string): Effect.Effect<WebRepoTreeResponse, DaemonError>;
   getWebRepo(repoSlug: string): Effect.Effect<WebRepoDetailResponse, DaemonError>;
   probeAddPath(path: string): Effect.Effect<AddFolderProbeResult, DaemonError>;
   addFolder(request: AddFolderRequest): Effect.Effect<AddFolderResponse, DaemonError>;
@@ -333,7 +335,8 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         return { repos: enriched };
       });
 
-      const getWebRepo = Effect.fn("DaemonService.getWebRepo")(function*(repoSlugValue: string) {
+      const getWebRepoTree = Effect.fn("DaemonService.getWebRepoTree")(function*(repoSlugValue: string) {
+        const startedAt = Date.now();
         const repo = yield* getRepoBySlug(catalog, repoSlugValue);
         const clones = yield* Effect.sync(() => catalog.listClones(repo.id));
         const worktreesByClone: Record<string, Array<Worktree>> = {};
@@ -345,7 +348,46 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
 
         const refreshedClones = yield* Effect.sync(() => catalog.listClones(repo.id));
         const envs = listRepoEnvsForRepo(catalog, envManager, repo);
+
+        log("repo tree ready", {
+          repoSlug: repoSlugValue,
+          cloneCount: refreshedClones.length,
+          envCount: envs.length,
+          durationMs: Date.now() - startedAt,
+        });
+
+        return {
+          repo,
+          clones: refreshedClones,
+          worktrees: worktreesByClone,
+          envs,
+        };
+      });
+
+      const getWebRepo = Effect.fn("DaemonService.getWebRepo")(function*(repoSlugValue: string) {
+        const startedAt = Date.now();
+        const repo = yield* getRepoBySlug(catalog, repoSlugValue);
+        const clones = yield* Effect.sync(() => catalog.listClones(repo.id));
+        const worktreesByClone: Record<string, Array<Worktree>> = {};
+
+        for (const clone of clones) {
+          yield* syncCloneWorktrees(catalog, clone);
+          worktreesByClone[clone.id] = catalog.listWorktrees(clone.id);
+        }
+
+        const refreshedClones = yield* Effect.sync(() => catalog.listClones(repo.id));
+        const envs = listRepoEnvsForRepo(catalog, envManager, repo);
+        const gitStartedAt = Date.now();
         const gitPaths = buildGitPathInfoMap(repo, refreshedClones, worktreesByClone, envs);
+
+        log("repo detail ready", {
+          repoSlug: repoSlugValue,
+          cloneCount: refreshedClones.length,
+          envCount: envs.length,
+          worktreeSyncMs: gitStartedAt - startedAt,
+          gitMetaMs: Date.now() - gitStartedAt,
+          durationMs: Date.now() - startedAt,
+        });
 
         return {
           repo,
@@ -609,6 +651,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         dumpDb,
         restoreDb,
         listWebRepos,
+        getWebRepoTree,
         getWebRepo,
         probeAddPath,
         addFolder,

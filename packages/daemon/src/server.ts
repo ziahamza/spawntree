@@ -149,6 +149,13 @@ export function createApp(runtime: ManagedRuntime.ManagedRuntime<DaemonService, 
     (context) => runJson(runtime, context, DaemonService.use((service) => service.listWebRepos)),
   );
 
+  app.get("/api/v1/web/repos/:repoSlug/tree", (context) =>
+    runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.getWebRepoTree(context.req.param("repoSlug"))),
+    ));
+
   app.get("/api/v1/web/repos/:repoSlug", (context) =>
     runJson(
       runtime,

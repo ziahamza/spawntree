@@ -19,6 +19,7 @@ import {
   RestoreDbResponse,
   WebListReposResponse,
   WebRepoDetailResponse,
+  WebRepoTreeResponse,
 } from "./schemas.ts";
 import type {
   AddFolderRequest,
@@ -150,6 +151,12 @@ export class ApiClient {
   async getWebRepoDetail(repoSlug: string) {
     return this.request(`/api/v1/web/repos/${encodeURIComponent(repoSlug)}`, {
       schema: WebRepoDetailResponse,
+    });
+  }
+
+  async getWebRepoTree(repoSlug: string) {
+    return this.request(`/api/v1/web/repos/${encodeURIComponent(repoSlug)}/tree`, {
+      schema: WebRepoTreeResponse,
     });
   }
 

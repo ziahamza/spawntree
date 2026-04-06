@@ -1,18 +1,14 @@
 import * as Collapsible from "@radix-ui/react-collapsible";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
-  AlertTriangle,
-  Archive,
   ChevronRight,
-  Clock3,
   FolderOpen,
   FolderTree,
   GitBranch,
-  RefreshCw,
 } from "lucide-react";
 import { useState } from "react";
-import { deriveEnvStatus, useArchiveWorktree, useWebRepoDetail, useWebRepos } from "../lib/api";
-import type { Clone, EnvListItem, GitPathInfo, Worktree } from "../lib/api";
+import { deriveEnvStatus, useWebRepoTree, useWebRepos } from "../lib/api";
+import type { Clone, EnvListItem, Worktree } from "../lib/api";
 import { StatusDot } from "./StatusDot";
 import type { Status } from "./StatusDot";
 
@@ -30,65 +26,6 @@ function repoStatus(status: string): Status {
 
 function envStatus(env: EnvListItem): Status {
   return deriveEnvStatus(env);
-}
-
-function formatRelative(dateStr?: string) {
-  if (!dateStr) return "";
-  const ts = Date.parse(dateStr);
-  if (!Number.isFinite(ts)) return "";
-  const diff = Math.max(0, Date.now() - ts);
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d`;
-  return `${Math.floor(days / 30)}mo`;
-}
-
-function pathTextClass(git?: GitPathInfo) {
-  return git?.isMergedIntoBase && !git.hasUncommittedChanges
-    ? "line-through opacity-60"
-    : "";
-}
-
-function PathMeta({
-  git,
-}: {
-  git?: GitPathInfo;
-}) {
-  if (!git) return null;
-
-  return (
-    <div className="flex items-center gap-2 text-[11px] text-muted min-w-0 flex-wrap">
-      <span className={pathTextClass(git)} title={git.branch || "detached"}>
-        {git.branch || "detached"}
-      </span>
-      <span className="flex items-center gap-1" title={git.activityAt}>
-        <Clock3 className="w-3 h-3" />
-        {formatRelative(git.activityAt)}
-      </span>
-      <span className="font-mono">
-        <span className="text-green">+{git.insertions}</span>
-        <span className="text-muted">/</span>
-        <span className="text-red">-{git.deletions}</span>
-      </span>
-      {git.hasUncommittedChanges && (
-        <span className="flex items-center gap-1 text-yellow" title="Uncommitted changes">
-          <AlertTriangle className="w-3 h-3" />
-        </span>
-      )}
-      {git.isBaseOutOfDate && (
-        <span
-          className="flex items-center gap-1 text-blue"
-          title={`${git.baseRefName || "main"} has moved ahead`}
-        >
-          <RefreshCw className="w-3 h-3" />
-        </span>
-      )}
-    </div>
-  );
 }
 
 function EnvNode({
@@ -136,13 +73,6 @@ function WorktreeNode({
   onNavigate?: () => void;
 }) {
   const [open, setOpen] = useState(true);
-  const archiveWorktree = useArchiveWorktree();
-
-  function handleArchive() {
-    if (!worktree.git?.canArchive) return;
-    if (!window.confirm(`Archive worktree at ${worktree.path}?`)) return;
-    archiveWorktree.mutate({ repoSlug: slug, path: worktree.path });
-  }
 
   return (
     <Collapsible.Root open={open} onOpenChange={setOpen}>
@@ -163,26 +93,13 @@ function WorktreeNode({
           onClick={onNavigate}
           className="min-w-0 flex-1"
         >
-          <div className={`truncate text-foreground ${pathTextClass(worktree.git)}`} title={worktree.path}>
+          <div className="truncate text-foreground" title={worktree.path}>
             {worktree.path}
           </div>
-          <PathMeta git={worktree.git} />
+          <div className="text-[11px] text-muted truncate" title={worktree.branch}>
+            {worktree.branch || "detached"}
+          </div>
         </Link>
-        {worktree.git?.canArchive && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              handleArchive();
-            }}
-            disabled={archiveWorktree.isPending}
-            className="p-1 rounded text-muted hover:text-foreground hover:bg-background disabled:opacity-50"
-            title="Archive this merged worktree"
-          >
-            <Archive className="w-3 h-3" />
-          </button>
-        )}
         {worktree.envs.length > 0 && (
           <span className="text-[11px] text-muted flex-shrink-0">{worktree.envs.length}</span>
         )}
@@ -241,8 +158,7 @@ function CloneNode({
           className="min-w-0 flex-1"
           title={clone.path}
         >
-          <div className={`truncate text-foreground ${pathTextClass(clone.git)}`}>{clone.path}</div>
-          <PathMeta git={clone.git} />
+          <div className="truncate text-foreground">{clone.path}</div>
         </Link>
         {clone.missing && <span className="text-[11px] text-orange flex-shrink-0">missing</span>}
       </div>
@@ -299,7 +215,7 @@ function RepoNode({
 }) {
   const repoPath = `/repos/${slug}`;
   const isRepoActive = currentPath.startsWith(repoPath);
-  const { data: repo, isLoading } = useWebRepoDetail(slug, isOpen);
+  const { data: repo, isLoading } = useWebRepoTree(slug, isOpen);
 
   return (
     <Collapsible.Root open={isOpen} onOpenChange={onToggle}>

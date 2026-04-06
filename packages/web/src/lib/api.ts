@@ -141,6 +141,36 @@ export function useWebRepoDetail(slug: string, enabled = true) {
   });
 }
 
+export function useWebRepoTree(slug: string, enabled = true) {
+  return useQuery({
+    queryKey: ["web", "repos", slug, "tree"],
+    enabled: !!slug && enabled,
+    queryFn: async () => {
+      const response = await api.getWebRepoTree(slug);
+      const clones: Array<Clone> = response.clones.map((clone) => ({
+        id: clone.id,
+        path: clone.path,
+        missing: clone.status === "missing",
+        envs: response.envs.filter((env) => env.repoPath === clone.path),
+        worktrees: (response.worktrees[clone.id] ?? [])
+          .filter((worktree) => worktree.path !== clone.path)
+          .map((worktree) => ({
+            path: worktree.path,
+            branch: worktree.branch || "detached",
+            envs: response.envs.filter((env) => env.repoPath === worktree.path),
+          })),
+      }));
+
+      return {
+        slug: response.repo.slug,
+        name: response.repo.name,
+        remoteUrl: response.repo.remoteUrl || undefined,
+        clones,
+      } satisfies WebRepoDetail;
+    },
+  });
+}
+
 export function useCreateEnv() {
   const queryClient = useQueryClient();
   return useMutation({
