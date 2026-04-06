@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -85,7 +86,18 @@ func (p *ProcessRunner) Start(ctx context.Context) error {
 		command = injectFrameworkFlags(command, port)
 	}
 
-	cmd := exec.Command("sh", "-lc", command)
+	shellPath := os.Getenv("SHELL")
+	if shellPath == "" {
+		shellPath = "sh"
+	}
+	args := []string{"-lc", command}
+	switch filepath.Base(shellPath) {
+	case "bash", "zsh", "fish":
+		args = []string{"-lc", command}
+	default:
+		shellPath = "sh"
+	}
+	cmd := exec.Command(shellPath, args...)
 	cmd.Dir = p.cwd
 	cmd.Env = mergeEnv(os.Environ(), p.envVars)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

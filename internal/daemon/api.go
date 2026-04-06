@@ -407,7 +407,6 @@ func (a *App) handleDiscover(w http.ResponseWriter, _ *http.Request) {
 			continue
 		}
 		if missing {
-			_ = a.db.UpdateCloneStatus(clone.ID, "missing")
 			warnings = append(warnings, DiscoverWarning{
 				Type:    "missing_clone",
 				RepoID:  clone.RepoID,
@@ -635,17 +634,20 @@ func (a *App) handleWebDeleteClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Only block deletion if there are actually-running environments (not stopped ones)
-	repo, err := a.db.GetRepo(clone.RepoID)
+	worktrees, err := a.db.ListWorktrees(clone.ID)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	envs, err := a.listRepoEnvsForRepo(repo)
-	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
+	paths := map[string]bool{clone.Path: true}
+	for _, wt := range worktrees {
+		paths[wt.Path] = true
 	}
+	envs := a.envManager.ListEnvs("")
 	for _, env := range envs {
+		if !paths[env.RepoPath] {
+			continue
+		}
 		for _, svc := range env.Services {
 			if svc.Status == ServiceStatusRunning || svc.Status == ServiceStatusStarting {
 				writeAPIError(w, http.StatusConflict, "CONFLICT", "Cannot delete clone with running environments. Stop them first.", nil)

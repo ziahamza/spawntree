@@ -337,9 +337,10 @@ func (a *App) runConfigTest(repoPath, content string) (ConfigTestResponse, error
 	env, err := a.envManager.CreateEnv(
 		context.Background(),
 		CreateEnvRequest{
-			RepoPath:   repoPath,
-			EnvID:      EnvID(testEnvID),
-			ConfigFile: tempPath,
+			RepoPath:           repoPath,
+			EnvID:              EnvID(testEnvID),
+			ConfigFile:         tempPath,
+			UseCurrentCheckout: true,
 		},
 	)
 	if err != nil {
@@ -451,9 +452,10 @@ func (a *App) startPreviewSession(repoPath, content, serviceName string) (Config
 		realEnv, err := a.envManager.CreateEnv(
 			context.Background(),
 			CreateEnvRequest{
-				RepoPath:   previewEnv.RepoPath,
-				EnvID:      previewEnv.EnvID,
-				ConfigFile: configPath,
+				RepoPath:           previewEnv.RepoPath,
+				EnvID:              previewEnv.EnvID,
+				ConfigFile:         configPath,
+				UseCurrentCheckout: true,
 			},
 		)
 		if err != nil {

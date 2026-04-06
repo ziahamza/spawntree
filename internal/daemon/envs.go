@@ -13,6 +13,7 @@ import (
 type ManagedEnv struct {
 	EnvID             EnvID
 	RepoID            RepoID
+	GitRoot           string
 	RepoPath          string
 	Branch            BranchName
 	BasePort          Port
@@ -107,7 +108,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 	serviceCwd := repoPath
 	worktreePath := repoPath
 	createdEphemeralWorktree := false
-	if envID != safeBranch || req.Prefix != "" {
+	if (envID != safeBranch || req.Prefix != "") && !req.UseCurrentCheckout {
 		wm := NewWorktreeManager(gitRoot)
 		if err := wm.EnsureGitignore(); err != nil {
 			return EnvInfo{}, err
@@ -256,6 +257,7 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 	managed := &ManagedEnv{
 		EnvID:             envID,
 		RepoID:            repoID,
+		GitRoot:           gitRoot,
 		RepoPath:          worktreePath,
 		Branch:            branch,
 		BasePort:          basePort,
@@ -319,7 +321,7 @@ func (m *EnvManager) DeleteEnv(ctx context.Context, repoID, envID string) error 
 		}
 		_ = serviceName
 	}
-	wm := NewWorktreeManager(managed.RepoPath)
+	wm := NewWorktreeManager(managed.GitRoot)
 	_ = wm.Remove(string(envID))
 	m.logStreamer.CloseEnv(RepoID(repoID), EnvID(envID))
 	_ = m.portRegistry.Free(envKey)

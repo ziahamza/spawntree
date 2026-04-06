@@ -202,7 +202,6 @@ func changedFilesFromPorcelain(root, statusOutput string) []string {
 	paths := []string{}
 
 	for _, line := range strings.Split(strings.TrimSpace(statusOutput), "\n") {
-		line = strings.TrimSpace(line)
 		if len(line) < 4 {
 			continue
 		}

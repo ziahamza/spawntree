@@ -90,7 +90,7 @@ export function AddFolderDialog({ open, onOpenChange }: AddFolderDialogProps) {
     }, 250)
 
     return () => clearTimeout(timer)
-  }, [path, open, probePath, scanChildrenTouched])
+  }, [path, open, scanChildrenTouched]) // probePath object identity changes with mutation state
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
