@@ -39,7 +39,12 @@ async function main() {
     process.stderr.write("[spawntree-daemon] Web bundle not found. Run `pnpm build` to serve the UI from the daemon.\n");
   }
 
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
     process.stderr.write(`[spawntree-daemon] Received ${signal}, shutting down...\n`);
     try {
       await runtime.runPromise(DaemonService.use((service) => service.shutdown));

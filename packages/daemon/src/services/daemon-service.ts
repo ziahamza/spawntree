@@ -784,10 +784,14 @@ function syncWatchedPath(catalog: CatalogDatabase, watchedPath: WatchedPath) {
 
     let imported = 0;
     if (probe.isGitRepo) {
+      importGitRepoPathSync(catalog, probe.path, undefined, false);
       imported += 1;
     }
     if (!probe.isGitRepo && watchedPath.scanChildren) {
-      imported += findImmediateGitRepos(watchedPath.path).length;
+      for (const repoPath of findImmediateGitRepos(watchedPath.path)) {
+        importGitRepoPathSync(catalog, repoPath, undefined, false);
+        imported += 1;
+      }
     }
     catalog.updateWatchedPathScan(watchedPath.path, new Date().toISOString(), "");
     return imported;
@@ -805,11 +809,12 @@ function syncWatchedPaths(catalog: CatalogDatabase, envManager: EnvManager) {
       try {
         const probe = probePath(watchedPath.path);
         if (probe.exists && probe.isGitRepo) {
-          // no-op: imported on demand elsewhere
+          importGitRepoPathSync(catalog, probe.path, undefined, false);
         }
         if (probe.exists && !probe.isGitRepo && watchedPath.scanChildren) {
-          // touch scan time so the sidebar list stays fresh
-          findImmediateGitRepos(watchedPath.path);
+          for (const repoPath of findImmediateGitRepos(watchedPath.path)) {
+            importGitRepoPathSync(catalog, repoPath, undefined, false);
+          }
         }
         catalog.updateWatchedPathScan(watchedPath.path, new Date().toISOString(), "");
       } catch (error) {
@@ -826,62 +831,69 @@ function importGitRepoPath(
   remoteName: string | undefined,
   requireRemotePick: boolean,
 ) {
-  return Effect.sync(() => {
-    const { info: detectedInfo, remotes } = detectRepoInfo(gitRoot);
-    let info = detectedInfo;
+  return Effect.sync(() => importGitRepoPathSync(catalog, gitRoot, remoteName, requireRemotePick));
+}
 
-    if (requireRemotePick && remotes.length > 1 && !remoteName) {
-      throw new ConflictError({
-        code: "REMOTE_PICK_REQUIRED",
-        message: "Multiple remotes found",
-        details: { remotes },
-      });
+function importGitRepoPathSync(
+  catalog: CatalogDatabase,
+  gitRoot: string,
+  remoteName: string | undefined,
+  requireRemotePick: boolean,
+) {
+  const { info: detectedInfo, remotes } = detectRepoInfo(gitRoot);
+  let info = detectedInfo;
+
+  if (requireRemotePick && remotes.length > 1 && !remoteName) {
+    throw new ConflictError({
+      code: "REMOTE_PICK_REQUIRED",
+      message: "Multiple remotes found",
+      details: { remotes },
+    });
+  }
+
+  if (remoteName) {
+    const selected = remotes.find((remote) => remote.name === remoteName);
+    if (!selected) {
+      throw new BadRequestError({ code: "REMOTE_NOT_FOUND", message: `Remote "${remoteName}" not found` });
     }
+    info = parseRemoteUrl(selected.url);
+  }
 
-    if (remoteName) {
-      const selected = remotes.find((remote) => remote.name === remoteName);
-      if (!selected) {
-        throw new BadRequestError({ code: "REMOTE_NOT_FOUND", message: `Remote "${remoteName}" not found` });
-      }
-      info = parseRemoteUrl(selected.url);
-    }
+  let repo: Repo = {
+    id: canonicalRepoId(info),
+    slug: repoSlug(info),
+    name: info.repo,
+    provider: info.provider,
+    owner: info.owner,
+    remoteUrl: info.url,
+    defaultBranch: "",
+    description: "",
+    registeredAt: "",
+    updatedAt: "",
+  };
 
-    let repo: Repo = {
-      id: canonicalRepoId(info),
-      slug: repoSlug(info),
-      name: info.repo,
-      provider: info.provider,
-      owner: info.owner,
-      remoteUrl: info.url,
-      defaultBranch: "",
-      description: "",
-      registeredAt: "",
-      updatedAt: "",
+  if (info.provider === "github" && info.owner && info.repo) {
+    const metadata = tryGhMetadata(info.owner, info.repo);
+    repo = {
+      ...repo,
+      defaultBranch: metadata.defaultBranch,
+      description: metadata.description,
     };
+  }
 
-    if (info.provider === "github" && info.owner && info.repo) {
-      const metadata = tryGhMetadata(info.owner, info.repo);
-      repo = {
-        ...repo,
-        defaultBranch: metadata.defaultBranch,
-        description: metadata.description,
-      };
-    }
+  catalog.upsertRepo(repo);
+  const clone: Clone = {
+    id: deriveCloneId(gitRoot),
+    repoId: repo.id,
+    path: gitRoot,
+    status: "active",
+    lastSeenAt: "",
+    registeredAt: "",
+  };
+  catalog.upsertClone(clone);
+  syncCloneWorktreesSync(catalog, clone);
 
-    catalog.upsertRepo(repo);
-    const clone: Clone = {
-      id: deriveCloneId(gitRoot),
-      repoId: repo.id,
-      path: gitRoot,
-      status: "active",
-      lastSeenAt: "",
-      registeredAt: "",
-    };
-    catalog.upsertClone(clone);
-    syncCloneWorktreesSync(catalog, clone);
-
-    return { repo, clone };
-  });
+  return { repo, clone };
 }
 
 function resolveRepoEnv(

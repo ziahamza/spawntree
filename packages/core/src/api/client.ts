@@ -317,11 +317,14 @@ export class ApiClient {
       schema?: A;
     },
   ): Promise<Schema.Schema.Type<A> | void> {
+    const headers: Record<string, string> = {};
+    if (options.body !== undefined) {
+      headers["Content-Type"] = "application/json";
+    }
+
     const response = await this.fetchFn(this.toUrl(path), {
       method: options.method ?? "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
 
