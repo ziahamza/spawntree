@@ -21,7 +21,8 @@ spawntree up --prefix agent-1        # env = <branch>-agent-1
 spawntree up --env API_KEY=secret    # override env var
 ```
 
-Services start in dependency order. Logs stream to stdout. Ctrl+C stops everything.
+Services start in dependency order. Logs stream to stdout. Ctrl+C stops
+everything.
 
 ### spawntree down
 

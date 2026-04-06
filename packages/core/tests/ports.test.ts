@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { PortAllocator } from "../src/env/ports.js";
-import { mkdirSync, rmSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PortAllocator } from "../src/env/ports.js";
 
 describe("PortAllocator", () => {
   let tempDir: string;

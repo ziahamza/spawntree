@@ -1,8 +1,4 @@
-import type {
-  InfraStatusResponse,
-  PostgresInstanceInfo,
-  RedisInstanceInfo,
-} from "spawntree-core";
+import type { InfraStatusResponse, PostgresInstanceInfo, RedisInstanceInfo } from "spawntree-core";
 import { PostgresRunner } from "../runners/postgres-runner.js";
 import { RedisRunner } from "../runners/redis-runner.js";
 import type { PortRegistry } from "./port-registry.js";
@@ -124,7 +120,7 @@ export class InfraManager {
       });
     }
 
-    let redisInfo: RedisInstanceInfo | null = null;
+    let redisInfo: RedisInstanceInfo | undefined;
     if (this.redisRunner) {
       redisInfo = {
         status: this.redisRunner.status(),

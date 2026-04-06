@@ -4,13 +4,19 @@
 
 ### Minor Changes
 
-- [#6](https://github.com/ziahamza/spawntree/pull/6) [`fd91fd0`](https://github.com/ziahamza/spawntree/commit/fd91fd0de3800f9ed481ee2f43079cbf33ae353d) Thanks [@ziahamza](https://github.com/ziahamza)! - Add web admin dashboard served by the daemon
+- [#6](https://github.com/ziahamza/spawntree/pull/6)
+  [`fd91fd0`](https://github.com/ziahamza/spawntree/commit/fd91fd0de3800f9ed481ee2f43079cbf33ae353d)
+  Thanks [@ziahamza](https://github.com/ziahamza)! - Add web admin dashboard
+  served by the daemon
 
-  - Web dashboard at `http://localhost:<port>` shows all repos, environments, and services
-  - SQLite database for persistent repo/clone/worktree tracking across daemon restarts
+  - Web dashboard at `http://localhost:<port>` shows all repos, environments,
+    and services
+  - SQLite database for persistent repo/clone/worktree tracking across daemon
+    restarts
   - Real-time SSE log streaming with service filtering
   - Start, stop, and restart environments from the browser
-  - Add local folders with automatic git remote detection (GitHub, GitLab, Bitbucket)
+  - Add local folders with automatic git remote detection (GitHub, GitLab,
+    Bitbucket)
   - Infrastructure status page for Postgres and Redis
   - Mobile-responsive layout with hamburger drawer sidebar
   - chi router migration from manual switch/case routing
@@ -26,8 +32,12 @@
 
 ### Minor Changes
 
-- [#1](https://github.com/ziahamza/spawntree/pull/1) [`523af9c`](https://github.com/ziahamza/spawntree/commit/523af9c067ff037dec35df5db6f8c713cd67adc7) Thanks [@ziahamza](https://github.com/ziahamza)! - Initial release of spawntree v0.1.0.
+- [#1](https://github.com/ziahamza/spawntree/pull/1)
+  [`523af9c`](https://github.com/ziahamza/spawntree/commit/523af9c067ff037dec35df5db6f8c713cd67adc7)
+  Thanks [@ziahamza](https://github.com/ziahamza)! - Initial release of
+  spawntree v0.1.0.
 
-  Orchestrate isolated development environments with native processes, per-branch isolation via git worktrees, and automatic port allocation.
+  Orchestrate isolated development environments with native processes,
+  per-branch isolation via git worktrees, and automatic port allocation.
 
   CLI commands: `up`, `down`, `status`, `logs`, `rm`, `init`.

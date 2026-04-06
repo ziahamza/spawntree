@@ -1,13 +1,5 @@
-import {
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  openSync,
-  closeSync,
-  unlinkSync,
-  existsSync,
-} from "node:fs";
-import { resolve, dirname } from "node:path";
+import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 interface PortSlot {
   envName: string;
@@ -68,8 +60,8 @@ export class PortAllocator {
 
       if (slotIndex === -1) {
         throw new Error(
-          `All ${MAX_SLOTS} port slots are in use. ` +
-            `Run "spawntree rm" to free unused environments.`,
+          `All ${MAX_SLOTS} port slots are in use. `
+            + `Run "spawntree rm" to free unused environments.`,
         );
       }
 

@@ -12,9 +12,8 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "declaration": true,
-    "declarationMap": true,
     "sourceMap": true,
-    "composite": true
+    "plugins": [{ "name": "@effect/language-service" }]
   },
   "include": ["src"],
   "exclude": ["node_modules", "dist", "tests"]

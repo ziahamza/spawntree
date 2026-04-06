@@ -1,13 +1,8 @@
-import {
-  createWriteStream,
-  createReadStream,
-  existsSync,
-  mkdirSync,
-} from "node:fs";
+import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { logDir } from "../state/global-state.js";
 import type { LogLine } from "spawntree-core";
+import { logDir } from "../state/global-state.js";
 
 const SSE_BUFFER_SIZE = 100;
 

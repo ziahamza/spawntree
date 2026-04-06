@@ -1,11 +1,4 @@
-import {
-  mkdirSync,
-  rmSync,
-  existsSync,
-  writeFileSync,
-  readFileSync,
-  readdirSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 interface EnvState {

@@ -1,7 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config/parser.js";
-import { substituteVars, findVarRefs } from "../src/config/substitution.js";
 import { validateConfig } from "../src/config/schema.js";
+import { findVarRefs, substituteVars } from "../src/config/substitution.js";
 
 describe("substituteVars", () => {
   it("replaces ${VAR} with value", () => {
@@ -126,7 +126,7 @@ describe("validateConfig", () => {
     });
     expect("errors" in result).toBe(true);
     if ("errors" in result) {
-      expect(result.errors[0].message).toContain('Unknown dependency "missing"');
+      expect(result.errors[0].message).toContain("Unknown dependency \"missing\"");
     }
   });
 

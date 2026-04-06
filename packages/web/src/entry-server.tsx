@@ -1,4 +1,3 @@
-import { createStartHandler, defaultStreamHandler } from '@tanstack/react-start/server'
-import { getRouter } from './router'
-
-export default createStartHandler({ createRouter: getRouter })(defaultStreamHandler)
+export default function handleServerEntry() {
+  return new Response("SSR is not configured for this build.", { status: 501 });
+}

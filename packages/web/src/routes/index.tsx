@@ -1,54 +1,54 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { useState } from 'react'
-import { Plus, Activity, Server } from 'lucide-react'
-import { useWebRepos, useEnvs, deriveEnvStatus } from '../lib/api'
-import { StatusDot } from '../components/StatusDot'
-import { AddFolderDialog } from '../components/AddFolderDialog'
-import type { Status } from '../components/StatusDot'
-import type { WebRepo, EnvListItem } from '../lib/api'
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { Activity, Plus, Server } from "lucide-react";
+import { useState } from "react";
+import { AddFolderDialog } from "../components/AddFolderDialog";
+import { StatusDot } from "../components/StatusDot";
+import type { Status } from "../components/StatusDot";
+import { deriveEnvStatus, useEnvs, useWebRepos } from "../lib/api";
+import type { EnvListItem, WebRepo } from "../lib/api";
 
-export const Route = createFileRoute('/')({
+export const Route = createFileRoute("/")({
   component: Dashboard,
-})
+});
 
 function formatRelative(dateStr: string): string {
-  const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return ''
-  const diff = Date.now() - d.getTime()
-  const mins = Math.floor(diff / 60_000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  return `${Math.floor(hrs / 24)}d ago`
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "";
+  const diff = Date.now() - d.getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 function envStatus(env: EnvListItem): Status {
-  return deriveEnvStatus(env)
+  return deriveEnvStatus(env);
 }
 
 function repoOverallStatus(repo: WebRepo): Status {
-  if (repo.overallStatus === 'running') return 'running'
-  if (repo.overallStatus === 'crashed') return 'crashed'
-  if (repo.overallStatus === 'offline') return 'offline'
-  return 'stopped'
+  if (repo.overallStatus === "running") return "running";
+  if (repo.overallStatus === "crashed") return "crashed";
+  if (repo.overallStatus === "offline") return "offline";
+  return "stopped";
 }
 
-function RightNowSection({ envs }: { envs: EnvListItem[] }) {
+function RightNowSection({ envs }: { envs: EnvListItem[]; }) {
   // Find most recently active/crashed env
   const candidates = [...envs].sort((a, b) => {
-    const statusA = deriveEnvStatus(a)
-    const statusB = deriveEnvStatus(b)
-    const priorityA = statusA === 'running' || statusA === 'starting' ? 0 : statusA === 'crashed' ? 1 : 2
-    const priorityB = statusB === 'running' || statusB === 'starting' ? 0 : statusB === 'crashed' ? 1 : 2
-    if (priorityA !== priorityB) return priorityA - priorityB
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  })
-  const env = candidates[0]
-  if (!env) return null
+    const statusA = deriveEnvStatus(a);
+    const statusB = deriveEnvStatus(b);
+    const priorityA = statusA === "running" || statusA === "starting" ? 0 : statusA === "crashed" ? 1 : 2;
+    const priorityB = statusB === "running" || statusB === "starting" ? 0 : statusB === "crashed" ? 1 : 2;
+    if (priorityA !== priorityB) return priorityA - priorityB;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+  const env = candidates[0];
+  if (!env) return null;
 
-  const status = deriveEnvStatus(env)
-  const serviceCount = env.services?.length ?? 0
+  const status = deriveEnvStatus(env);
+  const serviceCount = env.services?.length ?? 0;
 
   return (
     <div className="mb-8">
@@ -65,13 +65,14 @@ function RightNowSection({ envs }: { envs: EnvListItem[] }) {
         </div>
         <div className="flex items-center gap-2 text-xs text-muted mb-4">
           <Server className="w-3 h-3" />
-          <span>{serviceCount} service{serviceCount !== 1 ? 's' : ''}</span>
+          <span>{serviceCount} service{serviceCount !== 1 ? "s" : ""}</span>
           <span className="font-mono ml-2 text-muted/70 truncate">{env.repoPath}</span>
         </div>
         <div className="flex gap-2">
           <Link
             to="/repos/$slug/envs/$envId"
             params={{ slug: env.repoId, envId: env.envId }}
+            search={{ repoPath: env.repoPath }}
             className="px-3 py-1.5 text-xs rounded-md border border-border text-muted hover:text-foreground hover:border-foreground/30 transition-colors"
           >
             View
@@ -79,11 +80,11 @@ function RightNowSection({ envs }: { envs: EnvListItem[] }) {
         </div>
       </div>
     </div>
-  )
+  );
 }
 
-function RepoCard({ repo }: { repo: WebRepo }) {
-  const status = repoOverallStatus(repo)
+function RepoCard({ repo }: { repo: WebRepo; }) {
+  const status = repoOverallStatus(repo);
 
   return (
     <Link
@@ -96,23 +97,21 @@ function RepoCard({ repo }: { repo: WebRepo }) {
         <span className="font-semibold text-sm text-foreground truncate flex-1">{repo.name}</span>
       </div>
       <div className="flex items-center gap-4 text-xs text-muted">
-        <span>{repo.cloneCount} clone{repo.cloneCount !== 1 ? 's' : ''}</span>
-        {repo.activeEnvCount > 0 && (
-          <span className="text-green">{repo.activeEnvCount} active</span>
-        )}
+        <span>{repo.cloneCount} clone{repo.cloneCount !== 1 ? "s" : ""}</span>
+        {repo.activeEnvCount > 0 && <span className="text-green">{repo.activeEnvCount} active</span>}
         <span className="ml-auto">{formatRelative(repo.updatedAt)}</span>
       </div>
     </Link>
-  )
+  );
 }
 
 function Dashboard() {
-  const [addOpen, setAddOpen] = useState(false)
-  const { data: repos, isLoading: reposLoading } = useWebRepos()
-  const { data: envs, isLoading: envsLoading } = useEnvs()
+  const [addOpen, setAddOpen] = useState(false);
+  const { data: repos, isLoading: reposLoading } = useWebRepos();
+  const { data: envs, isLoading: envsLoading } = useEnvs();
 
-  const isLoading = reposLoading || envsLoading
-  const hasRepos = repos && repos.length > 0
+  const isLoading = reposLoading || envsLoading;
+  const hasRepos = repos && repos.length > 0;
 
   if (isLoading) {
     return (
@@ -123,7 +122,7 @@ function Dashboard() {
           ))}
         </div>
       </div>
-    )
+    );
   }
 
   if (!hasRepos) {
@@ -147,13 +146,13 @@ function Dashboard() {
         </button>
         <AddFolderDialog open={addOpen} onOpenChange={setAddOpen} />
       </div>
-    )
+    );
   }
 
   const activeEnvs = envs?.filter((e) => {
-    const s = deriveEnvStatus(e)
-    return s === 'running' || s === 'starting' || s === 'crashed'
-  }) ?? []
+    const s = deriveEnvStatus(e);
+    return s === "running" || s === "starting" || s === "crashed";
+  }) ?? [];
 
   return (
     <div className="p-6 max-w-4xl mx-auto w-full">
@@ -173,12 +172,10 @@ function Dashboard() {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {repos!.map((repo) => (
-          <RepoCard key={repo.slug} repo={repo} />
-        ))}
+        {repos!.map((repo) => <RepoCard key={repo.slug} repo={repo} />)}
       </div>
 
       <AddFolderDialog open={addOpen} onOpenChange={setAddOpen} />
     </div>
-  )
+  );
 }

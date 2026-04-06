@@ -1,57 +1,61 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { useState } from 'react'
-import { ChevronRight, ExternalLink, Link2, Square, RotateCcw, Trash2 } from 'lucide-react'
-import { useEnvDetail, useStopEnv, useDeleteEnv, useWebRepoDetail, deriveEnvStatus, type Service } from '../lib/api'
-import { StatusDot } from '../components/StatusDot'
-import { ServiceCard } from '../components/ServiceCard'
-import { LogViewer } from '../components/LogViewer'
-import type { Status } from '../components/StatusDot'
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { ChevronRight, ExternalLink, Link2, RotateCcw, Square, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { LogViewer } from "../components/LogViewer";
+import { ServiceCard } from "../components/ServiceCard";
+import { StatusDot } from "../components/StatusDot";
+import type { Status } from "../components/StatusDot";
+import { deriveEnvStatus, type Service, useDeleteEnv, useEnvDetail, useStopEnv, useWebRepoDetail } from "../lib/api";
 
-export const Route = createFileRoute('/repos/$slug/envs/$envId')({
+export const Route = createFileRoute("/repos/$slug/envs/$envId")({
   validateSearch: (search: Record<string, unknown>) => ({
-    repoPath: typeof search.repoPath === 'string' ? search.repoPath : undefined,
+    repoPath: typeof search.repoPath === "string" ? search.repoPath : undefined,
   }),
   component: EnvDetail,
-})
+});
 
 function envStatusToDisplay(status: ReturnType<typeof deriveEnvStatus>): Status {
-  return status
+  return status;
 }
 
 function previewURLFor(service: Service) {
-  if (service.type === 'postgres' || service.type === 'redis') return null
-  if (!service.url) return null
-  return /^https?:\/\//.test(service.url) ? service.url : null
+  if (service.type === "postgres" || service.type === "redis") return null;
+  if (!service.url) return null;
+  return /^https?:\/\//.test(service.url) ? service.url : null;
+}
+
+function serviceStatus(status: Service["status"]): Status {
+  return status === "failed" ? "crashed" : status;
 }
 
 function EnvDetail() {
-  const { slug, envId } = Route.useParams()
-  const { repoPath } = Route.useSearch()
-  const [activeService, setActiveService] = useState<string | null>(null)
+  const { slug, envId } = Route.useParams();
+  const { repoPath } = Route.useSearch();
+  const [activeService, setActiveService] = useState<string | null>(null);
 
-  const { data: env, isLoading, error } = useEnvDetail(slug, envId, repoPath)
-  const { data: repo } = useWebRepoDetail(slug)
-  const stopEnv = useStopEnv()
-  const deleteEnv = useDeleteEnv()
+  const { data: env, isLoading, error } = useEnvDetail(slug, envId, repoPath);
+  const { data: repo } = useWebRepoDetail(slug);
+  const stopEnv = useStopEnv();
+  const deleteEnv = useDeleteEnv();
 
   function handleStop() {
-    if (!env) return
-    stopEnv.mutate({ repoID: slug, envID: envId, repoPath })
+    if (!env) return;
+    stopEnv.mutate({ repoID: slug, envID: envId, repoPath });
   }
 
   function handleRestart() {
-    if (!env) return
+    if (!env) return;
     // Stop then navigate away (restart = stop + let daemon restart via config)
-    stopEnv.mutate({ repoID: slug, envID: envId, repoPath })
+    stopEnv.mutate({ repoID: slug, envID: envId, repoPath });
   }
 
   function handleDelete() {
-    if (!window.confirm(`Delete env "${env?.envId}"? This cannot be undone.`)) return
-    deleteEnv.mutate({ repoID: slug, envID: envId, repoPath })
+    if (!window.confirm(`Delete env "${env?.envId}"? This cannot be undone.`)) return;
+    deleteEnv.mutate({ repoID: slug, envID: envId, repoPath });
   }
 
   function handleServiceClick(name: string) {
-    setActiveService((prev) => (prev === name ? null : name))
+    setActiveService((prev) => (prev === name ? null : name));
   }
 
   if (isLoading) {
@@ -67,28 +71,28 @@ function EnvDetail() {
           ))}
         </div>
       </div>
-    )
+    );
   }
 
   if (error || !env) {
     return (
       <div className="p-6">
-        <p className="text-red text-sm">{error?.message ?? 'Environment not found'}</p>
+        <p className="text-red text-sm">{error?.message ?? "Environment not found"}</p>
       </div>
-    )
+    );
   }
 
-  const status = envStatusToDisplay(deriveEnvStatus(env))
-  const isRunning = status === 'running' || status === 'starting'
+  const status = envStatusToDisplay(deriveEnvStatus(env));
+  const isRunning = status === "running" || status === "starting";
   const previewServices = env.services
     .map((service) => ({ service, previewURL: previewURLFor(service) }))
-    .filter((item): item is { service: Service; previewURL: string } => !!item.previewURL)
+    .filter((item): item is { service: Service; previewURL: string; } => !!item.previewURL);
 
   async function handleCopy(url: string) {
     try {
-      await navigator.clipboard.writeText(url)
+      await navigator.clipboard.writeText(url);
     } catch {
-      window.prompt('Copy preview URL', url)
+      window.prompt("Copy preview URL", url);
     }
   }
 
@@ -130,7 +134,7 @@ function EnvDetail() {
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-border text-muted hover:text-foreground hover:border-foreground/30 transition-colors disabled:opacity-50 min-h-[36px]"
               >
                 <Square className="w-3 h-3" />
-                {stopEnv.isPending ? 'Stopping…' : 'Stop'}
+                {stopEnv.isPending ? "Stopping…" : "Stop"}
               </button>
               <button
                 onClick={handleRestart}
@@ -148,7 +152,7 @@ function EnvDetail() {
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-border text-muted hover:text-red hover:border-red/40 transition-colors disabled:opacity-50 min-h-[36px] ml-auto"
           >
             <Trash2 className="w-3 h-3" />
-            {deleteEnv.isPending ? 'Deleting…' : 'Delete'}
+            {deleteEnv.isPending ? "Deleting…" : "Delete"}
           </button>
         </div>
       </div>
@@ -163,7 +167,7 @@ function EnvDetail() {
             {previewServices.map(({ service, previewURL }) => (
               <div key={service.name} className="rounded-lg border border-border bg-surface p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <StatusDot status={service.status} />
+                  <StatusDot status={serviceStatus(service.status)} />
                   <span className="font-semibold text-sm text-foreground">{service.name}</span>
                   <span className="text-[11px] text-muted ml-auto">{service.type}</span>
                 </div>
@@ -182,7 +186,8 @@ function EnvDetail() {
                   </a>
                   <button
                     type="button"
-                    onClick={() => handleCopy(previewURL)}
+                    onClick={() =>
+                      handleCopy(previewURL)}
                     className="inline-flex items-center gap-1 text-blue hover:underline"
                   >
                     <Link2 className="w-3 h-3" />
@@ -205,9 +210,7 @@ function EnvDetail() {
             {env.services.map((svc) => (
               <div
                 key={svc.name}
-                className={`rounded-lg transition-all ${
-                  activeService === svc.name ? 'ring-2 ring-blue/50' : ''
-                }`}
+                className={`rounded-lg transition-all ${activeService === svc.name ? "ring-2 ring-blue/50" : ""}`}
               >
                 <ServiceCard service={svc} onServiceClick={handleServiceClick} />
               </div>
@@ -233,10 +236,10 @@ function EnvDetail() {
             </>
           )}
         </div>
-        <div className="h-full min-h-0 flex flex-col" style={{ height: 'calc(100% - 36px)' }}>
+        <div className="h-full min-h-0 flex flex-col" style={{ height: "calc(100% - 36px)" }}>
           <LogViewer repoID={slug} envID={envId} repoPath={repoPath} activeService={activeService} />
         </div>
       </div>
     </div>
-  )
+  );
 }

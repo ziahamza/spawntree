@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
-import { existsSync, rmSync, appendFileSync, readFileSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
 
 export class WorktreeManager {
   private readonly repoRoot: string;

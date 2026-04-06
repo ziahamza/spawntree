@@ -3,32 +3,33 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "generate:openapi": "go run ./cmd/openapi-gen",
-    "generate:types": "openapi-ts -f openapi-ts.config.ts",
-    "check:openapi": "pnpm run generate:openapi && git diff --exit-code -- openapi.yaml",
-    "check:types": "pnpm run generate:types && git diff --exit-code -- packages/core/src/generated",
-    "format:go": "gofmt -w cmd internal",
-    "check:go-fmt": "test -z \"$(gofmt -l cmd internal)\"",
-    "lint:go": "golangci-lint run --no-config --default=none --enable govet --enable ineffassign --enable staticcheck --enable unused --enable copyloopvar --enable nilerr --enable errorlint --build-tags noui ./...",
-    "build": "pnpm run generate:openapi && pnpm run generate:types && pnpm --filter spawntree-core run build && pnpm --filter spawntree-web run build && pnpm --filter spawntree-daemon run build && pnpm --filter spawntree run build",
+    "build": "pnpm --filter spawntree-core run build && pnpm --filter spawntree-daemon run build && pnpm --filter spawntree run build && pnpm --filter spawntree-web run build:only",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "oxlint . && pnpm run lint:go",
-    "format": "oxfmt --write .",
-    "typecheck": "tsc -p packages/core/tsconfig.json --noEmit && tsc -p packages/cli/tsconfig.json --noEmit",
+    "lint": "oxlint . && dprint check",
+    "format": "dprint fmt",
+    "effect:lsp:patch": "effect-language-service patch",
+    "typecheck": "pnpm --filter spawntree-core run build && pnpm --filter spawntree-daemon run build && tsc -p packages/cli/tsconfig.json --noEmit && tsc -p packages/web/tsconfig.json --noEmit",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
-    "@hey-api/openapi-ts": "^0.94.5",
+    "@effect/language-service": "^0.75.1",
     "@changesets/changelog-github": "^0.6.0",
     "@changesets/cli": "^2.30.0",
     "@types/node": "^25.5.0",
+    "dprint": "^0.51.1",
     "jsdom": "^29.0.1",
-    "oxlint": "^0.16.0",
+    "oxlint": "^1.42.0",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "dprint"
+    ]
   },
   "packageManager": "pnpm@10.27.0",
   "engines": {

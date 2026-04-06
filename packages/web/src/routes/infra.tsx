@@ -1,16 +1,12 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { Database, Server } from 'lucide-react'
-import { useInfra } from '../lib/api'
-import { StatusDot } from '../components/StatusDot'
-import type { Status } from '../components/StatusDot'
+import { createFileRoute } from "@tanstack/react-router";
+import { Database, Server } from "lucide-react";
+import { StatusDot } from "../components/StatusDot";
+import type { Status } from "../components/StatusDot";
+import { useInfra } from "../lib/api";
 
-export const Route = createFileRoute('/infra')({
+export const Route = createFileRoute("/infra")({
   component: InfraPage,
-})
-
-function toStatus(isRunning: boolean): Status {
-  return isRunning ? 'running' : 'stopped'
-}
+});
 
 function InfraCard({
   title,
@@ -18,10 +14,10 @@ function InfraCard({
   status,
   details,
 }: {
-  title: string
-  icon: React.ReactNode
-  status: Status
-  details: { label: string; value: string | number | undefined }[]
+  title: string;
+  icon: React.ReactNode;
+  status: Status;
+  details: { label: string; value: string | number | undefined; }[];
 }) {
   return (
     <div className="rounded-lg border border-border bg-surface p-5">
@@ -45,23 +41,21 @@ function InfraCard({
           ))}
       </dl>
     </div>
-  )
+  );
 }
 
 function InfraPage() {
-  const { data: infra, isLoading, error } = useInfra()
+  const { data: infra, isLoading, error } = useInfra();
 
   if (isLoading) {
     return (
       <div className="p-6 max-w-2xl mx-auto">
         <div className="h-6 w-40 bg-surface rounded animate-pulse mb-6" />
         <div className="grid gap-4 sm:grid-cols-2">
-          {[1, 2].map((i) => (
-            <div key={i} className="h-40 rounded-lg bg-surface border border-border animate-pulse" />
-          ))}
+          {[1, 2].map((i) => <div key={i} className="h-40 rounded-lg bg-surface border border-border animate-pulse" />)}
         </div>
       </div>
-    )
+    );
   }
 
   if (error) {
@@ -69,56 +63,60 @@ function InfraPage() {
       <div className="p-6 max-w-2xl mx-auto">
         <p className="text-red text-sm">{error.message}</p>
       </div>
-    )
+    );
   }
 
   // The API returns {postgres: [...instances], redis: {...} | null}
-  const pgInstances = Array.isArray(infra?.postgres) ? infra.postgres : []
-  const redis = infra?.redis
+  const pgInstances = Array.isArray(infra?.postgres) ? infra.postgres : [];
+  const redis = infra?.redis;
 
   return (
     <div className="p-6 max-w-2xl mx-auto w-full">
       <h1 className="font-display text-2xl font-semibold text-foreground mb-6">Infrastructure</h1>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        {pgInstances.length > 0 ? (
-          pgInstances.map((pg: any, i: number) => (
+        {pgInstances.length > 0
+          ? (
+            pgInstances.map((pg, i: number) => (
+              <InfraCard
+                key={i}
+                title={`PostgreSQL ${pg.version || ""}`}
+                icon={<Database className="w-5 h-5" />}
+                status={pg.status === "running" ? "running" : "stopped"}
+                details={[
+                  { label: "Version", value: pg.version },
+                  { label: "Port", value: pg.port },
+                  { label: "Container", value: pg.containerId?.slice(0, 12) },
+                  { label: "Databases", value: pg.databases.join(", ") },
+                ]}
+              />
+            ))
+          )
+          : (
             <InfraCard
-              key={i}
-              title={`PostgreSQL ${pg.version || ''}`}
+              title="PostgreSQL"
               icon={<Database className="w-5 h-5" />}
-              status={toStatus(pg.running)}
+              status="stopped"
               details={[
-                { label: 'Version', value: pg.version },
-                { label: 'Port', value: pg.port },
-                { label: 'Container', value: pg.containerID?.slice(0, 12) },
-                { label: 'Databases', value: pg.databases },
+                { label: "Status", value: "Not running" },
               ]}
             />
-          ))
-        ) : (
-          <InfraCard
-            title="PostgreSQL"
-            icon={<Database className="w-5 h-5" />}
-            status="stopped"
-            details={[
-              { label: 'Status', value: 'Not running' },
-            ]}
-          />
-        )}
+          )}
 
         <InfraCard
           title="Redis"
           icon={<Server className="w-5 h-5" />}
-          status={redis ? toStatus(redis.running) : 'stopped'}
-          details={redis ? [
-            { label: 'Port', value: redis.port },
-            { label: 'Container', value: redis.containerID?.slice(0, 12) },
-          ] : [
-            { label: 'Status', value: 'Not running' },
-          ]}
+          status={redis?.status === "running" ? "running" : "stopped"}
+          details={redis
+            ? [
+              { label: "Port", value: redis.port },
+              { label: "Container", value: redis.containerId?.slice(0, 12) },
+            ]
+            : [
+              { label: "Status", value: "Not running" },
+            ]}
         />
       </div>
     </div>
-  )
+  );
 }

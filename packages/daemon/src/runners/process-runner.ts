@@ -1,6 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import type { Service, ServiceStatus } from "spawntree-core";
-import type { ServiceConfig } from "spawntree-core";
+import { type ChildProcess, spawn } from "node:child_process";
+import type { Service, ServiceConfig, ServiceStatus } from "spawntree-core";
 import type { LogStreamer } from "../managers/log-streamer.js";
 
 export interface ProcessRunnerOptions {

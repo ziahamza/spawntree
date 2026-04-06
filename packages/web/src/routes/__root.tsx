@@ -1,11 +1,11 @@
-import { createRootRoute, Outlet } from '@tanstack/react-router'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useState } from 'react'
-import { Menu, X } from 'lucide-react'
-import { RepoTree } from '../components/RepoTree'
-import { AddFolderDialog } from '../components/AddFolderDialog'
-import { useDaemonInfo } from '../lib/api'
-import '../styles.css'
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
+import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { Menu, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AddFolderDialog } from "../components/AddFolderDialog";
+import { RepoTree } from "../components/RepoTree";
+import { createApiEventSource, useDaemonInfo } from "../lib/api";
+import "../styles.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -14,26 +14,50 @@ const queryClient = new QueryClient({
       staleTime: 2000,
     },
   },
-})
+});
 
 export const Route = createRootRoute({
   component: () => (
     <QueryClientProvider client={queryClient}>
+      <LiveUpdates />
       <RootComponent />
     </QueryClientProvider>
   ),
-})
+});
 
-function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
-  const [addOpen, setAddOpen] = useState(false)
-  const { data: daemon } = useDaemonInfo()
+function LiveUpdates() {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    const eventSource = createApiEventSource();
+
+    eventSource.onmessage = () => {
+      void queryClient.invalidateQueries({ queryKey: ["daemon"] });
+      void queryClient.invalidateQueries({ queryKey: ["envs"] });
+      void queryClient.invalidateQueries({ queryKey: ["infra"] });
+      void queryClient.invalidateQueries({ queryKey: ["web", "repos"] });
+    };
+
+    eventSource.onerror = () => {
+      eventSource.close();
+    };
+
+    return () => eventSource.close();
+  }, [queryClient]);
+
+  return null;
+}
+
+function SidebarContent({ onNavigate }: { onNavigate?: () => void; }) {
+  const [addOpen, setAddOpen] = useState(false);
+  const { data: daemon } = useDaemonInfo();
 
   return (
     <>
       <div className="p-4 border-b border-border flex items-center justify-between flex-shrink-0">
         <div>
           <h1 className="text-sm font-semibold font-display text-foreground">spawntree</h1>
-          <span className="text-xs text-muted">{daemon?.version ?? '…'}</span>
+          <span className="text-xs text-muted">{daemon?.version ?? "…"}</span>
         </div>
         <button
           onClick={() => setAddOpen(true)}
@@ -48,11 +72,11 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
       <AddFolderDialog open={addOpen} onOpenChange={setAddOpen} />
     </>
-  )
+  );
 }
 
 function RootComponent() {
-  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   return (
     <div className="flex h-screen bg-background text-foreground font-sans overflow-hidden">
@@ -72,7 +96,7 @@ function RootComponent() {
       {/* Mobile drawer panel */}
       <aside
         className={`lg:hidden fixed inset-y-0 left-0 z-50 w-72 bg-surface border-r border-border flex flex-col transition-transform duration-200 ${
-          drawerOpen ? 'translate-x-0' : '-translate-x-full'
+          drawerOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         <div className="flex items-center justify-end p-2 border-b border-border">
@@ -106,5 +130,5 @@ function RootComponent() {
         </div>
       </main>
     </div>
-  )
+  );
 }

@@ -1,4 +1,4 @@
-import { createServer, request, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, request, type ServerResponse } from "node:http";
 
 export class ProxyServer {
   private routes = new Map<string, number>();
@@ -15,7 +15,7 @@ export class ProxyServer {
     this.server = createServer((req, res) => this.handleRequest(req, res));
 
     // WebSocket upgrade
-    this.server.on("upgrade", (req, socket, head) => {
+    this.server.on("upgrade", (req, socket, _head) => {
       const host = (req.headers.host || "").split(":")[0];
       const targetPort = this.routes.get(host);
       if (!targetPort) {
@@ -86,7 +86,11 @@ export class ProxyServer {
 
     if (!targetPort) {
       res.writeHead(404, { "Content-Type": "text/plain" });
-      res.end(`No route for host: ${host}\nActive routes:\n${[...this.routes.entries()].map(([h, p]) => `  ${h} → ${p}`).join("\n")}`);
+      res.end(
+        `No route for host: ${host}\nActive routes:\n${
+          [...this.routes.entries()].map(([h, p]) => `  ${h} → ${p}`).join("\n")
+        }`,
+      );
       return;
     }
 
