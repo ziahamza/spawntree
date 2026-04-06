@@ -227,7 +227,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       });
 
       const domainEvents = Effect.fn("DaemonService.events")(function*(since?: number) {
-        return yield* Effect.succeed(sseStream(events.subscribe(since ?? 0)));
+        return yield* Effect.succeed(sseStream((signal) => events.subscribe(since ?? 0, signal)));
       });
 
       const registerRepo = Effect.fn("DaemonService.registerRepo")(function*(request: RegisterRepoRequest) {
@@ -723,19 +723,38 @@ function safeRemove(path: string) {
   }
 }
 
-function sseStream(events: AsyncIterable<DomainEvent>) {
+function sseStream(events: (signal: AbortSignal) => AsyncIterable<DomainEvent>) {
+  const abortController = new AbortController();
+
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
+      const iterator = events(abortController.signal)[Symbol.asyncIterator]();
+
       try {
-        for await (const event of events) {
+        while (!abortController.signal.aborted) {
+          const result = await iterator.next();
+          if (result.done) {
+            break;
+          }
+          const event = result.value;
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
         }
       } catch (error) {
-        controller.error(error);
-        return;
+        if (!abortController.signal.aborted) {
+          controller.error(error);
+          return;
+        }
+      } finally {
+        await iterator.return?.();
       }
-      controller.close();
+
+      if (!abortController.signal.aborted) {
+        controller.close();
+      }
+    },
+    cancel() {
+      abortController.abort();
     },
   });
 }

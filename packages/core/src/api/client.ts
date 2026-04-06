@@ -339,12 +339,13 @@ export class ApiClient {
 
   private async toClientError(response: Response) {
     const fallback = new ApiClientError(response.status, response.statusText || "Request failed");
+    const text = await response.text().catch(() => "");
+
     try {
-      const json = await response.json();
+      const json = text ? JSON.parse(text) : {};
       const decoded = await decodeSchema(ApiError, json);
       return new ApiClientError(response.status, decoded.error, decoded.code, decoded.details);
     } catch {
-      const text = await response.text().catch(() => "");
       return new ApiClientError(response.status, text || fallback.message);
     }
   }

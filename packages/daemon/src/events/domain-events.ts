@@ -26,7 +26,7 @@ export class DomainEvents {
     return nextEvent;
   }
 
-  async *subscribe(since = 0): AsyncIterable<DomainEvent> {
+  async *subscribe(since = 0, signal?: AbortSignal): AsyncIterable<DomainEvent> {
     for (const event of this.history) {
       if (event.seq > since) {
         yield event;
@@ -34,11 +34,11 @@ export class DomainEvents {
     }
 
     const queue: Array<DomainEvent> = [];
-    let notify: (() => void) | undefined;
+    let wakeSubscriber: (() => void) | undefined;
 
     const subscriber = (event: DomainEvent) => {
       queue.push(event);
-      notify?.();
+      wakeSubscriber?.();
     };
 
     this.subscribers.add(subscriber);
@@ -52,12 +52,23 @@ export class DomainEvents {
           }
         }
 
+        if (signal?.aborted) {
+          break;
+        }
+
         await new Promise<void>((resolve) => {
-          notify = resolve;
+          const complete = () => {
+            signal?.removeEventListener("abort", complete);
+            wakeSubscriber = undefined;
+            resolve();
+          };
+
+          wakeSubscriber = complete;
+          signal?.addEventListener("abort", complete, { once: true });
         });
-        notify = undefined;
       }
     } finally {
+      wakeSubscriber = undefined;
       this.subscribers.delete(subscriber);
     }
   }
