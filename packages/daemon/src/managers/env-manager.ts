@@ -341,10 +341,21 @@ export class EnvManager {
 
         // Register with reverse proxy for clean URLs
         try {
-          await this.proxyManager.ensureRunning();
-          const cleanUrl = this.proxyManager.register(repoId, envId, name, port);
-          console.log(`[spawntree-daemon]   ${name} started → ${cleanUrl}`);
-          this.logStreamer.addLine(repoId, envId, name, "system", `[spawntree] ${name} started → ${cleanUrl}`);
+          const proxyReady = await this.proxyManager.ensureRunning();
+          if (proxyReady) {
+            const cleanUrl = this.proxyManager.register(repoId, envId, name, port);
+            console.log(`[spawntree-daemon]   ${name} started → ${cleanUrl}`);
+            this.logStreamer.addLine(repoId, envId, name, "system", `[spawntree] ${name} started → ${cleanUrl}`);
+          } else {
+            console.log(`[spawntree-daemon]   ${name} started → http://127.0.0.1:${port} (proxy unavailable)`);
+            this.logStreamer.addLine(
+              repoId,
+              envId,
+              name,
+              "system",
+              `[spawntree] ${name} started → http://127.0.0.1:${port} (proxy unavailable)`,
+            );
+          }
         } catch {
           console.log(`[spawntree-daemon]   ${name} started (port ${port}, proxy unavailable)`);
           this.logStreamer.addLine(

@@ -18,16 +18,18 @@ export class ProxyManager {
     return this.started;
   }
 
-  async ensureRunning(): Promise<void> {
-    if (this.started) return;
+  async ensureRunning(): Promise<boolean> {
+    if (this.started) return true;
 
     try {
       await this.proxy.start();
       this.started = true;
+      return true;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") {
         console.log(`[spawntree-proxy] Port ${this.proxy.port} in use (portless or another instance running)`);
-        this.started = true; // port is handled by something else, proceed
+        this.started = false;
+        return false;
       } else {
         throw err;
       }

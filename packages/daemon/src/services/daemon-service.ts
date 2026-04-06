@@ -83,7 +83,6 @@ import { ProxyManager } from "../managers/proxy-manager.ts";
 import { spawntreeHome } from "../state/global-state.ts";
 
 const VERSION = "0.4.0";
-const WATCHED_PATH_SCAN_INTERVAL_MS = 30_000;
 type DaemonError = BadRequestError | ConflictError | InternalError | NotFoundError;
 
 interface PreviewSession {
@@ -875,33 +874,6 @@ function syncWatchedPath(catalog: CatalogDatabase, watchedPath: WatchedPath) {
     }
     catalog.updateWatchedPathScan(watchedPath.path, new Date().toISOString(), "");
     return imported;
-  });
-}
-
-function syncWatchedPaths(catalog: CatalogDatabase, envManager: EnvManager) {
-  return Effect.sync(() => {
-    const now = Date.now();
-    for (const watchedPath of catalog.listWatchedPaths()) {
-      const lastScan = watchedPath.lastScannedAt ? Date.parse(watchedPath.lastScannedAt) : 0;
-      if (Number.isFinite(lastScan) && now - lastScan < WATCHED_PATH_SCAN_INTERVAL_MS) {
-        continue;
-      }
-      try {
-        const probe = probePath(watchedPath.path);
-        if (probe.exists && probe.isGitRepo) {
-          importGitRepoPathSync(catalog, probe.path, undefined, false);
-        }
-        if (probe.exists && !probe.isGitRepo && watchedPath.scanChildren) {
-          for (const repoPath of findImmediateGitRepos(watchedPath.path)) {
-            importGitRepoPathSync(catalog, repoPath, undefined, false);
-          }
-        }
-        catalog.updateWatchedPathScan(watchedPath.path, new Date().toISOString(), "");
-      } catch (error) {
-        catalog.updateWatchedPathScan(watchedPath.path, new Date().toISOString(), toMessage(error));
-      }
-    }
-    return envManager.listEnvs();
   });
 }
 
