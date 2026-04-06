@@ -196,7 +196,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           catch: mapCreateEnvError,
         });
         log("env ready", { repoId: env.repoId, envId: env.envId, repoPath: env.repoPath });
-        publish({ type: "env.updated", repoId: env.repoId, envId: env.envId });
+        publish({ type: "env.updated", repoId: env.repoId, envId: env.envId, repoSlug: repoSlugForRepoId(catalog, env.repoId) });
         return { env };
       });
 
@@ -212,7 +212,12 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           try: () => envManager.downEnv(resolved.repoId, resolved.env.envId),
           catch: (error) => mapInternalError("DOWN_ENV_FAILED", error),
         });
-        publish({ type: "env.updated", repoId: resolved.repoId, envId: resolved.env.envId });
+        publish({
+          type: "env.updated",
+          repoId: resolved.repoId,
+          envId: resolved.env.envId,
+          repoSlug: repoSlugForRepoId(catalog, resolved.repoId),
+        });
       });
 
       const deleteEnv = Effect.fn("DaemonService.deleteEnv")(
@@ -223,7 +228,12 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
             try: () => envManager.deleteEnv(resolved.repoId, resolved.env.envId),
             catch: (error) => mapInternalError("DELETE_ENV_FAILED", error),
           });
-          publish({ type: "env.deleted", repoId: resolved.repoId, envId: resolved.env.envId });
+          publish({
+            type: "env.deleted",
+            repoId: resolved.repoId,
+            envId: resolved.env.envId,
+            repoSlug: repoSlugForRepoId(catalog, resolved.repoId),
+          });
         },
       );
 
@@ -553,13 +563,25 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       const suggestConfigEffect = Effect.fn("DaemonService.suggestConfig")(function*(request: ConfigSuggestRequest) {
         const repoPath = yield* normalizeRepoPath(request.repoPath);
         log("suggest config", { repoPath });
-        return buildConfigSuggestions(repoPath);
+        return yield* Effect.try({
+          try: () => buildConfigSuggestions(repoPath),
+          catch: (error) =>
+            error instanceof BadRequestError
+              ? error
+              : new InternalError({ code: "CONFIG_SUGGEST_FAILED", message: toMessage(error) }),
+        });
       });
 
       const testConfig = Effect.fn("DaemonService.testConfig")(function*(request: ConfigTestRequest) {
         const repoPath = yield* normalizeRepoPath(request.repoPath);
         log("test config", { repoPath });
-        return runConfigTest(repoPath, request.content);
+        return yield* Effect.try({
+          try: () => runConfigTest(repoPath, request.content),
+          catch: (error) =>
+            error instanceof BadRequestError
+              ? error
+              : new InternalError({ code: "CONFIG_TEST_FAILED", message: toMessage(error) }),
+        });
       });
 
       const startConfigPreview = Effect.fn("DaemonService.startConfigPreview")(
@@ -763,6 +785,10 @@ function enrichRepo(repo: Repo, catalog: CatalogDatabase, envManager: EnvManager
     overallStatus,
     updatedAt: repo.updatedAt,
   };
+}
+
+function repoSlugForRepoId(catalog: CatalogDatabase, repoId: string) {
+  return catalog.getRepo(repoId)?.slug;
 }
 
 function mapCreateEnvError(error: unknown) {
