@@ -180,31 +180,34 @@ export class CatalogDatabase {
     const registeredAt = repo.registeredAt || nowIso();
     const updatedAt = nowIso();
 
-    this.db.prepare("DELETE FROM repos WHERE slug = ? AND id != ?").run(repo.slug, repo.id);
-    this.db.prepare(`
-      INSERT INTO repos (id, slug, name, provider, owner, remote_url, default_branch, description, registered_at, updated_at)
-      VALUES (@id, @slug, @name, @provider, @owner, @remote_url, @default_branch, @description, @registered_at, @updated_at)
-      ON CONFLICT(id) DO UPDATE SET
-        slug = excluded.slug,
-        name = excluded.name,
-        provider = excluded.provider,
-        owner = excluded.owner,
-        remote_url = excluded.remote_url,
-        default_branch = excluded.default_branch,
-        description = excluded.description,
-        updated_at = excluded.updated_at
-    `).run({
-      id: repo.id,
-      slug: repo.slug,
-      name: repo.name,
-      provider: repo.provider,
-      owner: repo.owner,
-      remote_url: repo.remoteUrl ?? "",
-      default_branch: repo.defaultBranch ?? "",
-      description: repo.description ?? "",
-      registered_at: registeredAt,
-      updated_at: updatedAt,
+    const transaction = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM repos WHERE slug = ? AND id != ?").run(repo.slug, repo.id);
+      this.db.prepare(`
+        INSERT INTO repos (id, slug, name, provider, owner, remote_url, default_branch, description, registered_at, updated_at)
+        VALUES (@id, @slug, @name, @provider, @owner, @remote_url, @default_branch, @description, @registered_at, @updated_at)
+        ON CONFLICT(id) DO UPDATE SET
+          slug = excluded.slug,
+          name = excluded.name,
+          provider = excluded.provider,
+          owner = excluded.owner,
+          remote_url = excluded.remote_url,
+          default_branch = excluded.default_branch,
+          description = excluded.description,
+          updated_at = excluded.updated_at
+      `).run({
+        id: repo.id,
+        slug: repo.slug,
+        name: repo.name,
+        provider: repo.provider,
+        owner: repo.owner,
+        remote_url: repo.remoteUrl ?? "",
+        default_branch: repo.defaultBranch ?? "",
+        description: repo.description ?? "",
+        registered_at: registeredAt,
+        updated_at: updatedAt,
+      });
     });
+    transaction();
   }
 
   listRepos() {

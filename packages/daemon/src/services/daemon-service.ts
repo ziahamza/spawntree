@@ -60,8 +60,10 @@ import {
   deriveCloneId,
   detectRemotes,
   detectRepoInfo,
+  defaultBranchName,
   discoverWorktrees,
   findImmediateGitRepos,
+  findWorktreeForBranch,
   inspectGitPath,
   normalizeInputPath,
   parseRemoteUrl,
@@ -568,14 +570,16 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
             log("start preview", { repoPath, previewId, serviceName: request.serviceName ?? "all" });
 
             const env = yield* Effect.tryPromise({
-            try: () =>
-              envManager.createEnv({
-                repoPath,
-                envId: previewId,
-                configFile: configPath,
-              }),
-            catch: mapCreateEnvError,
-          });
+              try: () =>
+                envManager.createEnv({
+                  repoPath,
+                  envId: previewId,
+                  configFile: configPath,
+                }),
+              catch: mapCreateEnvError,
+            }).pipe(
+              Effect.tapError(() => Effect.sync(() => safeRemove(configPath))),
+            );
 
             previewSessions.set(previewId, {
               previewId,
@@ -622,7 +626,13 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
             "configs",
             `${createHash("sha256").update(gitRoot).digest("hex").slice(0, 12)}.yaml`,
           )
-          : resolve(gitRoot, "spawntree.yaml");
+          : resolve(
+            yield* Effect.try({
+              try: () => findWorktreeForBranch(gitRoot, defaultBranchName(repoPath)),
+              catch: (error) => new ConflictError({ code: "DEFAULT_BRANCH_WORKTREE_NOT_FOUND", message: toMessage(error) }),
+            }),
+            "spawntree.yaml",
+          );
         mkdirSync(resolve(configPath, ".."), { recursive: true });
         writeFileSync(configPath, request.content, "utf8");
         catalog.registerRepo({
@@ -729,12 +739,14 @@ function enrichRepo(repo: Repo, catalog: CatalogDatabase, envManager: EnvManager
       overallStatus = "running";
       continue;
     }
-    if (env.services.some((service: ServiceInfo) => service.status === "starting") && overallStatus !== "running") {
-      overallStatus = "starting";
-    } else if (
-      env.services.some((service: ServiceInfo) => service.status === "failed") && overallStatus !== "running"
-    ) {
+    if (env.services.some((service: ServiceInfo) => service.status === "failed") && overallStatus !== "running") {
       overallStatus = "crashed";
+    } else if (
+      env.services.some((service: ServiceInfo) => service.status === "starting")
+      && overallStatus !== "running"
+      && overallStatus !== "crashed"
+    ) {
+      overallStatus = "starting";
     } else if (overallStatus === "offline") {
       overallStatus = "stopped";
     }

@@ -259,6 +259,32 @@ export function listGitWorktrees(dir: string): Array<GitWorktreeInfo> {
   return worktrees;
 }
 
+export function defaultBranchName(dir: string) {
+  try {
+    const output = gitOutput(dir, ["symbolic-ref", "refs/remotes/origin/HEAD"]);
+    return output.replace(/^refs\/remotes\/origin\//, "");
+  } catch {
+    for (const branch of ["main", "master"]) {
+      try {
+        gitOutput(dir, ["rev-parse", "--verify", `origin/${branch}`]);
+        return branch;
+      } catch {
+        // keep looking
+      }
+    }
+    return currentBranch(dir) || "main";
+  }
+}
+
+export function findWorktreeForBranch(dir: string, branch: string) {
+  const worktrees = listGitWorktrees(dir);
+  const match = worktrees.find((worktree) => worktree.branch === branch);
+  if (!match) {
+    throw new Error(`no checked-out worktree found for default branch "${branch}"`);
+  }
+  return match.path;
+}
+
 export function discoverWorktrees(clonePath: string, cloneId: Clone["id"]): Array<Worktree> {
   const discoveredAt = new Date().toISOString();
   return listGitWorktrees(clonePath).map((worktree) => ({

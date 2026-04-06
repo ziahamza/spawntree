@@ -71,7 +71,6 @@ function LiveUpdates() {
 
     eventSource.onerror = () => {
       debugLog("events", "error");
-      eventSource.close();
     };
 
     return () => {
