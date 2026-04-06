@@ -4,6 +4,7 @@ import { Menu, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AddFolderDialog } from "../components/AddFolderDialog";
 import { RepoTree } from "../components/RepoTree";
+import { debugLog } from "../lib/debug";
 import { createApiEventSource, useDaemonInfo } from "../lib/api";
 import "../styles.css";
 
@@ -30,8 +31,10 @@ function LiveUpdates() {
 
   useEffect(() => {
     const eventSource = createApiEventSource();
+    debugLog("events", "connect");
 
     eventSource.onmessage = () => {
+      debugLog("events", "invalidate queries");
       void queryClient.invalidateQueries({ queryKey: ["daemon"] });
       void queryClient.invalidateQueries({ queryKey: ["envs"] });
       void queryClient.invalidateQueries({ queryKey: ["infra"] });
@@ -39,10 +42,14 @@ function LiveUpdates() {
     };
 
     eventSource.onerror = () => {
+      debugLog("events", "error");
       eventSource.close();
     };
 
-    return () => eventSource.close();
+    return () => {
+      debugLog("events", "close");
+      eventSource.close();
+    };
   }, [queryClient]);
 
   return null;

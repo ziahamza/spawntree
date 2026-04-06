@@ -19,9 +19,10 @@
     "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
-    "@effect/language-service": "^0.75.1",
     "@changesets/changelog-github": "^0.6.0",
     "@changesets/cli": "^2.30.0",
+    "@effect/language-service": "^0.75.1",
+    "@playwright/test": "^1.59.1",
     "@types/node": "^25.5.0",
     "dprint": "^0.51.1",
     "jsdom": "^29.0.1",

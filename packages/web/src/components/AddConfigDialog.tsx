@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { CheckCircle2, ExternalLink, Link2, Loader2, Play, Settings2, Square, Wand2, X, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { debugLog } from "../lib/debug";
 import {
   type ConfigServiceSuggestion,
   type ConfigSignal,
@@ -125,6 +126,7 @@ function LivePreviewLogs({
     if (repoPath) params.set("repoPath", repoPath);
 
     const es = new EventSource(`/api/v1/repos/${repoID}/envs/${envID}/logs?${params.toString()}`);
+    debugLog("preview-logs", "connect", { repoID, envID, repoPath, service });
     es.onmessage = (event) => {
       try {
         const parsed = JSON.parse(event.data);
@@ -135,10 +137,14 @@ function LivePreviewLogs({
       }
     };
     es.onerror = () => {
+      debugLog("preview-logs", "error", { repoID, envID, service });
       es.close();
     };
 
-    return () => es.close();
+    return () => {
+      debugLog("preview-logs", "close", { repoID, envID, service });
+      es.close();
+    };
   }, [repoID, envID, repoPath, service]);
 
   return (
@@ -199,10 +205,16 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     if (!repoPath) return;
 
     let cancelled = false;
+    debugLog("config", "open dialog", { repoPath });
     suggestConfig
       .mutateAsync({ repoPath })
       .then((result) => {
         if (cancelled) return;
+        debugLog("config", "suggestions loaded", {
+          repoPath,
+          serviceCount: result.services.length,
+          signalCount: result.signals.length,
+        });
         const nextServices = normalizeServices([...result.services]);
         setSignals([...(result.signals ?? [])]);
         setServices(nextServices);
@@ -212,6 +224,7 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
       })
       .catch(() => {
         if (cancelled) return;
+        debugLog("config", "suggestions failed, using starter services", { repoPath });
         setSignals([]);
         setServices(starterServices());
         setSuggestionsReady(true);
@@ -269,6 +282,7 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
 
   async function stopActivePreview() {
     if (!preview?.previewId) return;
+    debugLog("config", "stop active preview", { previewId: preview.previewId });
     await stopPreview.mutateAsync({ previewId: preview.previewId }).catch(() => {});
     setPreview(null);
   }
@@ -282,32 +296,50 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
 
   async function handleTest() {
     if (!repoPath) return;
-    const result = await testConfig.mutateAsync({ repoPath, content: currentContent });
-    if (result.ok) setLastVerifiedContent(currentContent);
+    debugLog("config", "test config start", { repoPath });
+    try {
+      const result = await testConfig.mutateAsync({ repoPath, content: currentContent });
+      debugLog("config", "test config result", result);
+      if (result.ok) setLastVerifiedContent(currentContent);
+    } catch (error) {
+      debugLog("config", "test config failed", error);
+    }
   }
 
   async function handlePreview(serviceName?: string) {
     if (!repoPath) return;
     await stopActivePreview();
-    const result = await startPreview.mutateAsync({ repoPath, content: currentContent, serviceName });
-    setPreview({
-      previewId: result.previewId,
-      repoID: result.env.repoId,
-      envID: result.env.envId,
-      repoPath: result.env.repoPath,
-      serviceName,
-      env: result.env,
-    });
+    debugLog("config", "preview start", { repoPath, serviceName: serviceName ?? "all" });
+    try {
+      const result = await startPreview.mutateAsync({ repoPath, content: currentContent, serviceName });
+      debugLog("config", "preview started", result);
+      setPreview({
+        previewId: result.previewId,
+        repoID: result.env.repoId,
+        envID: result.env.envId,
+        repoPath: result.env.repoPath,
+        serviceName,
+        env: result.env,
+      });
+    } catch (error) {
+      debugLog("config", "preview failed", error);
+    }
   }
 
   async function handleSave() {
     if (!repoPath || !canSave) return;
-    await saveConfig.mutateAsync({
-      repoPath,
-      content: currentContent,
-      saveMode: saveInRepo ? "repo" : "global",
-    });
-    onOpenChange(false);
+    debugLog("config", "save config start", { repoPath, saveMode: saveInRepo ? "repo" : "global" });
+    try {
+      await saveConfig.mutateAsync({
+        repoPath,
+        content: currentContent,
+        saveMode: saveInRepo ? "repo" : "global",
+      });
+      debugLog("config", "save config success", { repoPath });
+      onOpenChange(false);
+    } catch (error) {
+      debugLog("config", "save config failed", error);
+    }
   }
 
   return (

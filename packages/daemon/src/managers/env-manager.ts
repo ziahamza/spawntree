@@ -114,17 +114,19 @@ export class EnvManager {
 
   async createEnv(req: CreateEnvRequest): Promise<EnvInfo> {
     const { repoPath, envOverrides = {}, configFile } = req;
+    const requestedRepoPath = resolve(repoPath);
 
     // Resolve config file path (absolute or relative to repoPath)
     const configPath = configFile && configFile.startsWith("/")
       ? configFile
-      : resolve(repoPath, configFile || "spawntree.yaml");
+      : resolve(requestedRepoPath, configFile || "spawntree.yaml");
     const configDir = resolve(configPath, "..");
 
     // Validate git repo
-    const gitRoot = WorktreeManager.validateGitRepo(configDir);
+    const gitRoot = WorktreeManager.validateGitRepo(requestedRepoPath);
     const branch = WorktreeManager.currentBranch(gitRoot);
     const repoId = repoIdFromPath(gitRoot);
+    const baseServiceDir = configDir.startsWith(gitRoot) ? configDir : requestedRepoPath;
 
     // Derive envId from branch name (sanitize slashes)
     const safeBranch = branch.replace(/\//g, "-");
@@ -145,7 +147,7 @@ export class EnvManager {
 
     const envVars = loadEnv({
       envName: envId,
-      configDir,
+      configDir: baseServiceDir,
       cliOverrides: envOverrides,
     });
 
@@ -178,13 +180,13 @@ export class EnvManager {
     if (isDefaultBranchEnv) {
       // Run from the actual project directory (has node_modules, deps installed)
       worktreePath = gitRoot;
-      serviceCwd = configDir;
+      serviceCwd = baseServiceDir;
     } else {
       const worktreeManager = new WorktreeManager(gitRoot);
       worktreeManager.ensureGitignore();
       worktreePath = worktreeManager.create(envId);
-      const relativeConfigDir = configDir.startsWith(gitRoot)
-        ? configDir.slice(gitRoot.length + 1)
+      const relativeConfigDir = baseServiceDir.startsWith(gitRoot)
+        ? baseServiceDir.slice(gitRoot.length + 1)
         : "";
       serviceCwd = relativeConfigDir
         ? resolve(worktreePath, relativeConfigDir)

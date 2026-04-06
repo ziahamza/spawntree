@@ -27,6 +27,15 @@ const webIndexPath = resolve(webDistDir, "index.html");
 export function createApp(runtime: ManagedRuntime.ManagedRuntime<DaemonService, never>) {
   const app = new Hono();
 
+  app.use(async (context, next) => {
+    const startedAt = Date.now();
+    process.stderr.write(`[spawntree-daemon] -> ${context.req.method} ${context.req.path}\n`);
+    await next();
+    process.stderr.write(
+      `[spawntree-daemon] <- ${context.req.method} ${context.req.path} ${context.res.status} ${Date.now() - startedAt}ms\n`,
+    );
+  });
+
   app.get("/health", (context) => context.text("ok"));
 
   app.get("/api/v1/daemon", (context) => runJson(runtime, context, DaemonService.use((service) => service.daemonInfo)));
