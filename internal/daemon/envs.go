@@ -75,6 +75,11 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 	if err == nil {
 		return m.toEnvInfo(existing), nil
 	}
+	select {
+	case <-ctx.Done():
+		return EnvInfo{}, ctx.Err()
+	default:
+	}
 
 	configPath, err := m.resolveConfigPath(gitRoot, repoPath, req.ConfigFile)
 	if err != nil {
@@ -103,6 +108,12 @@ func (m *EnvManager) CreateEnv(ctx context.Context, req CreateEnvRequest) (EnvIn
 	basePort, err := m.portRegistry.Allocate(envKey)
 	if err != nil {
 		return EnvInfo{}, err
+	}
+	select {
+	case <-ctx.Done():
+		_ = m.portRegistry.Free(envKey)
+		return EnvInfo{}, ctx.Err()
+	default:
 	}
 
 	serviceCwd := repoPath

@@ -61,6 +61,7 @@ type ConfigPreviewSession struct {
 	ConfigPath  string
 	ServiceName string
 	Env         EnvInfo
+	Cancel      context.CancelFunc
 }
 
 type ConfigTestServiceResult struct {
@@ -389,10 +390,12 @@ func (a *App) stopPreviewSession(id string) error {
 	if !ok {
 		return nil
 	}
+	if session.Cancel != nil {
+		session.Cancel()
+	}
 	_ = a.envManager.DeleteEnv(context.Background(), session.RepoID, session.EnvID)
 	_ = a.envManager.portRegistry.Free(NewEnvKey(RepoID(session.RepoID), EnvID(session.EnvID)))
 	a.logStreamer.CloseEnv(RepoID(session.RepoID), EnvID(session.EnvID))
-	_ = os.Remove(session.ConfigPath)
 	return nil
 }
 
@@ -444,13 +447,18 @@ func (a *App) startPreviewSession(repoPath, content, serviceName string) (Config
 		ServiceName: serviceName,
 		Env:         env,
 	}
+	previewCtx, cancel := context.WithCancel(context.Background())
+	session.Cancel = cancel
 	a.previewMu.Lock()
 	a.previewSessions[session.ID] = session
 	a.previewMu.Unlock()
 
-	go func(previewEnv EnvInfo, configPath string) {
+	go func(previewEnv EnvInfo, configPath string, ctx context.Context) {
+		defer func() {
+			_ = os.Remove(configPath)
+		}()
 		realEnv, err := a.envManager.CreateEnv(
-			context.Background(),
+			ctx,
 			CreateEnvRequest{
 				RepoPath:           previewEnv.RepoPath,
 				EnvID:              previewEnv.EnvID,
@@ -465,12 +473,16 @@ func (a *App) startPreviewSession(repoPath, content, serviceName string) (Config
 			return
 		}
 		a.previewMu.Lock()
-		if current, ok := a.previewSessions[string(previewEnv.EnvID)]; ok {
+		current, ok := a.previewSessions[string(previewEnv.EnvID)]
+		if ok {
 			current.Env = realEnv
 			a.previewSessions[string(previewEnv.EnvID)] = current
+			a.previewMu.Unlock()
+			return
 		}
 		a.previewMu.Unlock()
-	}(env, tempPath)
+		_ = a.envManager.DeleteEnv(context.Background(), string(realEnv.RepoID), string(realEnv.EnvID))
+	}(env, tempPath, previewCtx)
 
 	return ConfigPreviewResponse{
 		OK:        true,
