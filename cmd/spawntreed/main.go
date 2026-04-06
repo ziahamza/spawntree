@@ -80,6 +80,12 @@ func run() error {
 		return err
 	}
 
+	fmt.Printf("[spawntreed] pid=%d\n", meta.PID)
+	fmt.Printf("[spawntreed] unix socket: %s\n", meta.SocketPath)
+	fmt.Printf("[spawntreed] http server: http://127.0.0.1:%d\n", meta.HTTPPort)
+	fmt.Printf("[spawntreed] proxy port: %d (starts when the first environment is created)\n", proxy.Port())
+	fmt.Printf("[spawntreed] runtime metadata: %s\n", daemon.RuntimeMetadataPath())
+
 	go func() {
 		_ = unixServer.Serve(unixListener)
 	}()
@@ -90,6 +96,8 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	<-ctx.Done()
+
+	fmt.Println("[spawntreed] shutting down...")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -102,5 +110,6 @@ func run() error {
 	if db != nil {
 		_ = db.Close()
 	}
+	fmt.Println("[spawntreed] shutdown complete")
 	return nil
 }

@@ -78,11 +78,12 @@ type InfraStatusResponse struct {
 }
 
 type CreateEnvRequest struct {
-	RepoPath     string            `json:"repoPath"`
-	EnvID        EnvID             `json:"envId,omitempty"`
-	Prefix       string            `json:"prefix,omitempty"`
-	EnvOverrides map[string]string `json:"envOverrides,omitempty"`
-	ConfigFile   string            `json:"configFile,omitempty"`
+	RepoPath           string            `json:"repoPath"`
+	EnvID              EnvID             `json:"envId,omitempty"`
+	Prefix             string            `json:"prefix,omitempty"`
+	EnvOverrides       map[string]string `json:"envOverrides,omitempty"`
+	ConfigFile         string            `json:"configFile,omitempty"`
+	UseCurrentCheckout bool              `json:"useCurrentCheckout,omitempty"`
 }
 
 type CreateEnvResponse struct {

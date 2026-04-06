@@ -10,6 +10,7 @@ interface LogLine {
 interface LogViewerProps {
   repoID: string
   envID: string
+  repoPath?: string
   activeService?: string | null
 }
 
@@ -43,7 +44,7 @@ function parseLogLine(raw: string): LogLine {
   return { ts: '', service: '', message: raw, isError }
 }
 
-export function LogViewer({ repoID, envID, activeService }: LogViewerProps) {
+export function LogViewer({ repoID, envID, repoPath, activeService }: LogViewerProps) {
   const [lines, setLines] = useState<LogLine[]>([])
   const [connected, setConnected] = useState(false)
   const [services, setServices] = useState<string[]>([])
@@ -64,7 +65,7 @@ export function LogViewer({ repoID, envID, activeService }: LogViewerProps) {
   useEffect(() => {
     if (!repoID || !envID) return
 
-    const url = `/api/v1/repos/${repoID}/envs/${envID}/logs`
+    const url = `/api/v1/repos/${repoID}/envs/${envID}/logs${repoPath ? `?repoPath=${encodeURIComponent(repoPath)}` : ''}`
     const es = new EventSource(url)
     esRef.current = es
 
@@ -89,7 +90,7 @@ export function LogViewer({ repoID, envID, activeService }: LogViewerProps) {
       esRef.current = null
       setConnected(false)
     }
-  }, [repoID, envID])
+  }, [repoID, envID, repoPath])
 
   // Auto-scroll
   useEffect(() => {

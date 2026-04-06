@@ -17,7 +17,8 @@
     "composite": true
   },
   "references": [
-    { "path": "../core" }
+    { "path": "../core" },
+    { "path": "../daemon" }
   ],
   "include": ["src"],
   "exclude": ["node_modules", "dist", "tests"]

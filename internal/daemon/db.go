@@ -51,6 +51,15 @@ type Worktree struct {
 	DiscoveredAt string `json:"discoveredAt"`
 }
 
+// WatchedPath is a user-added path that spawntree keeps scanning for repos.
+type WatchedPath struct {
+	Path          string `json:"path"`
+	ScanChildren  bool   `json:"scanChildren"`
+	AddedAt       string `json:"addedAt"`
+	LastScannedAt string `json:"lastScannedAt,omitempty"`
+	LastScanError string `json:"lastScanError,omitempty"`
+}
+
 // DiscoverResult is the result of a worktree discovery run.
 type DiscoverResult struct {
 	Warnings            []DiscoverWarning `json:"warnings"`
@@ -68,7 +77,7 @@ type DiscoverWarning struct {
 	Message string `json:"message"`
 }
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -101,6 +110,14 @@ CREATE TABLE IF NOT EXISTS worktrees (
 	branch TEXT NOT NULL DEFAULT '',
 	head_ref TEXT NOT NULL DEFAULT '',
 	discovered_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS watched_paths (
+	path TEXT PRIMARY KEY,
+	scan_children INTEGER NOT NULL DEFAULT 0,
+	added_at TEXT NOT NULL,
+	last_scanned_at TEXT NOT NULL DEFAULT '',
+	last_scan_error TEXT NOT NULL DEFAULT ''
 );
 `
 
@@ -153,6 +170,27 @@ func (db *DB) migrate() error {
 	if count == 0 {
 		_, err = db.writerDB.Exec("INSERT INTO schema_version (version) VALUES (?)", schemaVersion)
 		return err
+	}
+
+	var version int
+	if err := db.writerDB.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
+		return err
+	}
+	if version < 2 {
+		if _, err := db.writerDB.Exec(`
+			CREATE TABLE IF NOT EXISTS watched_paths (
+				path TEXT PRIMARY KEY,
+				scan_children INTEGER NOT NULL DEFAULT 0,
+				added_at TEXT NOT NULL,
+				last_scanned_at TEXT NOT NULL DEFAULT '',
+				last_scan_error TEXT NOT NULL DEFAULT ''
+			)
+		`); err != nil {
+			return err
+		}
+		if _, err := db.writerDB.Exec("UPDATE schema_version SET version = ?", schemaVersion); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -264,6 +302,30 @@ func (db *DB) ReplaceWorktrees(cloneID string, worktrees []Worktree) error {
 		}
 	}
 	return tx.Commit()
+}
+
+func (db *DB) UpsertWatchedPath(watched WatchedPath) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if watched.AddedAt == "" {
+		watched.AddedAt = now
+	}
+	_, err := db.writerDB.Exec(`
+		INSERT INTO watched_paths (path, scan_children, added_at, last_scanned_at, last_scan_error)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET
+			scan_children = excluded.scan_children
+	`, watched.Path, boolToInt(watched.ScanChildren), watched.AddedAt, watched.LastScannedAt, watched.LastScanError)
+	return err
+}
+
+func (db *DB) UpdateWatchedPathScan(path, scannedAt, scanError string) error {
+	_, err := db.writerDB.Exec(
+		"UPDATE watched_paths SET last_scanned_at = ?, last_scan_error = ? WHERE path = ?",
+		scannedAt,
+		scanError,
+		path,
+	)
+	return err
 }
 
 // --- Read operations (use readerDB, safe for HTTP handlers) ---
@@ -397,6 +459,30 @@ func (db *DB) ListAllWorktrees() ([]Worktree, error) {
 	return worktrees, rows.Err()
 }
 
+func (db *DB) ListWatchedPaths() ([]WatchedPath, error) {
+	rows, err := db.readerDB.Query(`
+		SELECT path, scan_children, added_at, last_scanned_at, last_scan_error
+		FROM watched_paths
+		ORDER BY added_at DESC, path
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var watched []WatchedPath
+	for rows.Next() {
+		var item WatchedPath
+		var scanChildren int
+		if err := rows.Scan(&item.Path, &scanChildren, &item.AddedAt, &item.LastScannedAt, &item.LastScanError); err != nil {
+			return nil, err
+		}
+		item.ScanChildren = scanChildren != 0
+		watched = append(watched, item)
+	}
+	return watched, rows.Err()
+}
+
 // DeriveCloneID generates a stable 12-char hex ID from an absolute path.
 func DeriveCloneID(absPath string) string {
 	h := sha256.Sum256([]byte(absPath))
@@ -406,4 +492,11 @@ func DeriveCloneID(absPath string) string {
 // DBPath returns the path to the spawntree SQLite database.
 func DBPath() string {
 	return filepath.Join(SpawntreeHome(), "spawntree.db")
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }

@@ -109,6 +109,19 @@ func (store *StateStore) ListRepos() []RegisteredRepo {
 	return repos
 }
 
+func (store *StateStore) GetRegisteredRepo(repoPath string) *RegisteredRepo {
+	repo, _ := execState(store, func(state *daemonState) (*RegisteredRepo, error) {
+		repoID := DeriveRepoID(repoPath)
+		registered, ok := state.config.Repos[repoID]
+		if !ok {
+			return nil, nil
+		}
+		copy := registered
+		return &copy, nil
+	})
+	return repo
+}
+
 func (store *StateStore) ListTunnels() []TunnelDefinition {
 	tunnels, _ := execState(store, func(state *daemonState) ([]TunnelDefinition, error) {
 		return sortedMapValues(state.config.Tunnels), nil

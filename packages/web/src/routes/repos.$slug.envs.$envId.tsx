@@ -1,49 +1,53 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import { ChevronRight, Square, RotateCcw, Trash2 } from 'lucide-react'
-import { useEnvDetail, useStopEnv, useDeleteEnv, useWebRepoDetail, deriveEnvStatus } from '../lib/api'
+import { ChevronRight, ExternalLink, Link2, Square, RotateCcw, Trash2 } from 'lucide-react'
+import { useEnvDetail, useStopEnv, useDeleteEnv, useWebRepoDetail, deriveEnvStatus, type Service } from '../lib/api'
 import { StatusDot } from '../components/StatusDot'
 import { ServiceCard } from '../components/ServiceCard'
 import { LogViewer } from '../components/LogViewer'
 import type { Status } from '../components/StatusDot'
 
 export const Route = createFileRoute('/repos/$slug/envs/$envId')({
+  validateSearch: (search: Record<string, unknown>) => ({
+    repoPath: typeof search.repoPath === 'string' ? search.repoPath : undefined,
+  }),
   component: EnvDetail,
 })
-
-function formatUptime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
-  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`
-}
 
 function envStatusToDisplay(status: ReturnType<typeof deriveEnvStatus>): Status {
   return status
 }
 
+function previewURLFor(service: Service) {
+  if (service.type === 'postgres' || service.type === 'redis') return null
+  if (!service.url) return null
+  return /^https?:\/\//.test(service.url) ? service.url : null
+}
+
 function EnvDetail() {
   const { slug, envId } = Route.useParams()
+  const { repoPath } = Route.useSearch()
   const [activeService, setActiveService] = useState<string | null>(null)
 
-  const { data: env, isLoading, error } = useEnvDetail(slug, envId)
+  const { data: env, isLoading, error } = useEnvDetail(slug, envId, repoPath)
   const { data: repo } = useWebRepoDetail(slug)
   const stopEnv = useStopEnv()
   const deleteEnv = useDeleteEnv()
 
   function handleStop() {
     if (!env) return
-    stopEnv.mutate({ repoID: slug, envID: envId })
+    stopEnv.mutate({ repoID: slug, envID: envId, repoPath })
   }
 
   function handleRestart() {
     if (!env) return
     // Stop then navigate away (restart = stop + let daemon restart via config)
-    stopEnv.mutate({ repoID: slug, envID: envId })
+    stopEnv.mutate({ repoID: slug, envID: envId, repoPath })
   }
 
   function handleDelete() {
     if (!window.confirm(`Delete env "${env?.envId}"? This cannot be undone.`)) return
-    deleteEnv.mutate({ repoID: slug, envID: envId })
+    deleteEnv.mutate({ repoID: slug, envID: envId, repoPath })
   }
 
   function handleServiceClick(name: string) {
@@ -76,6 +80,17 @@ function EnvDetail() {
 
   const status = envStatusToDisplay(deriveEnvStatus(env))
   const isRunning = status === 'running' || status === 'starting'
+  const previewServices = env.services
+    .map((service) => ({ service, previewURL: previewURLFor(service) }))
+    .filter((item): item is { service: Service; previewURL: string } => !!item.previewURL)
+
+  async function handleCopy(url: string) {
+    try {
+      await navigator.clipboard.writeText(url)
+    } catch {
+      window.prompt('Copy preview URL', url)
+    }
+  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -138,6 +153,48 @@ function EnvDetail() {
         </div>
       </div>
 
+      {/* Preview links */}
+      {previewServices.length > 0 && (
+        <div className="flex-shrink-0 px-6 py-4 border-b border-border">
+          <h2 className="text-xs font-medium text-muted uppercase tracking-wider mb-3">
+            Preview Links ({previewServices.length})
+          </h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {previewServices.map(({ service, previewURL }) => (
+              <div key={service.name} className="rounded-lg border border-border bg-surface p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <StatusDot status={service.status} />
+                  <span className="font-semibold text-sm text-foreground">{service.name}</span>
+                  <span className="text-[11px] text-muted ml-auto">{service.type}</span>
+                </div>
+                <p className="text-xs text-muted font-mono truncate mb-3" title={previewURL}>
+                  {previewURL}
+                </p>
+                <div className="flex items-center gap-3 text-xs">
+                  <a
+                    href={previewURL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-blue hover:underline"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    Open
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(previewURL)}
+                    className="inline-flex items-center gap-1 text-blue hover:underline"
+                  >
+                    <Link2 className="w-3 h-3" />
+                    Copy
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Services grid */}
       {env.services.length > 0 && (
         <div className="flex-shrink-0 px-6 py-4">
@@ -177,7 +234,7 @@ function EnvDetail() {
           )}
         </div>
         <div className="h-full min-h-0 flex flex-col" style={{ height: 'calc(100% - 36px)' }}>
-          <LogViewer repoID={slug} envID={envId} activeService={activeService} />
+          <LogViewer repoID={slug} envID={envId} repoPath={repoPath} activeService={activeService} />
         </div>
       </div>
     </div>

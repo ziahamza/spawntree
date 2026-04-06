@@ -20,6 +20,9 @@ importers:
       '@types/node':
         specifier: ^25.5.0
         version: 25.5.0
+      jsdom:
+        specifier: ^29.0.1
+        version: 29.0.1
       oxlint:
         specifier: ^0.16.0
         version: 0.16.12

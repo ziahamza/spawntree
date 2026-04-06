@@ -7,7 +7,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -24,6 +27,8 @@ type App struct {
 	startedAt       time.Time
 	version         string
 	router          chi.Router
+	previewMu       sync.Mutex
+	previewSessions map[string]ConfigPreviewSession
 }
 
 func NewApp(envManager *EnvManager, logStreamer *LogStreamer, infraManager *InfraManager, registryManager *RegistryManager, db *DB, version string) *App {
@@ -35,6 +40,7 @@ func NewApp(envManager *EnvManager, logStreamer *LogStreamer, infraManager *Infr
 		db:              db,
 		startedAt:       time.Now().UTC(),
 		version:         version,
+		previewSessions: map[string]ConfigPreviewSession{},
 	}
 	a.router = a.buildRouter()
 	return a
@@ -84,7 +90,14 @@ func (a *App) buildRouter() chi.Router {
 		r.Get("/web/repos/{repoSlug}/clones", a.handleWebListClones)
 		r.Patch("/web/repos/{repoSlug}/clones/{cloneID}", a.handleWebRelinkClone)
 		r.Delete("/web/repos/{repoSlug}/clones/{cloneID}", a.handleWebDeleteClone)
+		r.Post("/web/repos/{repoSlug}/worktrees/archive", a.handleWebArchiveWorktree)
+		r.Post("/web/repos/probe", a.handleWebProbePath)
 		r.Post("/web/repos/add", a.handleWebAddFolder)
+		r.Post("/web/config/suggest", a.handleWebSuggestConfig)
+		r.Post("/web/config/test", a.handleWebTestConfig)
+		r.Post("/web/config/preview/start", a.handleWebStartConfigPreview)
+		r.Post("/web/config/preview/stop", a.handleWebStopConfigPreview)
+		r.Post("/web/config/save", a.handleWebSaveConfig)
 	})
 
 	// OpenAPI spec
@@ -256,13 +269,19 @@ func (a *App) handleListTunnelStatuses(w http.ResponseWriter, _ *http.Request) {
 
 func (a *App) handleListRepoEnvs(w http.ResponseWriter, r *http.Request) {
 	repoID := chi.URLParam(r, "repoID")
-	writeJSON(w, http.StatusOK, ListEnvsResponse{Envs: a.envManager.ListEnvs(repoID)})
+	envs, err := a.listRepoEnvsForRef(repoID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, ListEnvsResponse{Envs: envs})
 }
 
 func (a *App) handleGetEnv(w http.ResponseWriter, r *http.Request) {
 	repoID := chi.URLParam(r, "repoID")
 	envID := chi.URLParam(r, "envID")
-	env, err := a.envManager.GetEnv(repoID, envID)
+	repoPath := r.URL.Query().Get("repoPath")
+	env, _, err := a.resolveRepoEnv(repoID, envID, repoPath)
 	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
 		return
@@ -273,7 +292,13 @@ func (a *App) handleGetEnv(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleDeleteEnv(w http.ResponseWriter, r *http.Request) {
 	repoID := chi.URLParam(r, "repoID")
 	envID := chi.URLParam(r, "envID")
-	if err := a.envManager.DeleteEnv(r.Context(), repoID, envID); err != nil {
+	repoPath := r.URL.Query().Get("repoPath")
+	_, resolvedRepoID, err := a.resolveRepoEnv(repoID, envID, repoPath)
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
+		return
+	}
+	if err := a.envManager.DeleteEnv(r.Context(), resolvedRepoID, envID); err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
@@ -283,7 +308,13 @@ func (a *App) handleDeleteEnv(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleDownEnv(w http.ResponseWriter, r *http.Request) {
 	repoID := chi.URLParam(r, "repoID")
 	envID := chi.URLParam(r, "envID")
-	if err := a.envManager.DownEnv(r.Context(), repoID, envID); err != nil {
+	repoPath := r.URL.Query().Get("repoPath")
+	_, resolvedRepoID, err := a.resolveRepoEnv(repoID, envID, repoPath)
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
+		return
+	}
+	if err := a.envManager.DownEnv(r.Context(), resolvedRepoID, envID); err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
@@ -293,7 +324,9 @@ func (a *App) handleDownEnv(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleLogStream(w http.ResponseWriter, r *http.Request) {
 	repoID := chi.URLParam(r, "repoID")
 	envID := chi.URLParam(r, "envID")
-	if _, err := a.envManager.GetEnv(repoID, envID); err != nil {
+	repoPath := r.URL.Query().Get("repoPath")
+	_, resolvedRepoID, err := a.resolveRepoEnv(repoID, envID, repoPath)
+	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
 		return
 	}
@@ -305,7 +338,7 @@ func (a *App) handleLogStream(w http.ResponseWriter, r *http.Request) {
 			lines = parsed
 		}
 	}
-	history, err := a.logStreamer.ReadHistory(RepoID(repoID), EnvID(envID), LogReadOptions{
+	history, err := a.logStreamer.ReadHistory(RepoID(resolvedRepoID), EnvID(envID), LogReadOptions{
 		Service: service,
 		Lines:   lines,
 	})
@@ -328,7 +361,7 @@ func (a *App) handleLogStream(w http.ResponseWriter, r *http.Request) {
 	if !follow {
 		return
 	}
-	ch, cleanup, err := a.logStreamer.Subscribe(RepoID(repoID), EnvID(envID), service)
+	ch, cleanup, err := a.logStreamer.Subscribe(RepoID(resolvedRepoID), EnvID(envID), service)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
@@ -356,6 +389,7 @@ func (a *App) handleDiscover(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "DB_NOT_AVAILABLE", "Database not initialized", nil)
 		return
 	}
+	_ = a.syncWatchedPaths(true)
 
 	start := time.Now()
 	clones, err := a.db.ListAllClones()
@@ -368,8 +402,11 @@ func (a *App) handleDiscover(w http.ResponseWriter, _ *http.Request) {
 	discoveredCount := 0
 
 	for _, clone := range clones {
-		if !dirExists(clone.Path) {
-			_ = a.db.UpdateCloneStatus(clone.ID, "missing")
+		discovered, missing, err := a.syncCloneWorktrees(clone)
+		if err != nil {
+			continue
+		}
+		if missing {
 			warnings = append(warnings, DiscoverWarning{
 				Type:    "missing_clone",
 				RepoID:  clone.RepoID,
@@ -379,15 +416,7 @@ func (a *App) handleDiscover(w http.ResponseWriter, _ *http.Request) {
 			})
 			continue
 		}
-
-		_ = a.db.UpdateCloneStatus(clone.ID, "active")
-
-		worktrees, err := discoverWorktrees(clone.Path, clone.ID)
-		if err != nil {
-			continue
-		}
-		_ = a.db.ReplaceWorktrees(clone.ID, worktrees)
-		discoveredCount += len(worktrees)
+		discoveredCount += discovered
 	}
 
 	writeJSON(w, http.StatusOK, DiscoverResult{
@@ -411,6 +440,7 @@ func (a *App) handleWebListRepos(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"repos": []any{}})
 		return
 	}
+	_ = a.syncWatchedPaths(false)
 	repos, err := a.db.ListRepos()
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
@@ -420,34 +450,32 @@ func (a *App) handleWebListRepos(w http.ResponseWriter, _ *http.Request) {
 	enriched := make([]WebRepoEnriched, 0, len(repos))
 	for _, repo := range repos {
 		clones, _ := a.db.ListClones(repo.ID)
+		envs, _ := a.listRepoEnvsForRepo(&repo)
 		runningEnvs := 0
 		status := "offline"
-		for _, clone := range clones {
-			envs := a.envManager.ListEnvs(string(DeriveRepoID(clone.Path)))
-			for _, env := range envs {
-				hasRunning := false
-				for _, svc := range env.Services {
-					switch svc.Status {
-					case ServiceStatusRunning:
-						status = "running"
-						hasRunning = true
-					case ServiceStatusStarting:
-						if status != "running" && status != "crashed" {
-							status = "starting"
-						}
-					case ServiceStatusFailed:
-						if status != "running" {
-							status = "crashed"
-						}
-					case ServiceStatusStopped:
-						if status == "offline" {
-							status = "stopped"
-						}
+		for _, env := range envs {
+			hasRunning := false
+			for _, svc := range env.Services {
+				switch svc.Status {
+				case ServiceStatusRunning:
+					status = "running"
+					hasRunning = true
+				case ServiceStatusStarting:
+					if status != "running" && status != "crashed" {
+						status = "starting"
+					}
+				case ServiceStatusFailed:
+					if status != "running" {
+						status = "crashed"
+					}
+				case ServiceStatusStopped:
+					if status == "offline" {
+						status = "stopped"
 					}
 				}
-				if hasRunning {
-					runningEnvs++
-				}
+			}
+			if hasRunning {
+				runningEnvs++
 			}
 		}
 		enriched = append(enriched, WebRepoEnriched{
@@ -483,6 +511,14 @@ func (a *App) handleWebGetRepo(w http.ResponseWriter, r *http.Request) {
 	if clones == nil {
 		clones = []Clone{}
 	}
+	for _, clone := range clones {
+		_, _, _ = a.syncCloneWorktrees(clone)
+	}
+	clones, err = a.db.ListClones(repo.ID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
 	allWorktrees := map[string][]Worktree{}
 	for _, c := range clones {
 		wts, err := a.db.ListWorktrees(c.ID)
@@ -495,10 +531,22 @@ func (a *App) handleWebGetRepo(w http.ResponseWriter, r *http.Request) {
 		}
 		allWorktrees[c.ID] = wts
 	}
+	envs, err := a.listRepoEnvsForRepo(repo)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	gitPaths, err := a.buildGitPathInfoMap(repo, clones, allWorktrees, envs)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"repo":      repo,
 		"clones":    clones,
 		"worktrees": allWorktrees,
+		"envs":      envs,
+		"gitPaths":  gitPaths,
 	})
 }
 
@@ -560,6 +608,15 @@ func (a *App) handleWebRelinkClone(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	updatedClone, err := a.db.GetClone(cloneID)
+	if err != nil || updatedClone == nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Clone updated but could not be reloaded", nil)
+		return
+	}
+	if _, _, err := a.syncCloneWorktrees(*updatedClone); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": gitRoot})
 }
 
@@ -577,9 +634,20 @@ func (a *App) handleWebDeleteClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Only block deletion if there are actually-running environments (not stopped ones)
-	envRepoID := DeriveRepoID(clone.Path)
-	envs := a.envManager.ListEnvs(string(envRepoID))
+	worktrees, err := a.db.ListWorktrees(clone.ID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	paths := map[string]bool{clone.Path: true}
+	for _, wt := range worktrees {
+		paths[wt.Path] = true
+	}
+	envs := a.envManager.ListEnvs("")
 	for _, env := range envs {
+		if !paths[env.RepoPath] {
+			continue
+		}
 		for _, svc := range env.Services {
 			if svc.Status == ServiceStatusRunning || svc.Status == ServiceStatusStarting {
 				writeAPIError(w, http.StatusConflict, "CONFLICT", "Cannot delete clone with running environments. Stop them first.", nil)
@@ -595,17 +663,131 @@ func (a *App) handleWebDeleteClone(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (a *App) handleWebArchiveWorktree(w http.ResponseWriter, r *http.Request) {
+	if a.db == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "DB_NOT_AVAILABLE", "Database not initialized", nil)
+		return
+	}
+
+	slug := chi.URLParam(r, "repoSlug")
+	repo, err := a.db.GetRepoBySlug(slug)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if repo == nil {
+		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", "Repo not found", nil)
+		return
+	}
+
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := decodeJSON(r, &body); err != nil || body.Path == "" {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing path field", nil)
+		return
+	}
+
+	clones, err := a.db.ListClones(repo.ID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+
+	var ownerClone *Clone
+	found := false
+	for i := range clones {
+		if clones[i].Path == body.Path {
+			writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Cannot archive the primary clone from the sidebar", nil)
+			return
+		}
+		worktrees, err := a.db.ListWorktrees(clones[i].ID)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+			return
+		}
+		for _, wt := range worktrees {
+			if wt.Path == body.Path {
+				ownerClone = &clones[i]
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found || ownerClone == nil {
+		writeAPIError(w, http.StatusNotFound, "NOT_FOUND", "Worktree not found", nil)
+		return
+	}
+
+	envs, err := a.listRepoEnvsForRepo(repo)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	for _, env := range envs {
+		if env.RepoPath == body.Path {
+			writeAPIError(w, http.StatusConflict, "CONFLICT", "Remove environments for this worktree before archiving it.", nil)
+			return
+		}
+	}
+
+	info, err := inspectGitPath(body.Path, repo.DefaultBranch, false)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if !info.CanArchive {
+		writeAPIError(w, http.StatusConflict, "CONFLICT", "Only clean worktrees already merged into main can be archived.", nil)
+		return
+	}
+
+	if err := removeGitWorktree(body.Path); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if _, _, err := a.syncCloneWorktrees(*ownerClone); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // AddFolderRequest is the request body for POST /api/v1/web/repos/add.
 type AddFolderRequest struct {
-	Path       string `json:"path"`
-	RemoteName string `json:"remoteName,omitempty"` // optional, for multi-remote repos
+	Path         string `json:"path"`
+	RemoteName   string `json:"remoteName,omitempty"` // optional, for multi-remote repos
+	ScanChildren bool   `json:"scanChildren,omitempty"`
 }
 
 // AddFolderResponse is returned from POST /api/v1/web/repos/add.
 type AddFolderResponse struct {
-	Repo    Repo        `json:"repo"`
-	Clone   Clone       `json:"clone"`
-	Remotes []GitRemote `json:"remotes,omitempty"` // populated if multiple remotes detected
+	Repo          *Repo        `json:"repo,omitempty"`
+	Clone         *Clone       `json:"clone,omitempty"`
+	Remotes       []GitRemote  `json:"remotes,omitempty"` // populated if multiple remotes detected
+	WatchedPath   *WatchedPath `json:"watchedPath,omitempty"`
+	ImportedCount int          `json:"importedCount,omitempty"`
+}
+
+type ProbePathRequest struct {
+	Path string `json:"path"`
+}
+
+func (a *App) handleWebProbePath(w http.ResponseWriter, r *http.Request) {
+	var req ProbePathRequest
+	if err := decodeJSON(r, &req); err != nil || req.Path == "" {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing path field", nil)
+		return
+	}
+	result, err := probePath(req.Path)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (a *App) handleWebAddFolder(w http.ResponseWriter, r *http.Request) {
@@ -620,81 +802,319 @@ func (a *App) handleWebAddFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gitRoot, err := ValidateGitRepo(req.Path)
+	probe, err := probePath(req.Path)
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "NOT_GIT_REPO", "Not a Git repository", nil)
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error(), nil)
 		return
 	}
-
-	info, remotes, err := DetectRepoInfo(gitRoot)
-	if err != nil {
-		info = RemoteInfo{Provider: "local", Repo: sanitizeID(filepath.Base(gitRoot))}
-	}
-
-	// Multi-remote: if no preference specified, return remotes list without creating repo/clone
-	if len(remotes) > 1 && req.RemoteName == "" {
-		writeJSON(w, http.StatusOK, AddFolderResponse{Remotes: remotes})
+	if !probe.Exists {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Path not found", nil)
 		return
 	}
-
-	// If the user specified a preferred remote, use it instead of the default
-	if len(remotes) > 1 && req.RemoteName != "" {
-		found := false
-		for _, rm := range remotes {
-			if rm.Name == req.RemoteName {
-				info = ParseRemoteURL(rm.URL)
-				found = true
-				break
-			}
-		}
-		if !found {
-			writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", fmt.Sprintf("Remote %q not found", req.RemoteName), nil)
+	if probe.IsGitRepo && req.RemoteName == "" {
+		if remotes, err := DetectRemotes(probe.Path); err == nil && len(remotes) > 1 {
+			writeJSON(w, http.StatusOK, AddFolderResponse{Remotes: remotes})
 			return
 		}
 	}
 
-	repo := Repo{
-		ID:        info.CanonicalID(),
-		Slug:      info.Slug(),
-		Name:      info.Repo,
-		Provider:  info.Provider,
-		Owner:     info.Owner,
-		RemoteURL: info.URL,
+	watched := WatchedPath{
+		Path:         probe.Path,
+		ScanChildren: !probe.IsGitRepo && req.ScanChildren,
 	}
-
-	// Enrich with gh metadata (optional, single call)
-	if info.Provider == "github" && info.Owner != "" && info.Repo != "" {
-		repo.DefaultBranch, repo.Description = TryGHMetadata(info.Owner, info.Repo)
-	}
-
-	if err := a.db.UpsertRepo(repo); err != nil {
+	if err := a.db.UpsertWatchedPath(watched); err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
 
-	clone := Clone{
-		ID:     DeriveCloneID(gitRoot),
-		RepoID: repo.ID,
-		Path:   gitRoot,
-		Status: "active",
+	if probe.IsGitRepo {
+		repo, clone, remotes, err := a.importGitRepoPath(probe.Path, req.RemoteName, true)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+			return
+		}
+		if len(remotes) > 0 {
+			writeJSON(w, http.StatusOK, AddFolderResponse{Remotes: remotes})
+			return
+		}
+		writeJSON(w, http.StatusCreated, AddFolderResponse{
+			Repo:          repo,
+			Clone:         clone,
+			WatchedPath:   &watched,
+			ImportedCount: 1,
+		})
+		return
 	}
-	if err := a.db.UpsertClone(clone); err != nil {
+
+	imported := 0
+	if watched.ScanChildren {
+		var err error
+		imported, err = a.syncWatchedPath(watched)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusCreated, AddFolderResponse{
+		WatchedPath:   &watched,
+		ImportedCount: imported,
+	})
+}
+
+func (a *App) handleWebTestConfig(w http.ResponseWriter, r *http.Request) {
+	var req ConfigTestRequest
+	if err := decodeJSON(r, &req); err != nil || req.RepoPath == "" || req.Content == "" {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "repoPath and content are required", nil)
+		return
+	}
+	result, err := a.runConfigTest(req.RepoPath, req.Content)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "TEST_FAILED", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *App) handleWebStartConfigPreview(w http.ResponseWriter, r *http.Request) {
+	var req ConfigPreviewRequest
+	if err := decodeJSON(r, &req); err != nil || req.RepoPath == "" || req.Content == "" {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "repoPath and content are required", nil)
+		return
+	}
+	result, err := a.startPreviewSession(req.RepoPath, req.Content, req.ServiceName)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "PREVIEW_FAILED", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *App) handleWebStopConfigPreview(w http.ResponseWriter, r *http.Request) {
+	var req ConfigPreviewStopRequest
+	if err := decodeJSON(r, &req); err != nil || req.PreviewID == "" {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "previewId is required", nil)
+		return
+	}
+	if err := a.stopPreviewSession(req.PreviewID); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (a *App) handleWebSaveConfig(w http.ResponseWriter, r *http.Request) {
+	var req ConfigSaveRequest
+	if err := decodeJSON(r, &req); err != nil || req.RepoPath == "" || req.Content == "" {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "repoPath and content are required", nil)
+		return
+	}
+
+	repoPath, err := normalizeInputPath(req.RepoPath)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error(), nil)
+		return
+	}
+	gitRoot, err := ValidateGitRepo(repoPath)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "Not a Git repository", nil)
+		return
+	}
+
+	saveMode := req.SaveMode
+	if saveMode == "" {
+		saveMode = "repo"
+	}
+
+	configPath := ""
+	switch saveMode {
+	case "repo":
+		targetBranch := defaultBranchName(repoPath)
+		targetPath, err := findWorktreeForBranch(gitRoot, targetBranch)
+		if err != nil {
+			writeAPIError(w, http.StatusConflict, "NO_DEFAULT_BRANCH_WORKTREE", err.Error()+". Save globally instead.", nil)
+			return
+		}
+		configPath = filepath.Join(targetPath, "spawntree.yaml")
+	case "global":
+		configPath, err = globalRepoConfigPath(repoPath)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+			return
+		}
+	default:
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST", "saveMode must be repo or global", nil)
+		return
+	}
+
+	if err := writeConfigFile(configPath, req.Content); err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
 
-	// Also register in the daemon's config-based registry for env management
-	_, _ = a.registryManager.RegisterRepo(gitRoot, "spawntree.yaml")
+	_, _ = a.registryManager.RegisterRepo(gitRoot, configPath)
+	writeJSON(w, http.StatusOK, ConfigSaveResponse{
+		OK:         true,
+		ConfigPath: configPath,
+		SaveMode:   saveMode,
+	})
+}
 
-	resp := AddFolderResponse{
-		Repo:  repo,
-		Clone: clone,
-	}
-	if len(remotes) > 1 {
-		resp.Remotes = remotes
+func (a *App) listRepoEnvsForRef(repoRef string) ([]EnvInfo, error) {
+	direct := a.envManager.ListEnvs(repoRef)
+	if len(direct) > 0 || a.db == nil {
+		return direct, nil
 	}
 
-	writeJSON(w, http.StatusCreated, resp)
+	repo, err := a.resolveRepoRef(repoRef)
+	if err != nil || repo == nil {
+		return direct, err
+	}
+	return a.listRepoEnvsForRepo(repo)
+}
+
+func (a *App) listRepoEnvsForRepo(repo *Repo) ([]EnvInfo, error) {
+	if a.db == nil || repo == nil {
+		return []EnvInfo{}, nil
+	}
+
+	clones, err := a.db.ListClones(repo.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := map[string]struct{}{}
+	for _, clone := range clones {
+		paths[clone.Path] = struct{}{}
+		worktrees, err := a.db.ListWorktrees(clone.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, wt := range worktrees {
+			paths[wt.Path] = struct{}{}
+		}
+	}
+
+	envs := make([]EnvInfo, 0)
+	for _, env := range a.envManager.ListEnvs("") {
+		if _, ok := paths[env.RepoPath]; ok {
+			envs = append(envs, env)
+		}
+	}
+
+	sort.Slice(envs, func(i, j int) bool {
+		if envs[i].RepoPath == envs[j].RepoPath {
+			return envs[i].EnvID < envs[j].EnvID
+		}
+		return envs[i].RepoPath < envs[j].RepoPath
+	})
+
+	return envs, nil
+}
+
+func (a *App) resolveRepoRef(repoRef string) (*Repo, error) {
+	if a.db == nil {
+		return nil, nil
+	}
+	repo, err := a.db.GetRepoBySlug(repoRef)
+	if err != nil {
+		return nil, err
+	}
+	if repo != nil {
+		return repo, nil
+	}
+	return a.db.GetRepo(repoRef)
+}
+
+func (a *App) resolveRepoEnv(repoRef, envID, repoPath string) (EnvInfo, string, error) {
+	env, err := a.envManager.GetEnv(repoRef, envID)
+	if err == nil {
+		if repoPath == "" || env.RepoPath == repoPath {
+			return env, repoRef, nil
+		}
+	}
+
+	envs, err := a.listRepoEnvsForRef(repoRef)
+	if err != nil {
+		return EnvInfo{}, "", err
+	}
+
+	for _, candidate := range envs {
+		if candidate.EnvID != EnvID(envID) {
+			continue
+		}
+		if repoPath != "" && candidate.RepoPath != repoPath {
+			continue
+		}
+		return candidate, string(candidate.RepoID), nil
+	}
+
+	a.previewMu.Lock()
+	for _, session := range a.previewSessions {
+		if session.EnvID != envID {
+			continue
+		}
+		if repoPath != "" && session.RepoPath != repoPath {
+			continue
+		}
+		a.previewMu.Unlock()
+		return session.Env, session.RepoID, nil
+	}
+	a.previewMu.Unlock()
+
+	return EnvInfo{}, "", fmt.Errorf("environment %q not found for repo %q", envID, repoRef)
+}
+
+func (a *App) syncCloneWorktrees(clone Clone) (int, bool, error) {
+	if a.db == nil {
+		return 0, false, nil
+	}
+	if !dirExists(clone.Path) {
+		if err := a.db.UpdateCloneStatus(clone.ID, "missing"); err != nil {
+			return 0, true, err
+		}
+		if err := a.db.ReplaceWorktrees(clone.ID, nil); err != nil {
+			return 0, true, err
+		}
+		return 0, true, nil
+	}
+
+	if err := a.db.UpdateCloneStatus(clone.ID, "active"); err != nil {
+		return 0, false, err
+	}
+
+	worktrees, err := discoverWorktrees(clone.Path, clone.ID)
+	if err != nil {
+		return 0, false, err
+	}
+	if err := a.db.ReplaceWorktrees(clone.ID, worktrees); err != nil {
+		return 0, false, err
+	}
+	return len(worktrees), false, nil
+}
+
+func (a *App) buildGitPathInfoMap(repo *Repo, clones []Clone, allWorktrees map[string][]Worktree, envs []EnvInfo) (map[string]GitPathInfo, error) {
+	gitPaths := map[string]GitPathInfo{}
+	envCounts := map[string]int{}
+	for _, env := range envs {
+		envCounts[env.RepoPath]++
+	}
+
+	for _, clone := range clones {
+		if info, err := inspectGitPath(clone.Path, repo.DefaultBranch, envCounts[clone.Path] > 0); err == nil {
+			gitPaths[clone.Path] = info
+		}
+		for _, wt := range allWorktrees[clone.ID] {
+			if wt.Path == clone.Path {
+				continue
+			}
+			if info, err := inspectGitPath(wt.Path, repo.DefaultBranch, envCounts[wt.Path] > 0); err == nil {
+				gitPaths[wt.Path] = info
+			}
+		}
+	}
+
+	return gitPaths, nil
 }
 
 // handleSPA serves the embedded SPA for non-API routes.
@@ -759,6 +1179,10 @@ func discoverWorktrees(clonePath, cloneID string) ([]Worktree, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	worktrees := make([]Worktree, 0, len(wts))
 	for _, wt := range wts {
+		if strings.Contains(wt.Path, string(os.PathSeparator)+".spawntree"+string(os.PathSeparator)+"envs"+string(os.PathSeparator)+"config-preview-") ||
+			strings.Contains(wt.Path, string(os.PathSeparator)+".spawntree"+string(os.PathSeparator)+"envs"+string(os.PathSeparator)+"config-test-") {
+			continue
+		}
 		worktrees = append(worktrees, Worktree{
 			Path:         wt.Path,
 			CloneID:      cloneID,

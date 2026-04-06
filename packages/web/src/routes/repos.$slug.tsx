@@ -1,8 +1,10 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { ChevronRight, GitBranch, Folder } from 'lucide-react'
-import { useWebRepoDetail, useDeleteClone, useRelinkClone, deriveEnvStatus } from '../lib/api'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { useState } from 'react'
+import { ChevronRight, Folder, GitBranch, Play, Settings2 } from 'lucide-react'
+import { useCreateEnv, useWebRepoDetail, useDeleteClone, useRelinkClone, deriveEnvStatus } from '../lib/api'
 import { WarningBanner } from '../components/WarningBanner'
 import { StatusDot } from '../components/StatusDot'
+import { AddConfigDialog } from '../components/AddConfigDialog'
 import type { Status } from '../components/StatusDot'
 import type { Clone, Worktree, EnvListItem } from '../lib/api'
 
@@ -17,26 +19,59 @@ function envStatusDot(status: string): Status {
   return 'stopped'
 }
 
-function WorktreeRow({ wt, slug }: { wt: Worktree; slug: string }) {
+function StartButton({
+  path,
+  slug,
+  onNeedConfig,
+}: {
+  path: string
+  slug: string
+  onNeedConfig: (path: string) => void
+}) {
+  const navigate = useNavigate()
+  const createEnv = useCreateEnv()
+
+  async function handleStart() {
+    try {
+      const env = await createEnv.mutateAsync({ repoPath: path })
+      navigate({
+        to: '/repos/$slug/envs/$envId',
+        params: { slug, envId: env.envId },
+        search: { repoPath: env.repoPath },
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (/config file not found|no such file|spawntree\.yaml/i.test(message)) {
+        onNeedConfig(path)
+        return
+      }
+      window.alert(message)
+    }
+  }
+
   return (
-    <div className="pl-6 border-l border-border-subtle ml-4 py-1">
-      <div className="flex items-center gap-2 py-1 text-xs text-muted">
-        <GitBranch className="w-3 h-3 flex-shrink-0" />
-        <span className="font-mono truncate" title={wt.branch}>
-          {wt.branch}
-        </span>
-        <span className="text-muted/50 font-mono truncate hidden sm:block" title={wt.path}>
-          {wt.path}
-        </span>
-      </div>
-      {wt.envs.length > 0 && (
-        <div className="mt-1 space-y-1">
-          {wt.envs.map((env) => (
-            <EnvRow key={env.envId} env={env} slug={slug} />
-          ))}
-        </div>
-      )}
-    </div>
+    <button
+      type="button"
+      onClick={handleStart}
+      disabled={createEnv.isPending}
+      className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-border text-muted hover:text-foreground hover:border-foreground/30 transition-colors disabled:opacity-50 min-h-[32px]"
+    >
+      <Play className="w-3 h-3" />
+      {createEnv.isPending ? 'Starting…' : 'Start'}
+    </button>
+  )
+}
+
+function AddConfigButton({ path, onOpen }: { path: string; onOpen: (path: string) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(path)}
+      className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-border text-muted hover:text-foreground hover:border-foreground/30 transition-colors min-h-[32px]"
+    >
+      <Settings2 className="w-3 h-3" />
+      Add Config
+    </button>
   )
 }
 
@@ -47,6 +82,7 @@ function EnvRow({ env, slug }: { env: EnvListItem; slug: string }) {
     <Link
       to="/repos/$slug/envs/$envId"
       params={{ slug, envId: env.envId }}
+      search={{ repoPath: env.repoPath }}
       className="flex items-center gap-2 py-1.5 px-3 rounded-md text-xs hover:bg-surface transition-colors"
     >
       <StatusDot status={envStatusDot(status)} />
@@ -57,6 +93,37 @@ function EnvRow({ env, slug }: { env: EnvListItem; slug: string }) {
   )
 }
 
+function WorktreeRow({ wt, slug, onOpenConfig }: { wt: Worktree; slug: string; onOpenConfig: (path: string) => void }) {
+  return (
+    <div className="pl-6 border-l border-border-subtle ml-4 py-2">
+      <div className="flex items-start gap-2 py-1 text-xs text-muted">
+        <GitBranch className="w-3 h-3 flex-shrink-0 mt-0.5" />
+        <div className="min-w-0 flex-1">
+          <div className="font-mono truncate text-foreground" title={wt.path}>
+            {wt.path}
+          </div>
+          <div className="font-mono truncate" title={wt.branch}>
+            {wt.branch}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <AddConfigButton path={wt.path} onOpen={onOpenConfig} />
+          <StartButton path={wt.path} slug={slug} onNeedConfig={onOpenConfig} />
+        </div>
+      </div>
+      {wt.envs.length > 0 ? (
+        <div className="mt-1 space-y-1">
+          {wt.envs.map((env) => (
+            <EnvRow key={`${wt.path}:${env.envId}:${env.repoPath}`} env={env} slug={slug} />
+          ))}
+        </div>
+      ) : (
+        <div className="mt-1 px-3 py-1 text-[11px] text-muted">No envs running from this worktree</div>
+      )}
+    </div>
+  )
+}
+
 function CloneSection({
   clone,
   slug,
@@ -64,6 +131,7 @@ function CloneSection({
   onRemove,
   relinkingId,
   removingId,
+  onOpenConfig,
 }: {
   clone: Clone
   slug: string
@@ -71,15 +139,21 @@ function CloneSection({
   onRemove: (id: string) => void
   relinkingId: string | null
   removingId: string | null
+  onOpenConfig: (path: string) => void
 }) {
   return (
     <div className="rounded-lg border border-border bg-surface mb-4 overflow-hidden">
-      {/* Clone header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border-subtle">
         <Folder className="w-4 h-4 text-muted flex-shrink-0" />
         <span className="font-mono text-sm text-foreground truncate flex-1" title={clone.path}>
           {clone.path}
         </span>
+        {!clone.missing && (
+          <div className="flex items-center gap-2">
+            <AddConfigButton path={clone.path} onOpen={onOpenConfig} />
+            <StartButton path={clone.path} slug={slug} onNeedConfig={onOpenConfig} />
+          </div>
+        )}
         {clone.missing && (
           <span className="text-xs text-orange bg-orange/10 border border-orange/30 rounded px-2 py-0.5 flex-shrink-0">
             missing
@@ -87,7 +161,6 @@ function CloneSection({
         )}
       </div>
 
-      {/* Warning banner for missing clone */}
       {clone.missing && (
         <div className="p-3">
           <WarningBanner
@@ -101,17 +174,27 @@ function CloneSection({
         </div>
       )}
 
-      {/* Worktrees */}
+      {!clone.missing && clone.envs.length > 0 && (
+        <div className="p-3 border-b border-border-subtle">
+          <div className="text-[11px] text-muted uppercase tracking-wider mb-2">Root envs</div>
+          <div className="space-y-1">
+            {clone.envs.map((env) => (
+              <EnvRow key={`${clone.path}:${env.envId}:${env.repoPath}`} env={env} slug={slug} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {!clone.missing && clone.worktrees.length > 0 && (
         <div className="p-3 space-y-1">
-          {clone.worktrees.map((wt, i) => (
-            <WorktreeRow key={i} wt={wt} slug={slug} />
+          {clone.worktrees.map((wt) => (
+            <WorktreeRow key={wt.path} wt={wt} slug={slug} onOpenConfig={onOpenConfig} />
           ))}
         </div>
       )}
 
-      {!clone.missing && clone.worktrees.length === 0 && (
-        <div className="px-4 py-3 text-xs text-muted">No worktrees found</div>
+      {!clone.missing && clone.envs.length === 0 && clone.worktrees.length === 0 && (
+        <div className="px-4 py-3 text-xs text-muted">No worktrees or envs found</div>
       )}
     </div>
   )
@@ -119,6 +202,7 @@ function CloneSection({
 
 function RepoDetail() {
   const { slug } = Route.useParams()
+  const [configPath, setConfigPath] = useState<string | null>(null)
   const { data: repo, isLoading, error } = useWebRepoDetail(slug)
   const relinkClone = useRelinkClone()
   const deleteClone = useDeleteClone()
@@ -132,6 +216,10 @@ function RepoDetail() {
   function handleRemove(cloneID: string) {
     if (!window.confirm('Remove this clone from spawntree?')) return
     deleteClone.mutate({ repoSlug: slug, cloneID })
+  }
+
+  function handleOpenConfig(path: string) {
+    setConfigPath(path)
   }
 
   if (isLoading) {
@@ -159,7 +247,6 @@ function RepoDetail() {
 
   return (
     <div className="p-6 max-w-3xl mx-auto w-full">
-      {/* Breadcrumb */}
       <nav className="flex items-center gap-1 text-xs text-muted mb-6">
         <Link to="/" className="hover:text-foreground transition-colors">
           Home
@@ -168,7 +255,6 @@ function RepoDetail() {
         <span className="text-foreground font-medium">{repo.name}</span>
       </nav>
 
-      {/* Title */}
       <div className="mb-6">
         <h1 className="font-display text-2xl font-semibold text-foreground">{repo.name}</h1>
         {repo.remoteUrl && (
@@ -176,14 +262,12 @@ function RepoDetail() {
         )}
       </div>
 
-      {/* Summary warning for missing clones */}
       {missingClones.length > 0 && (
         <div className="mb-4 text-xs text-orange bg-warning-bg border border-warning-border rounded-md px-3 py-2">
           {missingClones.length} clone{missingClones.length !== 1 ? 's' : ''} missing from disk
         </div>
       )}
 
-      {/* Clones */}
       <div>
         <h2 className="text-xs font-medium text-muted uppercase tracking-wider mb-3">
           Clones ({repo.clones.length})
@@ -202,10 +286,19 @@ function RepoDetail() {
               onRemove={handleRemove}
               relinkingId={relinkClone.isPending ? (relinkClone.variables?.cloneID ?? null) : null}
               removingId={deleteClone.isPending ? (deleteClone.variables?.cloneID ?? null) : null}
+              onOpenConfig={handleOpenConfig}
             />
           ))
         )}
       </div>
+
+      <AddConfigDialog
+        open={!!configPath}
+        repoPath={configPath}
+        onOpenChange={(open) => {
+          if (!open) setConfigPath(null)
+        }}
+      />
     </div>
   )
 }
