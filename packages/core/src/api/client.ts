@@ -1,202 +1,394 @@
-import { createClient as createGeneratedClient } from "../generated/client/index.js";
+import { Schema } from "effect";
 import {
-  createEnv,
-  deleteEnv,
-  downEnv,
-  dumpDb,
-  getDaemonInfo,
-  getEnv,
-  getInfraStatus,
-  listDbTemplates,
-  listEnvs,
-  listRegisteredRepos,
-  listRepoEnvs,
-  listTunnelStatuses,
-  listTunnels,
-  registerRepo,
-  restoreDb,
-  stopInfra,
-  upsertTunnel,
-  type ApiError,
-  type ClientOptions,
-  type CreateEnvRequest,
-  type CreateEnvResponse,
-  type DaemonInfo,
-  type DeleteEnvResponse,
-  type DownEnvResponse,
-  type DumpDbRequest,
-  type DumpDbResponse,
-  type EnvInfo,
-  type GetEnvResponse,
-  type InfraStatusResponse,
-  type ListDbTemplatesResponse,
-  type ListEnvsResponse,
-  type ListRegisteredReposResponse,
-  type ListTunnelStatusesResponse,
-  type ListTunnelsResponse,
-  type LogLine,
-  type RegisterRepoRequest,
-  type RegisterRepoResponse,
-  type RestoreDbRequest,
-  type RestoreDbResponse,
-  type StopInfraRequest,
-  type StopInfraResponse,
-  type UpsertTunnelRequest,
-  type UpsertTunnelResponse,
-} from "../generated/index.js";
+  AddFolderProbeResult,
+  AddFolderResponse,
+  ApiError,
+  ConfigPreviewResponse,
+  ConfigSaveResponse,
+  ConfigSuggestResponse,
+  ConfigTestResponse,
+  CreateEnvResponse,
+  DaemonInfo,
+  DomainEvent,
+  DumpDbResponse,
+  GetEnvResponse,
+  InfraStatusResponse,
+  ListEnvsResponse,
+  LogLine,
+  RegisterRepoResponse,
+  RestoreDbResponse,
+  WebListReposResponse,
+  WebRepoDetailResponse,
+  WebRepoTreeResponse,
+} from "./schemas.ts";
+import type {
+  AddFolderRequest,
+  ArchiveWorktreeRequest,
+  ConfigPreviewRequest,
+  ConfigPreviewStopRequest,
+  ConfigSaveRequest,
+  ConfigSuggestRequest,
+  ConfigTestRequest,
+  CreateEnvRequest,
+  DumpDbRequest,
+  RegisterRepoRequest,
+  RelinkCloneRequest,
+  RestoreDbRequest,
+  StopInfraRequest,
+} from "./types.ts";
 
-type GeneratedClient = ReturnType<typeof createGeneratedClient>;
+export interface ApiClientOptions {
+  baseUrl?: string;
+  fetchFn?: typeof fetch;
+}
+
+export class ApiClientError extends Error {
+  readonly statusCode: number;
+  readonly code?: string;
+  readonly details?: unknown;
+
+  constructor(statusCode: number, message: string, code?: string, details?: unknown) {
+    super(message);
+    this.name = "ApiClientError";
+    this.statusCode = statusCode;
+    this.code = code;
+    this.details = details;
+  }
+}
 
 export class ApiClient {
-  private readonly client: GeneratedClient;
+  private readonly baseUrl: string;
+  private readonly fetchFn: typeof fetch;
 
-  constructor(
-    private readonly fetchFn: typeof fetch,
-    private readonly baseUrl: string,
-  ) {
-    this.client = createGeneratedClient({
-      baseUrl,
-      fetch: fetchFn,
-      throwOnError: false,
-      responseStyle: "fields",
-    } satisfies ClientOptions & {
-      fetch: typeof fetch;
-      responseStyle: "fields";
-      throwOnError: false;
+  constructor(options: ApiClientOptions = {}) {
+    this.baseUrl = options.baseUrl ?? "";
+    this.fetchFn = options.fetchFn ?? globalThis.fetch.bind(globalThis);
+  }
+
+  async getDaemonInfo() {
+    return this.request("/api/v1/daemon", { schema: DaemonInfo });
+  }
+
+  async createEnv(body: CreateEnvRequest) {
+    return this.request("/api/v1/envs", {
+      method: "POST",
+      body,
+      schema: CreateEnvResponse,
     });
   }
 
-  async getDaemonInfo(): Promise<DaemonInfo> {
-    return this.unwrap(getDaemonInfo({ client: this.client }));
+  async listEnvs(repoId?: string) {
+    const path = repoId ? `/api/v1/repos/${encodeURIComponent(repoId)}/envs` : "/api/v1/envs";
+    return this.request(path, { schema: ListEnvsResponse });
   }
 
-  async createEnv(req: CreateEnvRequest): Promise<CreateEnvResponse> {
-    return this.unwrap(createEnv({ client: this.client, body: req }));
+  async getEnv(repoId: string, envId: string, repoPath?: string) {
+    return this.request(
+      this.withSearch(`/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}`, {
+        repoPath,
+      }),
+      { schema: GetEnvResponse },
+    );
   }
 
-  async getEnv(repoId: string, envId: string): Promise<GetEnvResponse> {
-    return this.unwrap(getEnv({ client: this.client, path: { repoId, envId } }));
+  async downEnv(repoId: string, envId: string, repoPath?: string) {
+    return this.request(
+      this.withSearch(`/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}/down`, {
+        repoPath,
+      }),
+      { method: "POST" },
+    );
   }
 
-  async listEnvs(repoId?: string): Promise<ListEnvsResponse> {
-    if (repoId) {
-      const response = await this.unwrap<{ envs: EnvInfo[] }>(
-        listRepoEnvs({ client: this.client, path: { repoId } }),
-      );
-      return { envs: response.envs };
-    }
-    return this.unwrap(listEnvs({ client: this.client }));
+  async deleteEnv(repoId: string, envId: string, repoPath?: string) {
+    return this.request(
+      this.withSearch(`/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}`, {
+        repoPath,
+      }),
+      { method: "DELETE" },
+    );
   }
 
-  async deleteEnv(repoId: string, envId: string): Promise<DeleteEnvResponse> {
-    return this.unwrap(deleteEnv({ client: this.client, path: { repoId, envId } }));
+  async registerRepo(body: RegisterRepoRequest) {
+    return this.request("/api/v1/registry/repos", {
+      method: "POST",
+      body,
+      schema: RegisterRepoResponse,
+    });
   }
 
-  async downEnv(repoId: string, envId: string): Promise<DownEnvResponse> {
-    return this.unwrap(downEnv({ client: this.client, path: { repoId, envId } }));
+  async getInfraStatus() {
+    return this.request("/api/v1/infra", { schema: InfraStatusResponse });
   }
 
-  async registerRepo(req: RegisterRepoRequest): Promise<RegisterRepoResponse> {
-    return this.unwrap(registerRepo({ client: this.client, body: req }));
+  async stopInfra(body: StopInfraRequest) {
+    return this.request("/api/v1/infra/stop", {
+      method: "POST",
+      body,
+    });
   }
 
-  async listRegisteredRepos(): Promise<ListRegisteredReposResponse> {
-    return this.unwrap(listRegisteredRepos({ client: this.client }));
+  async dumpDb(body: DumpDbRequest) {
+    return this.request("/api/v1/db/dump", {
+      method: "POST",
+      body,
+      schema: DumpDbResponse,
+    });
   }
 
-  async listTunnels(): Promise<ListTunnelsResponse> {
-    return this.unwrap(listTunnels({ client: this.client }));
+  async restoreDb(body: RestoreDbRequest) {
+    return this.request("/api/v1/db/restore", {
+      method: "POST",
+      body,
+      schema: RestoreDbResponse,
+    });
   }
 
-  async upsertTunnel(req: UpsertTunnelRequest): Promise<UpsertTunnelResponse> {
-    return this.unwrap(upsertTunnel({ client: this.client, body: req }));
+  async listWebRepos() {
+    return this.request("/api/v1/web/repos", { schema: WebListReposResponse });
   }
 
-  async listTunnelStatuses(): Promise<ListTunnelStatusesResponse> {
-    return this.unwrap(listTunnelStatuses({ client: this.client }));
+  async getWebRepoDetail(repoSlug: string) {
+    return this.request(`/api/v1/web/repos/${encodeURIComponent(repoSlug)}`, {
+      schema: WebRepoDetailResponse,
+    });
+  }
+
+  async getWebRepoTree(repoSlug: string) {
+    return this.request(`/api/v1/web/repos/${encodeURIComponent(repoSlug)}/tree`, {
+      schema: WebRepoTreeResponse,
+    });
+  }
+
+  async probeAddPath(body: { path: string; }) {
+    return this.request("/api/v1/web/repos/probe", {
+      method: "POST",
+      body,
+      schema: AddFolderProbeResult,
+    });
+  }
+
+  async addFolder(body: AddFolderRequest) {
+    return this.request("/api/v1/web/repos/add", {
+      method: "POST",
+      body,
+      schema: AddFolderResponse,
+    });
+  }
+
+  async relinkClone(repoSlug: string, cloneId: string, body: RelinkCloneRequest) {
+    return this.request(`/api/v1/web/repos/${encodeURIComponent(repoSlug)}/clones/${encodeURIComponent(cloneId)}`, {
+      method: "PATCH",
+      body,
+    });
+  }
+
+  async deleteClone(repoSlug: string, cloneId: string) {
+    return this.request(`/api/v1/web/repos/${encodeURIComponent(repoSlug)}/clones/${encodeURIComponent(cloneId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async archiveWorktree(repoSlug: string, body: ArchiveWorktreeRequest) {
+    return this.request(`/api/v1/web/repos/${encodeURIComponent(repoSlug)}/worktrees/archive`, {
+      method: "POST",
+      body,
+    });
+  }
+
+  async suggestConfig(body: ConfigSuggestRequest) {
+    return this.request("/api/v1/web/config/suggest", {
+      method: "POST",
+      body,
+      schema: ConfigSuggestResponse,
+    });
+  }
+
+  async testConfig(body: ConfigTestRequest) {
+    return this.request("/api/v1/web/config/test", {
+      method: "POST",
+      body,
+      schema: ConfigTestResponse,
+    });
+  }
+
+  async startConfigPreview(body: ConfigPreviewRequest) {
+    return this.request("/api/v1/web/config/preview/start", {
+      method: "POST",
+      body,
+      schema: ConfigPreviewResponse,
+    });
+  }
+
+  async stopConfigPreview(body: ConfigPreviewStopRequest) {
+    return this.request("/api/v1/web/config/preview/stop", {
+      method: "POST",
+      body,
+    });
+  }
+
+  async saveConfig(body: ConfigSaveRequest) {
+    return this.request("/api/v1/web/config/save", {
+      method: "POST",
+      body,
+      schema: ConfigSaveResponse,
+    });
+  }
+
+  getLogStreamUrl(
+    repoId: string,
+    envId: string,
+    options: {
+      service?: string;
+      follow?: boolean;
+      lines?: number;
+      repoPath?: string;
+    } = {},
+  ) {
+    return this.toUrl(
+      this.withSearch(`/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}/logs`, {
+        service: options.service,
+        follow: options.follow === undefined ? undefined : String(options.follow),
+        lines: options.lines === undefined ? undefined : String(options.lines),
+        repoPath: options.repoPath,
+      }),
+    );
+  }
+
+  getEventsUrl(since?: number) {
+    return this.toUrl(this.withSearch("/api/v1/events", {
+      since: since === undefined ? undefined : String(since),
+    }));
   }
 
   async *streamLogs(
     repoId: string,
     envId: string,
-    services?: string[],
+    services?: Array<string>,
     options?: {
       follow?: boolean;
       lines?: number;
+      repoPath?: string;
     },
   ): AsyncIterable<LogLine> {
-    const url = new URL(
-      `/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}/logs`,
-      this.baseUrl,
+    const response = await this.fetchFn(
+      this.getLogStreamUrl(repoId, envId, {
+        service: services?.[0],
+        follow: options?.follow,
+        lines: options?.lines,
+        repoPath: options?.repoPath,
+      }),
+      {
+        method: "GET",
+        headers: { Accept: "text/event-stream" },
+      },
     );
 
-    if (services && services[0]) {
-      url.searchParams.set("service", services[0]);
-    }
-    if (options?.follow === false) {
-      url.searchParams.set("follow", "false");
-    }
-    if (options?.lines !== undefined) {
-      url.searchParams.set("lines", String(options.lines));
+    if (!response.ok || !response.body) {
+      throw await this.toClientError(response);
     }
 
-    const response = await this.fetchFn(url.toString(), {
+    yield* parseSSE(response.body, LogLine);
+  }
+
+  async *streamEvents(since?: number): AsyncIterable<DomainEvent> {
+    const response = await this.fetchFn(this.getEventsUrl(since), {
       method: "GET",
       headers: { Accept: "text/event-stream" },
     });
 
     if (!response.ok || !response.body) {
-      const text = await response.text().catch(() => "");
-      throw new ApiClientError(response.status, `Log stream failed: ${text}`);
+      throw await this.toClientError(response);
     }
 
-    yield* parseSSE(response.body);
+    yield* parseSSE(response.body, DomainEvent);
   }
 
-  async getInfraStatus(): Promise<InfraStatusResponse> {
-    return this.unwrap(getInfraStatus({ client: this.client }));
-  }
-
-  async stopInfra(req: StopInfraRequest): Promise<StopInfraResponse> {
-    return this.unwrap(stopInfra({ client: this.client, body: req }));
-  }
-
-  async listDbTemplates(): Promise<ListDbTemplatesResponse> {
-    return this.unwrap(listDbTemplates({ client: this.client }));
-  }
-
-  async dumpDb(req: DumpDbRequest): Promise<DumpDbResponse> {
-    return this.unwrap(dumpDb({ client: this.client, body: req }));
-  }
-
-  async restoreDb(req: RestoreDbRequest): Promise<RestoreDbResponse> {
-    return this.unwrap(restoreDb({ client: this.client, body: req }));
-  }
-
-  private async unwrap<T>(promise: Promise<any>): Promise<T> {
-    const result = await promise;
-
-    if (result?.response?.ok) {
-      return result.data as T;
+  private request(path: string, options: {
+    method?: string;
+    body?: unknown;
+  }): Promise<void>;
+  private request<A extends Schema.Top>(
+    path: string,
+    options: {
+      method?: string;
+      body?: unknown;
+      schema: A;
+    },
+  ): Promise<Schema.Schema.Type<A>>;
+  private async request<A extends Schema.Top>(
+    path: string,
+    options: {
+      method?: string;
+      body?: unknown;
+      schema?: A;
+    },
+  ): Promise<Schema.Schema.Type<A> | void> {
+    const headers: Record<string, string> = {};
+    if (options.body !== undefined) {
+      headers["Content-Type"] = "application/json";
     }
 
-    const statusCode = result?.response?.status ?? 500;
-    const apiError = result?.error as ApiError | undefined;
-    const message =
-      apiError?.error ??
-      result?.response?.statusText ??
-      "Unknown error";
+    const response = await this.fetchFn(this.toUrl(path), {
+      method: options.method ?? "GET",
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
 
-    throw new ApiClientError(
-      statusCode,
-      message,
-      apiError?.code,
-      apiError?.details,
-    );
+    if (!response.ok) {
+      throw await this.toClientError(response);
+    }
+
+    if (options.schema === undefined || response.status === 204) {
+      return;
+    }
+
+    const json = await response.json();
+    return await decodeSchema(options.schema, json);
+  }
+
+  private async toClientError(response: Response) {
+    const fallback = new ApiClientError(response.status, response.statusText || "Request failed");
+    const text = await response.text().catch(() => "");
+
+    try {
+      const json = text ? JSON.parse(text) : {};
+      const decoded = await decodeSchema(ApiError, json);
+      return new ApiClientError(response.status, decoded.error, decoded.code, decoded.details);
+    } catch {
+      return new ApiClientError(response.status, text || fallback.message);
+    }
+  }
+
+  private toUrl(path: string) {
+    if (!this.baseUrl) return path;
+    return new URL(path, this.baseUrl).toString();
+  }
+
+  private withSearch(path: string, params: Record<string, string | undefined>) {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") {
+        search.set(key, value);
+      }
+    }
+    const suffix = search.toString();
+    return suffix ? `${path}?${suffix}` : path;
   }
 }
 
-async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncIterable<LogLine> {
+export function createApiClient(options?: ApiClientOptions) {
+  return new ApiClient(options);
+}
+
+async function decodeSchema<A extends Schema.Top>(schema: A, value: unknown) {
+  return await (Schema.decodeUnknownPromise(schema as never)(value) as Promise<Schema.Schema.Type<A>>);
+}
+
+async function* parseSSE<A extends Schema.Top>(
+  body: ReadableStream<Uint8Array>,
+  schema: A,
+): AsyncIterable<Schema.Schema.Type<A>> {
   const decoder = new TextDecoder();
   const reader = body.getReader();
   let buffer = "";
@@ -204,58 +396,39 @@ async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncIterable<LogLin
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        break;
+      }
 
       buffer += decoder.decode(value, { stream: true });
       const events = buffer.split(/\n\n/);
       buffer = events.pop() ?? "";
 
       for (const event of events) {
-        const parsed = parseSseEvent(event);
-        if (parsed) {
-          yield parsed;
+        const payload = getEventData(event);
+        if (payload === undefined) {
+          continue;
         }
+        const parsed = JSON.parse(payload) as unknown;
+        yield await decodeSchema(schema, parsed);
       }
     }
 
     buffer += decoder.decode();
-    if (buffer.trim()) {
-      const parsed = parseSseEvent(buffer);
-      if (parsed) {
-        yield parsed;
-      }
+    const payload = getEventData(buffer);
+    if (payload !== undefined) {
+      yield await decodeSchema(schema, JSON.parse(payload) as unknown);
     }
   } finally {
     reader.releaseLock();
   }
 }
 
-function parseSseEvent(event: string): LogLine | null {
-  let dataLine: string | undefined;
-
-  for (const line of event.split("\n")) {
-    if (line.startsWith("data:")) {
-      dataLine = line.slice(5).trimStart();
-    }
-  }
-
-  if (!dataLine) return null;
-
-  try {
-    return JSON.parse(dataLine) as LogLine;
-  } catch {
-    return null;
-  }
-}
-
-export class ApiClientError extends Error {
-  constructor(
-    public readonly statusCode: number,
-    message: string,
-    public readonly code?: string,
-    public readonly details?: unknown,
-  ) {
-    super(message);
-    this.name = "ApiClientError";
-  }
+function getEventData(event: string) {
+  const lines = event.split("\n");
+  const data = lines
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+  return data.length > 0 ? data : undefined;
 }

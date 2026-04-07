@@ -9,6 +9,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./browser": {
+      "import": "./dist/browser.js",
+      "types": "./dist/browser.d.ts"
     }
   },
   "files": [
@@ -26,6 +30,7 @@
     "directory": "packages/core"
   },
   "dependencies": {
+    "effect": "4.0.0-beta.43",
     "dotenv": "^16.5.0",
     "dotenv-expand": "^12.0.0",
     "yaml": "^2.7.0"

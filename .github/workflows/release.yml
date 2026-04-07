@@ -16,15 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Install golangci-lint
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b "$(go env GOPATH)/bin" v2.6.2
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
       - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
@@ -35,29 +26,14 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Check OpenAPI
-        run: pnpm run check:openapi
-
-      - name: Check generated types
-        run: pnpm run check:types
-
-      - name: Check Go fmt
-        run: pnpm run check:go-fmt
-
-      - name: Lint Go
-        run: pnpm run lint:go
-
-      - name: Go test
-        run: go test -tags noui ./...
-
-      - name: Build web UI
-        run: cd packages/web && pnpm build
-
-      - name: Go build (with embedded SPA)
-        run: go build ./cmd/spawntreed/
-
       - name: Build packages
         run: pnpm build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
 
       - name: Test
         run: pnpm test

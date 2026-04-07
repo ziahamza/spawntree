@@ -1,6 +1,6 @@
-import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, request as httpRequest, type ServerResponse } from "node:http";
 import { request as httpsRequest } from "node:https";
-import type { Service, ServiceStatus, ServiceConfig } from "spawntree-core";
+import type { Service, ServiceConfig, ServiceStatus } from "spawntree-core";
 
 /**
  * ExternalRunner proxies requests to a remote URL, rewriting CORS headers
@@ -44,15 +44,17 @@ export class ExternalRunner implements Service {
     this.server = createServer((req, res) => this.proxyRequest(req, res));
 
     // WebSocket upgrade
-    this.server.on("upgrade", (req, socket, head) => {
-      this.proxyWebSocket(req, socket, head);
+    this.server.on("upgrade", (req, socket, _head) => {
+      this.proxyWebSocket(req, socket, _head);
     });
 
     await new Promise<void>((resolve, reject) => {
       this.server!.on("error", reject);
       this.server!.listen(this.allocatedPort, "127.0.0.1", () => {
         this._status = "running";
-        console.log(`[spawntree-daemon] [external:${this.name}] Proxying localhost:${this.allocatedPort} → ${this.upstreamUrl.origin}`);
+        console.log(
+          `[spawntree-daemon] [external:${this.name}] Proxying localhost:${this.allocatedPort} → ${this.upstreamUrl.origin}`,
+        );
         resolve();
       });
     });
@@ -183,7 +185,7 @@ export class ExternalRunner implements Service {
     req.pipe(proxyReq);
   }
 
-  private proxyWebSocket(req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer): void {
+  private proxyWebSocket(req: IncomingMessage, socket: import("node:stream").Duplex, _head: Buffer): void {
     const targetPath = req.url || "/";
     const wsProtocol = this.isHttps ? "wss:" : "ws:";
     const targetUrl = new URL(targetPath, `${wsProtocol}//${this.upstreamUrl.host}`);

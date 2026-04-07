@@ -1,8 +1,8 @@
+import Dockerode from "dockerode";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import Dockerode from "dockerode";
 import type { InfraStatus } from "spawntree-core";
-import { spawntreeHome } from "../state/global-state.js";
+import { spawntreeHome } from "../state/global-state.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -120,8 +120,8 @@ export class RedisRunner {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("connect ENOENT") || msg.includes("connect ECONNREFUSED")) {
         throw new Error(
-          `[spawntree-daemon] Docker is not running or not installed. ` +
-          `Please start Docker Desktop or install Docker Engine. (${msg})`,
+          `[spawntree-daemon] Docker is not running or not installed. `
+            + `Please start Docker Desktop or install Docker Engine. (${msg})`,
         );
       }
       throw err;
@@ -191,7 +191,10 @@ export class RedisRunner {
     console.log(`[spawntree-daemon] [redis] Flushing db index ${dbIndex}...`);
     const container = this.docker.getContainer(this.containerId);
     await execInContainer(container, [
-      "redis-cli", "-n", String(dbIndex), "FLUSHDB",
+      "redis-cli",
+      "-n",
+      String(dbIndex),
+      "FLUSHDB",
     ]);
   }
 
@@ -223,7 +226,9 @@ export class RedisRunner {
         },
         (event: Record<string, unknown>) => {
           if (event.status) {
-            console.log(`[spawntree-daemon] [redis] pull: ${event.status}${event.progress ? " " + event.progress : ""}`);
+            console.log(
+              `[spawntree-daemon] [redis] pull: ${event.status}${event.progress ? " " + event.progress : ""}`,
+            );
           }
         },
       );

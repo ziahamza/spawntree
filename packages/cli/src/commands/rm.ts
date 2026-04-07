@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { getClient, getCurrentRepoId } from "../daemon-bridge.js";
+import { getClient, getCurrentRepoId } from "../daemon-bridge.ts";
 
 export function registerRmCommand(program: Command): void {
   program

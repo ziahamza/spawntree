@@ -1,359 +1,358 @@
-import { Hono } from "hono";
-import { stream } from "hono/streaming";
-import type {
+import { Effect, ManagedRuntime, Schema } from "effect";
+import { type Context, Hono } from "hono";
+import { existsSync, readFileSync } from "node:fs";
+import { extname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  AddFolderRequest,
+  ArchiveWorktreeRequest,
+  ConfigPreviewRequest,
+  ConfigPreviewStopRequest,
+  ConfigSaveRequest,
+  ConfigSuggestRequest,
+  ConfigTestRequest,
   CreateEnvRequest,
-  CreateEnvResponse,
-  GetEnvResponse,
-  ListEnvsResponse,
-  DeleteEnvResponse,
-  DownEnvResponse,
-  DaemonInfo,
-  GetInfraStatusResponse,
-  StopInfraRequest,
-  StopInfraResponse,
-  ListDbTemplatesResponse,
   DumpDbRequest,
-  DumpDbResponse,
+  RegisterRepoRequest,
+  RelinkCloneRequest,
   RestoreDbRequest,
-  RestoreDbResponse,
-  ApiError,
+  StopInfraRequest,
 } from "spawntree-core";
-import type { EnvManager } from "./managers/env-manager.js";
-import { NotFoundError } from "./managers/env-manager.js";
-import type { LogStreamer } from "./managers/log-streamer.js";
-import type { PortRegistry } from "./managers/port-registry.js";
-import type { InfraManager } from "./managers/infra-manager.js";
+import { BadRequestError } from "./errors.ts";
+import { DaemonService } from "./services/daemon-service.ts";
 
-const DAEMON_VERSION = "0.1.0";
-const startTime = Date.now();
+const webDistDir = resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
+const webIndexPath = resolve(webDistDir, "index.html");
 
-function apiError(error: string, code: string, status: number, details?: unknown) {
-  const body: ApiError = { error, code };
-  if (details !== undefined) body.details = details;
-  return Response.json(body, { status });
-}
-
-function notFound(msg: string) {
-  return apiError(msg, "NOT_FOUND", 404);
-}
-
-function badRequest(msg: string, details?: unknown) {
-  return apiError(msg, "BAD_REQUEST", 400, details);
-}
-
-function internalError(msg: string, details?: unknown) {
-  return apiError(msg, "INTERNAL_ERROR", 500, details);
-}
-
-export function createApp(
-  envManager: EnvManager,
-  logStreamer: LogStreamer,
-  portRegistry: PortRegistry,
-  infraManager: InfraManager,
-): Hono {
+export function createApp(runtime: ManagedRuntime.ManagedRuntime<DaemonService, never>) {
   const app = new Hono();
 
-  // Root health check (no prefix)
-  app.get("/", (c) => c.json({ status: "ok" }));
-
-  // -------------------------------------------------------------------------
-  // GET /api/v1/daemon  — daemon info
-  // -------------------------------------------------------------------------
-  app.get("/api/v1/daemon", (c) => {
-    const info: DaemonInfo = {
-      version: DAEMON_VERSION,
-      pid: process.pid,
-      uptime: Math.floor((Date.now() - startTime) / 1000),
-      repos: 0,
-      activeEnvs: envManager.listEnvs().length,
-    };
-    return c.json(info);
+  app.use(async (context, next) => {
+    const startedAt = Date.now();
+    process.stderr.write(`[spawntree-daemon] -> ${context.req.method} ${context.req.path}\n`);
+    await next();
+    process.stderr.write(
+      `[spawntree-daemon] <- ${context.req.method} ${context.req.path} ${context.res.status} ${Date.now() - startedAt}ms\n`,
+    );
   });
 
-  // -------------------------------------------------------------------------
-  // POST /api/v1/envs  — create env (repoId derived from repoPath in body)
-  // -------------------------------------------------------------------------
-  app.post("/api/v1/envs", async (c) => {
-    let body: CreateEnvRequest;
-    try {
-      body = await c.req.json<CreateEnvRequest>();
-    } catch {
-      return badRequest("Invalid JSON body");
-    }
+  app.get("/health", (context) => context.text("ok"));
 
-    if (!body.repoPath) {
-      return badRequest("repoPath is required");
-    }
+  app.get("/api/v1/daemon", (context) => runJson(runtime, context, DaemonService.use((service) => service.daemonInfo)));
 
-    try {
-      const env = await envManager.createEnv(body);
-      const resp: CreateEnvResponse = { env };
-      return c.json(resp, 201);
-    } catch (err) {
-      if (err instanceof NotFoundError) return notFound(err.message);
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[spawntree-daemon] createEnv error: ${msg}`);
-      return internalError(msg);
-    }
+  app.get("/api/v1/envs", (context) => runJson(runtime, context, DaemonService.use((service) => service.listEnvs())));
+
+  app.post("/api/v1/envs", async (context) => {
+    const body = await decodeBody(CreateEnvRequest, context);
+    return runJson(runtime, context, DaemonService.use((service) => service.createEnv(body)), 201);
   });
 
-  // -------------------------------------------------------------------------
-  // GET /api/v1/envs  — list all envs
-  // -------------------------------------------------------------------------
-  app.get("/api/v1/envs", (c) => {
+  app.get("/api/v1/repos/:repoId/envs", (context) =>
+    runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.listEnvs(context.req.param("repoId"))),
+    ));
+
+  app.get("/api/v1/repos/:repoId/envs/:envId", (context) =>
+    runJson(
+      runtime,
+      context,
+      DaemonService.use((service) =>
+        service.getEnv(context.req.param("repoId"), context.req.param("envId"), context.req.query("repoPath"))
+      ),
+    ));
+
+  app.post("/api/v1/repos/:repoId/envs/:envId/down", (context) =>
+    runJson(
+      runtime,
+      context,
+      DaemonService.use((service) =>
+        service.downEnv(context.req.param("repoId"), context.req.param("envId"), context.req.query("repoPath"))
+      ),
+    ));
+
+  app.delete("/api/v1/repos/:repoId/envs/:envId", (context) =>
+    runJson(
+      runtime,
+      context,
+      DaemonService.use((service) =>
+        service.deleteEnv(context.req.param("repoId"), context.req.param("envId"), context.req.query("repoPath"))
+      ),
+    ));
+
+  app.get("/api/v1/repos/:repoId/envs/:envId/logs", async (context) => {
     try {
-      const envs = envManager.listEnvs();
-      const resp: ListEnvsResponse = { envs };
-      return c.json(resp);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return internalError(msg);
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // GET /repos/:repoId/envs  — list envs for repo
-  // -------------------------------------------------------------------------
-  app.get("/api/v1/repos/:repoId/envs", (c) => {
-    const { repoId } = c.req.param();
-    try {
-      const envs = envManager.listEnvs(repoId);
-      const resp: ListEnvsResponse = { envs };
-      return c.json(resp);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return internalError(msg);
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // GET /repos/:repoId/envs/:envId  — get env info
-  // -------------------------------------------------------------------------
-  app.get("/api/v1/repos/:repoId/envs/:envId", (c) => {
-    const { repoId, envId } = c.req.param();
-    try {
-      const env = envManager.getEnv(repoId, envId);
-      const resp: GetEnvResponse = { env };
-      return c.json(resp);
-    } catch (err) {
-      if (err instanceof NotFoundError) return notFound(err.message);
-      const msg = err instanceof Error ? err.message : String(err);
-      return internalError(msg);
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // DELETE /repos/:repoId/envs/:envId  — full teardown
-  // -------------------------------------------------------------------------
-  app.delete("/api/v1/repos/:repoId/envs/:envId", async (c) => {
-    const { repoId, envId } = c.req.param();
-    try {
-      await envManager.deleteEnv(repoId, envId);
-      const resp: DeleteEnvResponse = { ok: true };
-      return c.json(resp);
-    } catch (err) {
-      if (err instanceof NotFoundError) return notFound(err.message);
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[spawntree-daemon] deleteEnv error: ${msg}`);
-      return internalError(msg);
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // POST /repos/:repoId/envs/:envId/down  — stop (keep state)
-  // -------------------------------------------------------------------------
-  app.post("/api/v1/repos/:repoId/envs/:envId/down", async (c) => {
-    const { repoId, envId } = c.req.param();
-    try {
-      await envManager.downEnv(repoId, envId);
-      const resp: DownEnvResponse = { ok: true };
-      return c.json(resp);
-    } catch (err) {
-      if (err instanceof NotFoundError) return notFound(err.message);
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[spawntree-daemon] downEnv error: ${msg}`);
-      return internalError(msg);
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // GET /repos/:repoId/envs/:envId/logs  — SSE stream
-  // -------------------------------------------------------------------------
-  app.get("/api/v1/repos/:repoId/envs/:envId/logs", async (c) => {
-    const { repoId, envId } = c.req.param();
-    const serviceName = c.req.query("service");
-    const follow = c.req.query("follow") !== "false";
-    const linesParam = c.req.query("lines");
-    const lines = linesParam ? parseInt(linesParam, 10) : 50;
-
-    // Verify env exists
-    try {
-      envManager.getEnv(repoId, envId);
-    } catch (err) {
-      if (err instanceof NotFoundError) return notFound(err.message);
-      const msg = err instanceof Error ? err.message : String(err);
-      return internalError(msg);
-    }
-
-    const readable = logStreamer.subscribe(repoId, envId, {
-      service: serviceName,
-      follow,
-      lines,
-    });
-
-    return stream(c, async (s) => {
-      c.header("Content-Type", "text/event-stream");
-      c.header("Cache-Control", "no-cache");
-      c.header("Connection", "keep-alive");
-
-      const reader = readable.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          await s.write(value as Uint8Array);
-        }
-      } catch {
-        // client disconnected
-      } finally {
-        reader.releaseLock();
-      }
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // GET /infra  — infra status
-  // -------------------------------------------------------------------------
-  app.get("/api/v1/infra", async (c) => {
-    try {
-      const status = await infraManager.getStatus();
-      const resp: GetInfraStatusResponse = status;
-      return c.json(resp);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return internalError(msg);
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // POST /infra/stop  — stop infra
-  // -------------------------------------------------------------------------
-  app.post("/api/v1/infra/stop", async (c) => {
-    let body: StopInfraRequest;
-    try {
-      body = await c.req.json<StopInfraRequest>();
-    } catch {
-      return badRequest("Invalid JSON body");
-    }
-
-    console.log(`[spawntree-daemon] infra/stop requested: target=${body.target}`);
-
-    try {
-      switch (body.target) {
-        case "postgres":
-          await infraManager.stopPostgres(body.version);
-          break;
-        case "redis":
-          await infraManager.stopRedis();
-          break;
-        case "all":
-          await infraManager.stopAll();
-          break;
-        default:
-          return badRequest(`Unknown target: ${(body as StopInfraRequest).target}`);
-      }
-      const resp: StopInfraResponse = { ok: true };
-      return c.json(resp);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[spawntree-daemon] infra/stop error: ${msg}`);
-      return internalError(msg);
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // GET /db/templates  — list DB templates
-  // -------------------------------------------------------------------------
-  app.get("/api/v1/db/templates", async (c) => {
-    try {
-      const pgRunner = await infraManager.ensurePostgres();
-      const templates = pgRunner.listTemplates().map((t) => ({
-        name: t.name,
-        size: t.size,
-        createdAt: t.createdAt,
-      }));
-      const resp: ListDbTemplatesResponse = { templates };
-      return c.json(resp);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return internalError(msg);
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // POST /db/dump  — dump DB to template
-  // -------------------------------------------------------------------------
-  app.post("/api/v1/db/dump", async (c) => {
-    let body: DumpDbRequest;
-    try {
-      body = await c.req.json<DumpDbRequest>();
-    } catch {
-      return badRequest("Invalid JSON body");
-    }
-
-    if (!body.dbName || !body.templateName) {
-      return badRequest("dbName and templateName are required");
-    }
-
-    try {
-      const pgRunner = await infraManager.ensurePostgres();
-      await pgRunner.dumpToTemplate(body.dbName, body.templateName);
-      const templates = pgRunner.listTemplates();
-      const template = templates.find((t) => t.name === body.templateName);
-      if (!template) {
-        return internalError("Dump succeeded but template not found");
-      }
-      const resp: DumpDbResponse = {
-        template: {
-          name: template.name,
-          size: template.size,
-          createdAt: template.createdAt,
+      const stream = await runtime.runPromise(
+        DaemonService.use((service) =>
+          service.logs(context.req.param("repoId"), context.req.param("envId"), context.req.query("repoPath"), {
+            service: context.req.query("service"),
+            follow: context.req.query("follow") === "false" ? false : true,
+            lines: context.req.query("lines") ? Number.parseInt(context.req.query("lines") ?? "50", 10) : 50,
+          })
+        ),
+      );
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
         },
-      };
-      return c.json(resp);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[spawntree-daemon] db/dump error: ${msg}`);
-      return internalError(msg);
+      });
+    } catch (error) {
+      return apiErrorResponse(error);
     }
   });
 
-  // -------------------------------------------------------------------------
-  // POST /db/restore  — restore DB from template
-  // -------------------------------------------------------------------------
-  app.post("/api/v1/db/restore", async (c) => {
-    let body: RestoreDbRequest;
+  app.get("/api/v1/events", async (context) => {
     try {
-      body = await c.req.json<RestoreDbRequest>();
-    } catch {
-      return badRequest("Invalid JSON body");
-    }
-
-    if (!body.dbName || !body.templateName) {
-      return badRequest("dbName and templateName are required");
-    }
-
-    try {
-      const pgRunner = await infraManager.ensurePostgres();
-      await pgRunner.restoreFromTemplate(body.dbName, body.templateName);
-      const resp: RestoreDbResponse = { ok: true };
-      return c.json(resp);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[spawntree-daemon] db/restore error: ${msg}`);
-      return internalError(msg);
+      const since = context.req.query("since");
+      const stream = await runtime.runPromise(
+        DaemonService.use((service) => service.events(since ? Number.parseInt(since, 10) : undefined)),
+      );
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      });
+    } catch (error) {
+      return apiErrorResponse(error);
     }
   });
+
+  app.get("/api/v1/infra", (context) => runJson(runtime, context, DaemonService.use((service) => service.infraStatus)));
+
+  app.post("/api/v1/infra/stop", async (context) => {
+    const body = await decodeBody(StopInfraRequest, context);
+    return runJson(runtime, context, DaemonService.use((service) => service.stopInfra(body)));
+  });
+
+  app.post("/api/v1/registry/repos", async (context) => {
+    const body = await decodeBody(RegisterRepoRequest, context);
+    return runJson(runtime, context, DaemonService.use((service) => service.registerRepo(body)), 201);
+  });
+
+  app.post("/api/v1/db/dump", async (context) => {
+    const body = await decodeBody(DumpDbRequest, context);
+    return runJson(runtime, context, DaemonService.use((service) => service.dumpDb(body)));
+  });
+
+  app.post("/api/v1/db/restore", async (context) => {
+    const body = await decodeBody(RestoreDbRequest, context);
+    return runJson(runtime, context, DaemonService.use((service) => service.restoreDb(body)));
+  });
+
+  app.get(
+    "/api/v1/web/repos",
+    (context) => runJson(runtime, context, DaemonService.use((service) => service.listWebRepos)),
+  );
+
+  app.get("/api/v1/web/repos/:repoSlug/tree", (context) =>
+    runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.getWebRepoTree(context.req.param("repoSlug"))),
+    ));
+
+  app.get("/api/v1/web/repos/:repoSlug", (context) =>
+    runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.getWebRepo(context.req.param("repoSlug"))),
+    ));
+
+  app.post("/api/v1/web/repos/probe", async (context) => {
+    const body = await decodeBody(Schema.Struct({ path: Schema.String }), context);
+    return runJson(runtime, context, DaemonService.use((service) => service.probeAddPath(body.path)));
+  });
+
+  app.post("/api/v1/web/repos/add", async (context) => {
+    const body = await decodeBody(AddFolderRequest, context);
+    return runJson(runtime, context, DaemonService.use((service) => service.addFolder(body)), 201);
+  });
+
+  app.patch("/api/v1/web/repos/:repoSlug/clones/:cloneId", async (context) => {
+    const body = await decodeBody(RelinkCloneRequest, context);
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) =>
+        service.relinkClone(context.req.param("repoSlug"), context.req.param("cloneId"), body)
+      ),
+    );
+  });
+
+  app.delete("/api/v1/web/repos/:repoSlug/clones/:cloneId", (context) =>
+    runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.deleteClone(context.req.param("repoSlug"), context.req.param("cloneId"))),
+    ));
+
+  app.post("/api/v1/web/repos/:repoSlug/worktrees/archive", async (context) => {
+    const body = await decodeBody(ArchiveWorktreeRequest, context);
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.archiveWorktree(context.req.param("repoSlug"), body)),
+    );
+  });
+
+  app.post("/api/v1/web/config/suggest", async (context) => {
+    const body = await decodeBody(ConfigSuggestRequest, context);
+    return runJson(runtime, context, DaemonService.use((service) => service.suggestConfig(body)));
+  });
+
+  app.post("/api/v1/web/config/test", async (context) => {
+    const body = await decodeBody(ConfigTestRequest, context);
+    return runJson(runtime, context, DaemonService.use((service) => service.testConfig(body)));
+  });
+
+  app.post("/api/v1/web/config/preview/start", async (context) => {
+    const body = await decodeBody(ConfigPreviewRequest, context);
+    return runJson(runtime, context, DaemonService.use((service) => service.startConfigPreview(body)));
+  });
+
+  app.post("/api/v1/web/config/preview/stop", async (context) => {
+    const body = await decodeBody(ConfigPreviewStopRequest, context);
+    return runJson(runtime, context, DaemonService.use((service) => service.stopConfigPreview(body)));
+  });
+
+  app.post("/api/v1/web/config/save", async (context) => {
+    const body = await decodeBody(ConfigSaveRequest, context);
+    return runJson(runtime, context, DaemonService.use((service) => service.saveConfig(body)));
+  });
+
+  app.get("*", (context) => serveWebAsset(context.req.path));
+
+  app.onError((error) => apiErrorResponse(error));
 
   return app;
+}
+
+export function hasBundledWebApp() {
+  return existsSync(webIndexPath);
+}
+
+async function decodeBody<A extends Schema.Top>(schema: A, context: Context) {
+  let body: unknown;
+  try {
+    body = await context.req.json();
+  } catch {
+    throw new BadRequestError({ code: "INVALID_JSON", message: "Invalid JSON body" });
+  }
+
+  try {
+    return await (Schema.decodeUnknownPromise(schema as never)(body) as Promise<Schema.Schema.Type<A>>);
+  } catch (error) {
+    throw new BadRequestError({ code: "INVALID_BODY", message: toErrorMessage(error) });
+  }
+}
+
+async function runJson(
+  runtime: ManagedRuntime.ManagedRuntime<DaemonService, never>,
+  _context: Context,
+  effect: Effect.Effect<unknown, unknown, DaemonService>,
+  status = 200,
+) {
+  try {
+    const body = await runtime.runPromise(effect);
+    return new Response(body === undefined ? null : JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (error) {
+    return apiErrorResponse(error);
+  }
+}
+
+function apiErrorResponse(error: unknown) {
+  const { status, code, message, details } = normalizeError(error);
+  return new Response(JSON.stringify({ error: message, code, details }), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function normalizeError(error: unknown) {
+  if (isTagged(error, "BadRequestError")) {
+    return { status: 400, code: error.code, message: error.message, details: error.details };
+  }
+  if (isTagged(error, "NotFoundError")) {
+    return { status: 404, code: error.code, message: error.message, details: error.details };
+  }
+  if (isTagged(error, "ConflictError")) {
+    return { status: 409, code: error.code, message: error.message, details: error.details };
+  }
+  if (isTagged(error, "InternalError")) {
+    return { status: 500, code: error.code, message: error.message, details: error.details };
+  }
+  return {
+    status: 500,
+    code: "INTERNAL_ERROR",
+    message: toErrorMessage(error),
+    details: undefined,
+  };
+}
+
+function isTagged<T extends string>(
+  error: unknown,
+  tag: T,
+): error is { _tag: T; code: string; message: string; details?: unknown; } {
+  return typeof error === "object" && error !== null && "_tag" in error && (error as { _tag?: string; })._tag === tag;
+}
+
+function toErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function serveWebAsset(pathname: string) {
+  if (!hasBundledWebApp()) {
+    return new Response(
+      [
+        "spawntree web bundle not found.",
+        "",
+        "Run `pnpm build` to have the daemon serve the built UI,",
+        "or run `pnpm dev:web:qa` separately for live frontend development.",
+      ].join("\n"),
+      {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      },
+    );
+  }
+
+  const safePath = pathname === "/" ? webIndexPath : resolve(webDistDir, `.${pathname}`);
+  if (safePath.startsWith(webDistDir) && existsSync(safePath)) {
+    return new Response(readFileSync(safePath), {
+      headers: { "Content-Type": contentTypeFor(safePath) },
+    });
+  }
+
+  return new Response(readFileSync(webIndexPath), {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+function contentTypeFor(path: string) {
+  switch (extname(path)) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".js":
+      return "application/javascript; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".svg":
+      return "image/svg+xml";
+    case ".woff2":
+      return "font/woff2";
+    case ".png":
+      return "image/png";
+    default:
+      return "application/octet-stream";
+  }
 }

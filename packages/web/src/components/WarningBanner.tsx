@@ -1,12 +1,12 @@
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle } from "lucide-react";
 
 interface WarningBannerProps {
-  cloneID: string
-  path: string
-  onRelink: (cloneID: string) => void
-  onRemove: (cloneID: string) => void
-  isRelinking?: boolean
-  isRemoving?: boolean
+  cloneID: string;
+  path: string;
+  onRelink: (cloneID: string) => void;
+  onRemove: (cloneID: string) => void;
+  isRelinking?: boolean;
+  isRemoving?: boolean;
 }
 
 export function WarningBanner({
@@ -32,16 +32,16 @@ export function WarningBanner({
           disabled={isRelinking || isRemoving}
           className="px-3 py-1.5 text-xs rounded-md border border-orange/40 bg-orange/10 text-orange hover:bg-orange/20 transition-colors disabled:opacity-50 min-h-[44px] sm:min-h-[32px]"
         >
-          {isRelinking ? 'Relinking…' : 'Relink'}
+          {isRelinking ? "Relinking…" : "Relink"}
         </button>
         <button
           onClick={() => onRemove(cloneID)}
           disabled={isRemoving || isRelinking}
           className="px-3 py-1.5 text-xs rounded-md border border-border text-muted hover:text-red hover:border-red/40 transition-colors disabled:opacity-50 min-h-[44px] sm:min-h-[32px]"
         >
-          {isRemoving ? 'Removing…' : 'Remove'}
+          {isRemoving ? "Removing…" : "Remove"}
         </button>
       </div>
     </div>
-  )
+  );
 }

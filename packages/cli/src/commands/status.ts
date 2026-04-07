@@ -1,6 +1,6 @@
 import type { Command } from "commander";
-import { getClient, getCurrentRepoId, getCurrentEnvId } from "../daemon-bridge.js";
 import type { EnvInfo, ServiceInfo } from "spawntree-core";
+import { getClient, getCurrentEnvId, getCurrentRepoId } from "../daemon-bridge.ts";
 
 export function registerStatusCommand(program: Command): void {
   program
@@ -68,14 +68,12 @@ function printEnvStatus(env: EnvInfo): void {
   const statusWidth = Math.max(6, ...env.services.map((s) => s.status.length));
 
   // Header
-  const header =
-    `    ${"NAME".padEnd(nameWidth)}  ${"TYPE".padEnd(typeWidth)}  ${"STATUS".padEnd(statusWidth)}  PORT`;
+  const header = `    ${"NAME".padEnd(nameWidth)}  ${"TYPE".padEnd(typeWidth)}  ${"STATUS".padEnd(statusWidth)}  PORT`;
   console.log(header);
   console.log(`    ${"-".repeat(nameWidth)}  ${"-".repeat(typeWidth)}  ${"-".repeat(statusWidth)}  ----`);
 
   for (const svc of env.services) {
     const statusColored = colorStatus(svc.status);
-    const statusPad = svc.status.padEnd(statusWidth);
     // Replace the plain status text with the colored version, keeping padding
     const statusDisplay = statusColored + " ".repeat(Math.max(0, statusWidth - svc.status.length));
     const port = svc.port > 0 ? String(svc.port) : "-";

@@ -1,8 +1,4 @@
-import {
-  loadPortRegistry,
-  savePortRegistry,
-  type PortSlot,
-} from "../state/global-state.js";
+import { loadPortRegistry, type PortSlot, savePortRegistry } from "../state/global-state.ts";
 
 const PORT_RANGE_SIZE = 100;
 const PORT_RANGE_START = 10000;
@@ -45,8 +41,8 @@ export class PortRegistry {
 
     if (slotIndex === -1) {
       throw new Error(
-        `All ${MAX_SLOTS} port slots are in use. ` +
-          `Remove unused environments to free slots.`,
+        `All ${MAX_SLOTS} port slots are in use. `
+          + `Remove unused environments to free slots.`,
       );
     }
 

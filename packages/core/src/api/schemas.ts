@@ -1,0 +1,422 @@
+import { Schema } from "effect";
+
+export const RepoId = Schema.String;
+export type RepoId = Schema.Schema.Type<typeof RepoId>;
+
+export const EnvId = Schema.String;
+export type EnvId = Schema.Schema.Type<typeof EnvId>;
+
+export const CloneId = Schema.String;
+export type CloneId = Schema.Schema.Type<typeof CloneId>;
+
+export const RepoSlug = Schema.String;
+export type RepoSlug = Schema.Schema.Type<typeof RepoSlug>;
+
+export const ServiceStatus = Schema.Literals(["starting", "running", "failed", "stopped"]);
+export type ServiceStatus = Schema.Schema.Type<typeof ServiceStatus>;
+
+export const ServiceType = Schema.Literals(["process", "container", "postgres", "redis", "external"]);
+export type ServiceType = Schema.Schema.Type<typeof ServiceType>;
+
+export const InfraStatus = Schema.Literals(["running", "stopped", "starting", "error"]);
+export type InfraStatus = Schema.Schema.Type<typeof InfraStatus>;
+
+export const ServiceInfo = Schema.Struct({
+  name: Schema.String,
+  type: ServiceType,
+  status: ServiceStatus,
+  port: Schema.Number,
+  pid: Schema.optional(Schema.Number),
+  url: Schema.optional(Schema.String),
+  containerId: Schema.optional(Schema.String),
+});
+export type ServiceInfo = Schema.Schema.Type<typeof ServiceInfo>;
+
+export const EnvInfo = Schema.Struct({
+  envId: EnvId,
+  repoId: RepoId,
+  repoPath: Schema.String,
+  branch: Schema.String,
+  basePort: Schema.Number,
+  createdAt: Schema.String,
+  services: Schema.Array(ServiceInfo),
+});
+export type EnvInfo = Schema.Schema.Type<typeof EnvInfo>;
+
+export const DaemonInfo = Schema.Struct({
+  version: Schema.String,
+  pid: Schema.Number,
+  uptime: Schema.Number,
+  repos: Schema.Number,
+  activeEnvs: Schema.Number,
+});
+export type DaemonInfo = Schema.Schema.Type<typeof DaemonInfo>;
+
+export const PostgresInstanceInfo = Schema.Struct({
+  version: Schema.String,
+  status: InfraStatus,
+  port: Schema.Number,
+  dataDir: Schema.String,
+  databases: Schema.Array(Schema.String),
+  containerId: Schema.optional(Schema.String),
+});
+export type PostgresInstanceInfo = Schema.Schema.Type<typeof PostgresInstanceInfo>;
+
+export const RedisInstanceInfo = Schema.Struct({
+  status: InfraStatus,
+  port: Schema.Number,
+  allocatedDbIndices: Schema.Number,
+  containerId: Schema.optional(Schema.String),
+});
+export type RedisInstanceInfo = Schema.Schema.Type<typeof RedisInstanceInfo>;
+
+export const InfraStatusResponse = Schema.Struct({
+  postgres: Schema.Array(PostgresInstanceInfo),
+  redis: Schema.optional(RedisInstanceInfo),
+});
+export type InfraStatusResponse = Schema.Schema.Type<typeof InfraStatusResponse>;
+
+export const ApiError = Schema.Struct({
+  error: Schema.String,
+  code: Schema.String,
+  details: Schema.optional(Schema.Unknown),
+});
+export type ApiError = Schema.Schema.Type<typeof ApiError>;
+
+export const CreateEnvRequest = Schema.Struct({
+  repoPath: Schema.String,
+  envId: Schema.optional(EnvId),
+  prefix: Schema.optional(Schema.String),
+  envOverrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  configFile: Schema.optional(Schema.String),
+  skipHealthcheckWait: Schema.optional(Schema.Boolean),
+});
+export type CreateEnvRequest = Schema.Schema.Type<typeof CreateEnvRequest>;
+
+export const CreateEnvResponse = Schema.Struct({
+  env: EnvInfo,
+});
+export type CreateEnvResponse = Schema.Schema.Type<typeof CreateEnvResponse>;
+
+export const GetEnvResponse = Schema.Struct({
+  env: EnvInfo,
+});
+export type GetEnvResponse = Schema.Schema.Type<typeof GetEnvResponse>;
+
+export const ListEnvsResponse = Schema.Struct({
+  envs: Schema.Array(EnvInfo),
+});
+export type ListEnvsResponse = Schema.Schema.Type<typeof ListEnvsResponse>;
+
+export const OkResponse = Schema.Struct({
+  ok: Schema.Boolean,
+});
+export type OkResponse = Schema.Schema.Type<typeof OkResponse>;
+
+export const LogLine = Schema.Struct({
+  ts: Schema.String,
+  service: Schema.String,
+  stream: Schema.Literals(["stdout", "stderr", "system"]),
+  line: Schema.String,
+});
+export type LogLine = Schema.Schema.Type<typeof LogLine>;
+
+export const RegisteredRepo = Schema.Struct({
+  repoId: RepoId,
+  repoPath: Schema.String,
+  configPath: Schema.String,
+  lastSeenAt: Schema.String,
+});
+export type RegisteredRepo = Schema.Schema.Type<typeof RegisteredRepo>;
+
+export const RegisterRepoRequest = Schema.Struct({
+  repoPath: Schema.String,
+  configPath: Schema.String,
+});
+export type RegisterRepoRequest = Schema.Schema.Type<typeof RegisterRepoRequest>;
+
+export const RegisterRepoResponse = Schema.Struct({
+  repo: RegisteredRepo,
+});
+export type RegisterRepoResponse = Schema.Schema.Type<typeof RegisterRepoResponse>;
+
+export const StopInfraRequest = Schema.Struct({
+  target: Schema.Literals(["postgres", "redis", "all"]),
+  version: Schema.optional(Schema.String),
+});
+export type StopInfraRequest = Schema.Schema.Type<typeof StopInfraRequest>;
+
+export const StopInfraResponse = OkResponse;
+export type StopInfraResponse = Schema.Schema.Type<typeof StopInfraResponse>;
+
+export const DbTemplate = Schema.Struct({
+  name: Schema.String,
+  size: Schema.Number,
+  createdAt: Schema.String,
+  sourceDatabaseUrl: Schema.optional(Schema.String),
+});
+export type DbTemplate = Schema.Schema.Type<typeof DbTemplate>;
+
+export const ListDbTemplatesResponse = Schema.Struct({
+  templates: Schema.Array(DbTemplate),
+});
+export type ListDbTemplatesResponse = Schema.Schema.Type<typeof ListDbTemplatesResponse>;
+
+export const DumpDbRequest = Schema.Struct({
+  repoPath: Schema.String,
+  envId: EnvId,
+  dbName: Schema.String,
+  templateName: Schema.String,
+});
+export type DumpDbRequest = Schema.Schema.Type<typeof DumpDbRequest>;
+
+export const DumpDbResponse = Schema.Struct({
+  template: DbTemplate,
+});
+export type DumpDbResponse = Schema.Schema.Type<typeof DumpDbResponse>;
+
+export const RestoreDbRequest = Schema.Struct({
+  repoPath: Schema.String,
+  envId: EnvId,
+  dbName: Schema.String,
+  templateName: Schema.String,
+});
+export type RestoreDbRequest = Schema.Schema.Type<typeof RestoreDbRequest>;
+
+export const RestoreDbResponse = OkResponse;
+export type RestoreDbResponse = Schema.Schema.Type<typeof RestoreDbResponse>;
+
+export const Repo = Schema.Struct({
+  id: Schema.String,
+  slug: RepoSlug,
+  name: Schema.String,
+  provider: Schema.String,
+  owner: Schema.String,
+  remoteUrl: Schema.String,
+  defaultBranch: Schema.String,
+  description: Schema.String,
+  registeredAt: Schema.String,
+  updatedAt: Schema.String,
+});
+export type Repo = Schema.Schema.Type<typeof Repo>;
+
+export const Clone = Schema.Struct({
+  id: CloneId,
+  repoId: Schema.String,
+  path: Schema.String,
+  status: Schema.String,
+  lastSeenAt: Schema.String,
+  registeredAt: Schema.String,
+});
+export type Clone = Schema.Schema.Type<typeof Clone>;
+
+export const Worktree = Schema.Struct({
+  path: Schema.String,
+  cloneId: CloneId,
+  branch: Schema.String,
+  headRef: Schema.String,
+  discoveredAt: Schema.String,
+});
+export type Worktree = Schema.Schema.Type<typeof Worktree>;
+
+export const GitRemote = Schema.Struct({
+  name: Schema.String,
+  url: Schema.String,
+});
+export type GitRemote = Schema.Schema.Type<typeof GitRemote>;
+
+export const WatchedPath = Schema.Struct({
+  path: Schema.String,
+  scanChildren: Schema.Boolean,
+  addedAt: Schema.String,
+  lastScannedAt: Schema.optional(Schema.String),
+  lastScanError: Schema.optional(Schema.String),
+});
+export type WatchedPath = Schema.Schema.Type<typeof WatchedPath>;
+
+export const WebRepo = Schema.Struct({
+  slug: RepoSlug,
+  name: Schema.String,
+  remoteUrl: Schema.optional(Schema.String),
+  cloneCount: Schema.Number,
+  activeEnvCount: Schema.Number,
+  overallStatus: Schema.Literals(["running", "starting", "stopped", "crashed", "offline"]),
+  updatedAt: Schema.String,
+});
+export type WebRepo = Schema.Schema.Type<typeof WebRepo>;
+
+export const GitPathInfo = Schema.Struct({
+  branch: Schema.String,
+  headRef: Schema.String,
+  activityAt: Schema.String,
+  insertions: Schema.Number,
+  deletions: Schema.Number,
+  hasUncommittedChanges: Schema.Boolean,
+  isMergedIntoBase: Schema.Boolean,
+  isBaseOutOfDate: Schema.Boolean,
+  isBaseBranch: Schema.Boolean,
+  canArchive: Schema.Boolean,
+  baseRefName: Schema.optional(Schema.String),
+});
+export type GitPathInfo = Schema.Schema.Type<typeof GitPathInfo>;
+
+export const WebListReposResponse = Schema.Struct({
+  repos: Schema.Array(WebRepo),
+});
+export type WebListReposResponse = Schema.Schema.Type<typeof WebListReposResponse>;
+
+export const WebRepoDetailResponse = Schema.Struct({
+  repo: Repo,
+  clones: Schema.Array(Clone),
+  worktrees: Schema.Record(CloneId, Schema.Array(Worktree)),
+  envs: Schema.Array(EnvInfo),
+  gitPaths: Schema.Record(Schema.String, GitPathInfo),
+});
+export type WebRepoDetailResponse = Schema.Schema.Type<typeof WebRepoDetailResponse>;
+
+export const WebRepoTreeResponse = Schema.Struct({
+  repo: Repo,
+  clones: Schema.Array(Clone),
+  worktrees: Schema.Record(CloneId, Schema.Array(Worktree)),
+  envs: Schema.Array(EnvInfo),
+});
+export type WebRepoTreeResponse = Schema.Schema.Type<typeof WebRepoTreeResponse>;
+
+export const AddFolderRequest = Schema.Struct({
+  path: Schema.String,
+  remoteName: Schema.optional(Schema.String),
+  scanChildren: Schema.optional(Schema.Boolean),
+});
+export type AddFolderRequest = Schema.Schema.Type<typeof AddFolderRequest>;
+
+export const AddFolderResponse = Schema.Struct({
+  repo: Schema.optional(Repo),
+  clone: Schema.optional(Clone),
+  remotes: Schema.optional(Schema.Array(GitRemote)),
+  watchedPath: Schema.optional(WatchedPath),
+  importedCount: Schema.optional(Schema.Number),
+});
+export type AddFolderResponse = Schema.Schema.Type<typeof AddFolderResponse>;
+
+export const AddFolderProbeResult = Schema.Struct({
+  path: Schema.String,
+  exists: Schema.Boolean,
+  isGitRepo: Schema.Boolean,
+  canScanChildren: Schema.Boolean,
+  childRepoCount: Schema.Number,
+});
+export type AddFolderProbeResult = Schema.Schema.Type<typeof AddFolderProbeResult>;
+
+export const RelinkCloneRequest = Schema.Struct({
+  path: Schema.String,
+});
+export type RelinkCloneRequest = Schema.Schema.Type<typeof RelinkCloneRequest>;
+
+export const ArchiveWorktreeRequest = Schema.Struct({
+  path: Schema.String,
+});
+export type ArchiveWorktreeRequest = Schema.Schema.Type<typeof ArchiveWorktreeRequest>;
+
+export const ConfigSignal = Schema.Struct({
+  kind: Schema.String,
+  label: Schema.String,
+  detail: Schema.String,
+});
+export type ConfigSignal = Schema.Schema.Type<typeof ConfigSignal>;
+
+export const ConfigServiceSuggestion = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  type: ServiceType,
+  command: Schema.optional(Schema.String),
+  image: Schema.optional(Schema.String),
+  port: Schema.optional(Schema.Number),
+  healthcheckUrl: Schema.optional(Schema.String),
+  dependsOn: Schema.optional(Schema.Array(Schema.String)),
+  source: Schema.optional(Schema.String),
+  reason: Schema.optional(Schema.String),
+  selected: Schema.Boolean,
+});
+export type ConfigServiceSuggestion = Schema.Schema.Type<typeof ConfigServiceSuggestion>;
+
+export const ConfigSuggestRequest = Schema.Struct({
+  repoPath: Schema.String,
+});
+export type ConfigSuggestRequest = Schema.Schema.Type<typeof ConfigSuggestRequest>;
+
+export const ConfigSuggestResponse = Schema.Struct({
+  signals: Schema.Array(ConfigSignal),
+  services: Schema.Array(ConfigServiceSuggestion),
+});
+export type ConfigSuggestResponse = Schema.Schema.Type<typeof ConfigSuggestResponse>;
+
+export const ConfigTestRequest = Schema.Struct({
+  repoPath: Schema.String,
+  content: Schema.String,
+});
+export type ConfigTestRequest = Schema.Schema.Type<typeof ConfigTestRequest>;
+
+export const ConfigTestServiceResult = Schema.Struct({
+  name: Schema.String,
+  type: Schema.String,
+  status: Schema.String,
+  url: Schema.optional(Schema.String),
+  previewUrl: Schema.optional(Schema.String),
+  probeOk: Schema.Boolean,
+  probeStatusCode: Schema.optional(Schema.Number),
+  probeBodyPreview: Schema.optional(Schema.String),
+  probeError: Schema.optional(Schema.String),
+  logs: Schema.Array(Schema.String),
+});
+export type ConfigTestServiceResult = Schema.Schema.Type<typeof ConfigTestServiceResult>;
+
+export const ConfigTestResponse = Schema.Struct({
+  ok: Schema.Boolean,
+  serviceNames: Schema.Array(Schema.String),
+  services: Schema.Array(ConfigTestServiceResult),
+});
+export type ConfigTestResponse = Schema.Schema.Type<typeof ConfigTestResponse>;
+
+export const ConfigPreviewRequest = Schema.Struct({
+  repoPath: Schema.String,
+  content: Schema.String,
+  serviceName: Schema.optional(Schema.String),
+});
+export type ConfigPreviewRequest = Schema.Schema.Type<typeof ConfigPreviewRequest>;
+
+export const ConfigPreviewResponse = Schema.Struct({
+  ok: Schema.Boolean,
+  previewId: Schema.String,
+  env: EnvInfo,
+});
+export type ConfigPreviewResponse = Schema.Schema.Type<typeof ConfigPreviewResponse>;
+
+export const ConfigPreviewStopRequest = Schema.Struct({
+  previewId: Schema.String,
+});
+export type ConfigPreviewStopRequest = Schema.Schema.Type<typeof ConfigPreviewStopRequest>;
+
+export const ConfigSaveRequest = Schema.Struct({
+  repoPath: Schema.String,
+  content: Schema.String,
+  saveMode: Schema.Literals(["repo", "global"]),
+});
+export type ConfigSaveRequest = Schema.Schema.Type<typeof ConfigSaveRequest>;
+
+export const ConfigSaveResponse = Schema.Struct({
+  ok: Schema.Boolean,
+  configPath: Schema.String,
+  saveMode: Schema.Literals(["repo", "global"]),
+});
+export type ConfigSaveResponse = Schema.Schema.Type<typeof ConfigSaveResponse>;
+
+export const DomainEvent = Schema.Struct({
+  seq: Schema.Number,
+  type: Schema.String,
+  timestamp: Schema.String,
+  repoId: Schema.optional(Schema.String),
+  repoSlug: Schema.optional(Schema.String),
+  envId: Schema.optional(Schema.String),
+  detail: Schema.optional(Schema.String),
+});
+export type DomainEvent = Schema.Schema.Type<typeof DomainEvent>;

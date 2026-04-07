@@ -1,8 +1,8 @@
-import { mkdirSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
-import { resolve } from "node:path";
 import Dockerode from "dockerode";
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { InfraStatus } from "spawntree-core";
-import { spawntreeHome } from "../state/global-state.js";
+import { spawntreeHome } from "../state/global-state.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -123,14 +123,18 @@ export class PostgresRunner {
         const container = this.docker.getContainer(containerId);
 
         if (info.State === "running") {
-          console.log(`[spawntree-daemon] [postgres:${this.version}] Reusing running container ${containerId.slice(0, 12)}`);
+          console.log(
+            `[spawntree-daemon] [postgres:${this.version}] Reusing running container ${containerId.slice(0, 12)}`,
+          );
           this.containerId = containerId;
           this._status = "running";
           return;
         }
 
         // Stopped — start it
-        console.log(`[spawntree-daemon] [postgres:${this.version}] Starting stopped container ${containerId.slice(0, 12)}...`);
+        console.log(
+          `[spawntree-daemon] [postgres:${this.version}] Starting stopped container ${containerId.slice(0, 12)}...`,
+        );
         await container.start();
         this.containerId = containerId;
         await this.waitForReady(60_000);
@@ -146,8 +150,8 @@ export class PostgresRunner {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("connect ENOENT") || msg.includes("connect ECONNREFUSED")) {
         throw new Error(
-          `[spawntree-daemon] Docker is not running or not installed. ` +
-          `Please start Docker Desktop or install Docker Engine. (${msg})`,
+          `[spawntree-daemon] Docker is not running or not installed. `
+            + `Please start Docker Desktop or install Docker Engine. (${msg})`,
         );
       }
       throw err;
@@ -189,7 +193,10 @@ export class PostgresRunner {
     const container = this.requireContainer();
     const safeName = dbName.replace(/'/g, "''");
     const out = await execInContainer(container, [
-      "psql", "-U", "postgres", "-tAc",
+      "psql",
+      "-U",
+      "postgres",
+      "-tAc",
       `SELECT 1 FROM pg_database WHERE datname='${safeName}'`,
     ]);
     return out.trim() === "1";
@@ -205,7 +212,10 @@ export class PostgresRunner {
     const container = this.requireContainer();
     const safeName = dbName.replace(/'/g, "''");
     await execInContainer(container, [
-      "psql", "-U", "postgres", "-c",
+      "psql",
+      "-U",
+      "postgres",
+      "-c",
       `CREATE DATABASE "${safeName}"`,
     ]);
   }
@@ -217,7 +227,10 @@ export class PostgresRunner {
     const container = this.requireContainer();
     const safeName = dbName.replace(/'/g, "''");
     await execInContainer(container, [
-      "psql", "-U", "postgres", "-c",
+      "psql",
+      "-U",
+      "postgres",
+      "-c",
       `DROP DATABASE "${safeName}"`,
     ]);
   }
@@ -225,7 +238,10 @@ export class PostgresRunner {
   async listDatabases(): Promise<string[]> {
     const container = this.requireContainer();
     const out = await execInContainer(container, [
-      "psql", "-U", "postgres", "-tAc",
+      "psql",
+      "-U",
+      "postgres",
+      "-tAc",
       "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname",
     ]);
     return out
@@ -251,7 +267,8 @@ export class PostgresRunner {
     // using dockerode exec with stdin
     const exec = await container.exec({
       Cmd: [
-        "bash", "-c",
+        "bash",
+        "-c",
         `pg_restore -U postgres -d "${dbName}" --no-owner --no-acl -v`,
       ],
       AttachStdin: true,
@@ -329,7 +346,9 @@ export class PostgresRunner {
   }
 
   async restoreFromTemplate(dbName: string, templateName: string): Promise<void> {
-    console.log(`[spawntree-daemon] [postgres:${this.version}] Restoring "${dbName}" from template "${templateName}"...`);
+    console.log(
+      `[spawntree-daemon] [postgres:${this.version}] Restoring "${dbName}" from template "${templateName}"...`,
+    );
     const templatePath = resolve(pgTemplateDir(), `${templateName}.dump`);
 
     if (!existsSync(templatePath)) {
@@ -359,7 +378,7 @@ export class PostgresRunner {
     });
   }
 
-  listTemplates(): Array<{ name: string; size: number; createdAt: string }> {
+  listTemplates(): Array<{ name: string; size: number; createdAt: string; }> {
     const dir = pgTemplateDir();
     try {
       return readdirSync(dir)
@@ -456,7 +475,6 @@ export class PostgresRunner {
         },
       );
     });
-
   }
 
   private async createAndStart(): Promise<void> {
@@ -501,7 +519,9 @@ export class PostgresRunner {
       try {
         const container = this.requireContainer();
         const out = await execInContainer(container, [
-          "pg_isready", "-U", "postgres",
+          "pg_isready",
+          "-U",
+          "postgres",
         ]);
         if (out.includes("accepting connections")) {
           console.log(`[spawntree-daemon] [postgres:${this.version}] Ready!`);

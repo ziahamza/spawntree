@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { registerUpCommand } from "./commands/up.js";
-import { registerDownCommand } from "./commands/down.js";
-import { registerStatusCommand } from "./commands/status.js";
-import { registerLogsCommand } from "./commands/logs.js";
-import { registerRmCommand } from "./commands/rm.js";
-import { registerInitCommand } from "./commands/init.js";
-import { getClient, getCurrentRepoId, getCurrentEnvId, getRepoPath } from "./daemon-bridge.js";
+import { registerDownCommand } from "./commands/down.ts";
+import { registerInitCommand } from "./commands/init.ts";
+import { registerLogsCommand } from "./commands/logs.ts";
+import { registerRmCommand } from "./commands/rm.ts";
+import { registerStatusCommand } from "./commands/status.ts";
+import { registerUpCommand } from "./commands/up.ts";
+import { getClient, getCurrentEnvId, getRepoPath } from "./daemon-bridge.ts";
 
 const program = new Command();
 
@@ -116,12 +116,10 @@ dbCmd
   .option("--db <dbName>", "Database service name", "db")
   .option("--prefix <prefix>", "Named prefix for the environment")
   .action(async (name: string, options) => {
-    let repoId: string;
     let repoPath: string;
     let envId: string;
 
     try {
-      repoId = getCurrentRepoId();
       repoPath = getRepoPath();
       envId = getCurrentEnvId(options.prefix);
     } catch (err) {
@@ -157,12 +155,10 @@ dbCmd
   .option("--db <dbName>", "Database service name", "db")
   .option("--prefix <prefix>", "Named prefix for the environment")
   .action(async (name: string, options) => {
-    let repoId: string;
     let repoPath: string;
     let envId: string;
 
     try {
-      repoId = getCurrentRepoId();
       repoPath = getRepoPath();
       envId = getCurrentEnvId(options.prefix);
     } catch (err) {

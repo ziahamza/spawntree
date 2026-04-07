@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { getClient, getCurrentRepoId, getCurrentEnvId } from "../daemon-bridge.js";
+import { getClient, getCurrentEnvId, getCurrentRepoId } from "../daemon-bridge.ts";
 
 export function registerDownCommand(program: Command): void {
   program
@@ -7,7 +7,7 @@ export function registerDownCommand(program: Command): void {
     .description("Stop the environment")
     .argument("[env-id]", "Environment ID (default: current branch)")
     .option("--prefix <name>", "Named prefix for the environment")
-    .action(async (envIdArg?: string, options?: { prefix?: string }) => {
+    .action(async (envIdArg?: string, options?: { prefix?: string; }) => {
       let repoId: string;
       let envId: string;
 

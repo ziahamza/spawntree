@@ -1,7 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import type { Service, ServiceStatus } from "spawntree-core";
-import type { ServiceConfig } from "spawntree-core";
-import type { LogStreamer } from "../managers/log-streamer.js";
+import { type ChildProcess, spawn } from "node:child_process";
+import type { Service, ServiceConfig, ServiceStatus } from "spawntree-core";
+import type { LogStreamer } from "../managers/log-streamer.ts";
 
 export interface ProcessRunnerOptions {
   name: string;
@@ -60,6 +59,7 @@ export class ProcessRunner implements Service {
       env: { ...globalThis.process.env, ...this.envVars },
       stdio: ["ignore", "pipe", "pipe"],
       shell: true,
+      detached: process.platform !== "win32",
     });
 
     // Stream stdout line by line
@@ -101,27 +101,49 @@ export class ProcessRunner implements Service {
 
     this.process.on("exit", (code, signal) => {
       if (this._status !== "stopped") {
-        this._status = "failed";
+        this._status = code === 0 ? "stopped" : "failed";
         emit("system", `[spawntree] Process exited with code=${code} signal=${signal}`);
       }
     });
 
     // Wait briefly for early crash detection
     await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const settle = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        callback();
+      };
       const timer = setTimeout(() => {
         this._status = "running";
-        resolve();
-      }, 500);
+        settle(resolve);
+      }, 100);
+
+      const markRunning = () => {
+        clearTimeout(timer);
+        this._status = "running";
+        settle(resolve);
+      };
 
       this.process!.on("error", (err) => {
         clearTimeout(timer);
-        reject(new Error(`Failed to start "${this.name}": ${err.message}`));
+        settle(() => reject(new Error(`Failed to start "${this.name}": ${err.message}`)));
       });
 
+      this.process!.stdout?.once("data", markRunning);
+      this.process!.stderr?.once("data", markRunning);
+
       this.process!.on("exit", (code) => {
+        if (this._status === "starting" && code === 0) {
+          clearTimeout(timer);
+          this._status = "stopped";
+          settle(resolve);
+          return;
+        }
+
         if (this._status === "starting") {
           clearTimeout(timer);
-          reject(new Error(`"${this.name}" exited immediately with code ${code}`));
+          settle(() => reject(new Error(`"${this.name}" exited immediately with code ${code}`)));
         }
       });
     });
@@ -131,25 +153,34 @@ export class ProcessRunner implements Service {
     if (!this.process || this._status === "stopped") return;
 
     this._status = "stopped";
+    const processToStop = this.process;
 
     // If process already exited (crashed), just clean up
-    if (this.process.exitCode !== null || this.process.signalCode !== null) {
+    if (processToStop.exitCode !== null || processToStop.signalCode !== null) {
       this.process = null;
       return;
     }
 
     return new Promise<void>((resolve) => {
+      const startedAt = Date.now();
       const killTimer = setTimeout(() => {
-        this.process?.kill("SIGKILL");
+        this.killProcess(processToStop, "SIGKILL");
       }, 10_000);
 
-      this.process!.on("exit", () => {
+      processToStop.once("exit", () => {
         clearTimeout(killTimer);
         this.process = null;
+        this.logStreamer.addLine(
+          this.repoId,
+          this.envId,
+          this.name,
+          "system",
+          `[spawntree] Process stopped in ${Date.now() - startedAt}ms`,
+        );
         resolve();
       });
 
-      this.process!.kill("SIGTERM");
+      this.killProcess(processToStop, "SIGTERM");
     });
   }
 
@@ -193,6 +224,18 @@ export class ProcessRunner implements Service {
 
   get pid(): number | undefined {
     return this.process?.pid;
+  }
+
+  private killProcess(processToStop: ChildProcess, signal: NodeJS.Signals): void {
+    if (process.platform !== "win32" && processToStop.pid && processToStop.spawnargs.length > 0) {
+      try {
+        process.kill(-processToStop.pid, signal);
+        return;
+      } catch {
+        // fall back to the direct child if process-group signaling is unavailable
+      }
+    }
+    processToStop.kill(signal);
   }
 }
 

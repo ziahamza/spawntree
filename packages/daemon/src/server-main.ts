@@ -1,69 +1,68 @@
 #!/usr/bin/env node
-import { createServer } from "node:http";
-import { unlinkSync, existsSync } from "node:fs";
+
 import { getRequestListener } from "@hono/node-server";
-import { createApp } from "./server.js";
-import { EnvManager } from "./managers/env-manager.js";
-import { InfraManager } from "./managers/infra-manager.js";
-import { PortRegistry } from "./managers/port-registry.js";
-import { LogStreamer } from "./managers/log-streamer.js";
-import { ProxyManager } from "./managers/proxy-manager.js";
-import {
-  ensureDir,
-  saveDaemonPid,
-  socketPath,
-} from "./state/global-state.js";
+import { Layer, ManagedRuntime } from "effect";
+import { createServer } from "node:http";
+import { createApp, hasBundledWebApp } from "./server.ts";
+import { DaemonService } from "./services/daemon-service.ts";
+import { ensureDir, saveDaemonPid, saveRuntimeMetadata } from "./state/global-state.ts";
 
 async function main() {
   ensureDir();
   saveDaemonPid(process.pid);
 
-  const sock = socketPath();
-  if (existsSync(sock)) {
-    try { unlinkSync(sock); } catch { /* ignore */ }
-  }
+  const port = Number.parseInt(process.env.SPAWNTREE_PORT ?? "2222", 10) || 2222;
+  const runtime = ManagedRuntime.make(DaemonService.layer, {
+    memoMap: Layer.makeMemoMapUnsafe(),
+  });
 
-  const portRegistry = new PortRegistry();
-  const logStreamer = new LogStreamer();
-  const infraManager = new InfraManager(portRegistry);
-  const proxyManager = new ProxyManager();
-  const envManager = new EnvManager(portRegistry, logStreamer, infraManager, proxyManager);
-  const app = createApp(envManager, logStreamer, portRegistry, infraManager);
-
-  // Use raw Node http.createServer with Hono's request listener adapter
-  // This supports Unix socket binding (serve() from @hono/node-server does not)
+  const app = createApp(runtime);
   const listener = getRequestListener(app.fetch);
   const server = createServer(listener);
 
-  server.listen(sock, () => {
-    process.stdout.write("READY\n");
-    console.log(`[spawntree-daemon] Listening on ${sock}`);
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => resolve());
   });
 
+  saveRuntimeMetadata({
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    httpPort: port,
+  });
+
+  const origin = `http://127.0.0.1:${port}`;
+  process.stderr.write(`[spawntree-daemon] API: ${origin}/api/v1/daemon\n`);
+  if (hasBundledWebApp()) {
+    process.stderr.write(`[spawntree-daemon] Web: ${origin}/\n`);
+  } else {
+    process.stderr.write("[spawntree-daemon] Web bundle not found. Run `pnpm build` to serve the UI from the daemon.\n");
+  }
+
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
-    console.log(`[spawntree-daemon] Received ${signal}, shutting down...`);
-
-    const envs = envManager.listEnvs();
-    for (const env of envs) {
-      try {
-        await envManager.downEnv(env.repoId, env.envId);
-      } catch (err) {
-        console.error(`[spawntree-daemon] Error stopping ${env.envId}: ${err instanceof Error ? err.message : err}`);
-      }
+    if (shuttingDown) {
+      return;
     }
-
-    server.close(() => {
-      try { if (existsSync(sock)) unlinkSync(sock); } catch { /* ignore */ }
-      console.log("[spawntree-daemon] Shutdown complete");
-      process.exit(0);
-    });
+    shuttingDown = true;
+    process.stderr.write(`[spawntree-daemon] Received ${signal}, shutting down...\n`);
+    try {
+      await runtime.runPromise(DaemonService.use((service) => service.shutdown));
+    } catch {
+      // best effort
+    }
+    await runtime.dispose();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    process.exit(0);
   };
 
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
-main().catch((err) => {
-  console.error("[spawntree-daemon] Fatal:", err);
+main().catch((error) => {
+  process.stderr.write(
+    `[spawntree-daemon] Fatal: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`,
+  );
   process.exit(1);
 });

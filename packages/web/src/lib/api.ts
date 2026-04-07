@@ -1,495 +1,328 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type AddFolderResponse,
+  type ConfigPreviewResponse,
+  type ConfigSaveResponse,
+  type ConfigServiceSuggestion,
+  type ConfigSignal,
+  type ConfigSuggestResponse,
+  type ConfigTestResponse,
+  type ConfigTestServiceResult,
+  createApiClient,
+  type EnvInfo,
+  type GitPathInfo,
+  type InfraStatusResponse,
+  type ServiceInfo,
+  type WebRepo,
+} from "spawntree-core/browser";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+const api = createApiClient();
 
-export interface DaemonInfo {
-  version: string
-  uptime: number
-  repoCount: number
-  activeEnvs: number
-}
-
-export interface Service {
-  name: string
-  type: 'process' | 'postgres' | 'redis' | 'container' | 'external'
-  status: 'running' | 'stopped' | 'failed' | 'starting'
-  port?: number
-  pid?: number
-  url?: string
-  containerId?: string
-}
-
-// Matches Go EnvInfo struct JSON tags
-export interface Env {
-  envId: string
-  repoId: string
-  repoPath: string
-  branch: string
-  basePort: number
-  createdAt: string
-  services: Service[]
-}
-
-// Alias fields for frontend convenience (mapped from Env)
-export interface EnvListItem {
-  envId: string
-  repoId: string
-  repoPath: string
-  branch: string
-  basePort: number
-  createdAt: string
-  services: Service[]
-}
-
-export interface InfraStatus {
-  postgres: {
-    status: 'running' | 'stopped' | 'crashed'
-    version?: string
-    port?: number
-    containerID?: string
-  }
-  redis: {
-    status: 'running' | 'stopped' | 'crashed'
-    port?: number
-    containerID?: string
-  }
-}
+export type DaemonInfo = Awaited<ReturnType<typeof api.getDaemonInfo>>;
+export type Service = ServiceInfo;
+export type Env = EnvInfo;
+export type EnvListItem = EnvInfo;
+export type InfraStatus = InfraStatusResponse;
+export type ConfigTestResult = ConfigTestResponse;
+export type ConfigPreviewResult = ConfigPreviewResponse;
+export type ConfigSuggestResult = ConfigSuggestResponse;
+export type ConfigSaveResult = ConfigSaveResponse;
+export { ConfigServiceSuggestion, ConfigSignal, ConfigTestServiceResult, GitPathInfo, WebRepo };
 
 export interface Clone {
-  id: string
-  path: string
-  branch?: string
-  missing: boolean
-  git?: GitPathInfo
-  envs: EnvListItem[]
-  worktrees: Worktree[]
+  id: string;
+  path: string;
+  branch?: string;
+  missing: boolean;
+  git?: GitPathInfo;
+  envs: EnvListItem[];
+  worktrees: Worktree[];
 }
 
 export interface Worktree {
-  path: string
-  branch: string
-  git?: GitPathInfo
-  envs: EnvListItem[]
-}
-
-export interface GitPathInfo {
-  branch: string
-  headRef: string
-  activityAt: string
-  insertions: number
-  deletions: number
-  hasUncommittedChanges: boolean
-  isMergedIntoBase: boolean
-  isBaseOutOfDate: boolean
-  isBaseBranch: boolean
-  canArchive: boolean
-  baseRefName?: string
-}
-
-export interface WebRepo {
-  slug: string
-  name: string
-  remoteUrl?: string
-  cloneCount: number
-  activeEnvCount: number
-  overallStatus: 'running' | 'starting' | 'stopped' | 'crashed' | 'offline'
-  updatedAt: string
+  path: string;
+  branch: string;
+  git?: GitPathInfo;
+  envs: EnvListItem[];
 }
 
 export interface WebRepoDetail {
-  slug: string
-  name: string
-  remoteUrl?: string
-  clones: Clone[]
+  slug: string;
+  name: string;
+  remoteUrl?: string;
+  clones: Clone[];
 }
 
-export function deriveEnvStatus(env: EnvListItem): 'running' | 'starting' | 'crashed' | 'stopped' {
-  if (!env.services?.length) return 'stopped'
-  if (env.services.some(s => s.status === 'running')) return 'running'
-  if (env.services.some(s => s.status === 'starting')) return 'starting'
-  if (env.services.some(s => s.status === 'failed')) return 'crashed'
-  return 'stopped'
+export function deriveEnvStatus(env: EnvListItem): "running" | "starting" | "crashed" | "stopped" {
+  if (!env.services?.length) return "stopped";
+  if (env.services.some((service) => service.status === "running")) return "running";
+  if (env.services.some((service) => service.status === "starting")) return "starting";
+  if (env.services.some((service) => service.status === "failed")) return "crashed";
+  return "stopped";
 }
-
-// ─── Fetch helpers ─────────────────────────────────────────────────────────────
-
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`/api/v1${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText)
-    throw new Error(`${res.status}: ${text}`)
-  }
-  // 204 No Content
-  if (res.status === 204) return undefined as unknown as T
-  return res.json() as Promise<T>
-}
-
-// ─── Query hooks ───────────────────────────────────────────────────────────────
 
 export function useDaemonInfo() {
-  return useQuery<DaemonInfo>({
-    queryKey: ['daemon'],
-    queryFn: () => apiFetch<DaemonInfo>('/daemon'),
-    refetchInterval: 5000,
-  })
+  return useQuery({
+    queryKey: ["daemon"],
+    queryFn: () => api.getDaemonInfo(),
+    refetchInterval: 30_000,
+  });
 }
 
 export function useEnvs() {
-  return useQuery<EnvListItem[]>({
-    queryKey: ['envs'],
-    queryFn: async () => {
-      const res = await apiFetch<{ envs: EnvListItem[] }>('/envs')
-      return res.envs ?? []
-    },
-    refetchInterval: 5000,
-  })
+  return useQuery({
+    queryKey: ["envs"],
+    queryFn: async () => (await api.listEnvs()).envs,
+    refetchInterval: 30_000,
+  });
 }
 
 export function useRepoEnvs(repoID: string) {
-  return useQuery<EnvListItem[]>({
-    queryKey: ['repos', repoID, 'envs'],
-    queryFn: async () => {
-      const res = await apiFetch<{ envs: EnvListItem[] }>(`/repos/${repoID}/envs`)
-      return res.envs ?? []
-    },
-    refetchInterval: 5000,
+  return useQuery({
+    queryKey: ["repos", repoID, "envs"],
+    queryFn: async () => (await api.listEnvs(repoID)).envs,
     enabled: !!repoID,
-  })
+  });
 }
 
 export function useEnvDetail(repoID: string, envID: string, repoPath?: string) {
-  return useQuery<Env>({
-    queryKey: ['repos', repoID, 'envs', envID, repoPath],
-    queryFn: async () => {
-      const res = await apiFetch<{ env: Env }>(
-        `/repos/${repoID}/envs/${envID}${repoPath ? `?repoPath=${encodeURIComponent(repoPath)}` : ''}`,
-      )
-      return res.env
-    },
-    refetchInterval: 5000,
+  return useQuery({
+    queryKey: ["repos", repoID, "envs", envID, repoPath],
+    queryFn: async () => (await api.getEnv(repoID, envID, repoPath)).env,
     enabled: !!repoID && !!envID,
-  })
+    refetchInterval: 15_000,
+  });
 }
 
 export function useInfra() {
-  return useQuery<InfraStatus>({
-    queryKey: ['infra'],
-    queryFn: () => apiFetch<InfraStatus>('/infra'),
-    refetchInterval: 5000,
-  })
+  return useQuery({
+    queryKey: ["infra"],
+    queryFn: () => api.getInfraStatus(),
+    refetchInterval: 30_000,
+  });
 }
 
 export function useWebRepos() {
-  return useQuery<WebRepo[]>({
-    queryKey: ['web', 'repos'],
-    queryFn: async () => {
-      const res = await apiFetch<{ repos: WebRepo[] }>('/web/repos')
-      return res.repos ?? []
-    },
-    refetchInterval: 5000,
-  })
+  return useQuery({
+    queryKey: ["web", "repos"],
+    queryFn: async () => (await api.listWebRepos()).repos,
+    refetchInterval: 30_000,
+  });
 }
 
 export function useWebRepoDetail(slug: string, enabled = true) {
-  return useQuery<WebRepoDetail>({
-    queryKey: ['web', 'repos', slug],
-    queryFn: async () => {
-      const res = await apiFetch<{
-        repo: WebRepo
-        clones: Array<{ id: string; repoId: string; path: string; status: string; lastSeenAt: string }>
-        worktrees: Record<string, Array<{ path: string; branch: string; headRef: string }>>
-        envs: EnvListItem[]
-        gitPaths: Record<string, GitPathInfo>
-      }>(`/web/repos/${slug}`)
-      const envs = res.envs ?? []
-      const gitPaths = res.gitPaths ?? {}
-      const activityScore = (path: string) => Date.parse(gitPaths[path]?.activityAt ?? '') || 0
-      // Transform backend shapes to frontend types
-      const clones: Clone[] = (res.clones ?? [])
-        .map((c) => ({
-          id: c.id,
-          path: c.path,
-          missing: c.status === 'missing',
-          git: gitPaths[c.path],
-          envs: envs.filter((env) => env.repoPath === c.path),
-          worktrees: (res.worktrees?.[c.id] ?? [])
-            .filter((wt) => wt.path !== c.path)
-            .map((wt) => ({
-              path: wt.path,
-              branch: wt.branch || gitPaths[wt.path]?.branch || 'detached',
-              git: gitPaths[wt.path],
-              envs: envs.filter((env) => env.repoPath === wt.path),
-            }))
-            .sort((a, b) => activityScore(b.path) - activityScore(a.path)),
-        }))
-        .sort((a, b) => activityScore(b.path) - activityScore(a.path))
-      return {
-        slug: res.repo.slug,
-        name: res.repo.name,
-        remoteUrl: res.repo.remoteUrl,
-        clones,
-      }
-    },
-    refetchInterval: 5000,
+  return useQuery({
+    queryKey: ["web", "repos", slug],
     enabled: !!slug && enabled,
-  })
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const response = await api.getWebRepoDetail(slug);
+      const activityScore = (path: string) => Date.parse(response.gitPaths[path]?.activityAt ?? "") || 0;
+      const clones: Array<Clone> = response.clones
+        .map((clone) => ({
+          id: clone.id,
+          path: clone.path,
+          missing: clone.status === "missing",
+          git: response.gitPaths[clone.path],
+          envs: response.envs.filter((env) => env.repoPath === clone.path),
+          worktrees: (response.worktrees[clone.id] ?? [])
+            .filter((worktree) => worktree.path !== clone.path)
+            .map((worktree) => ({
+              path: worktree.path,
+              branch: worktree.branch || response.gitPaths[worktree.path]?.branch || "detached",
+              git: response.gitPaths[worktree.path],
+              envs: response.envs.filter((env) => env.repoPath === worktree.path),
+            }))
+            .sort((left, right) => activityScore(right.path) - activityScore(left.path)),
+        }))
+        .sort((left, right) => activityScore(right.path) - activityScore(left.path));
+
+      return {
+        slug: response.repo.slug,
+        name: response.repo.name,
+        remoteUrl: response.repo.remoteUrl || undefined,
+        clones,
+      } satisfies WebRepoDetail;
+    },
+  });
 }
 
-// ─── Mutation hooks ────────────────────────────────────────────────────────────
+export function useWebRepoTree(slug: string, enabled = true) {
+  return useQuery({
+    queryKey: ["web", "repos", slug, "tree"],
+    enabled: !!slug && enabled,
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const response = await api.getWebRepoTree(slug);
+      const clones: Array<Clone> = response.clones.map((clone) => ({
+        id: clone.id,
+        path: clone.path,
+        missing: clone.status === "missing",
+        envs: response.envs.filter((env) => env.repoPath === clone.path),
+        worktrees: (response.worktrees[clone.id] ?? [])
+          .filter((worktree) => worktree.path !== clone.path)
+          .map((worktree) => ({
+            path: worktree.path,
+            branch: worktree.branch || "detached",
+            envs: response.envs.filter((env) => env.repoPath === worktree.path),
+          })),
+      }));
+
+      return {
+        slug: response.repo.slug,
+        name: response.repo.name,
+        remoteUrl: response.repo.remoteUrl || undefined,
+        clones,
+      } satisfies WebRepoDetail;
+    },
+  });
+}
 
 export function useCreateEnv() {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: { repoPath: string; configFile?: string; envId?: string }) =>
-      apiFetch<Env>('/envs', { method: 'POST', body: JSON.stringify(body) }),
+    mutationFn: async (body: { repoPath: string; configFile?: string; envId?: string; }) =>
+      (await api.createEnv(body)).env,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['envs'] })
-      qc.invalidateQueries({ queryKey: ['web', 'repos'] })
+      invalidateAppQueries(queryClient);
     },
-  })
+  });
 }
 
 export function useStopEnv() {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ repoID, envID, repoPath }: { repoID: string; envID: string; repoPath?: string }) =>
-      apiFetch<void>(
-        `/repos/${repoID}/envs/${envID}/down${repoPath ? `?repoPath=${encodeURIComponent(repoPath)}` : ''}`,
-        { method: 'POST' },
-      ),
-    onSuccess: (_data, { repoID, envID }) => {
-      qc.invalidateQueries({ queryKey: ['repos', repoID, 'envs', envID] })
-      qc.invalidateQueries({ queryKey: ['repos', repoID, 'envs'] })
-      qc.invalidateQueries({ queryKey: ['envs'] })
-      qc.invalidateQueries({ queryKey: ['web', 'repos'] })
+    mutationFn: (input: { repoID: string; envID: string; repoPath?: string; }) =>
+      api.downEnv(input.repoID, input.envID, input.repoPath),
+    onSuccess: () => {
+      invalidateAppQueries(queryClient);
     },
-  })
+  });
 }
 
 export function useDeleteEnv() {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ repoID, envID, repoPath }: { repoID: string; envID: string; repoPath?: string }) =>
-      apiFetch<void>(`/repos/${repoID}/envs/${envID}${repoPath ? `?repoPath=${encodeURIComponent(repoPath)}` : ''}`, {
-        method: 'DELETE',
-      }),
-    onSuccess: (_data, { repoID }) => {
-      qc.invalidateQueries({ queryKey: ['repos', repoID, 'envs'] })
-      qc.invalidateQueries({ queryKey: ['envs'] })
-      qc.invalidateQueries({ queryKey: ['web', 'repos'] })
+    mutationFn: (input: { repoID: string; envID: string; repoPath?: string; }) =>
+      api.deleteEnv(input.repoID, input.envID, input.repoPath),
+    onSuccess: () => {
+      invalidateAppQueries(queryClient);
     },
-  })
+  });
 }
 
 export function useDiscover() {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => apiFetch<void>('/discover', { method: 'POST' }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['web', 'repos'] })
-      qc.invalidateQueries({ queryKey: ['envs'] })
+    mutationFn: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["web", "repos"] });
     },
-  })
+  });
 }
 
-export interface AddFolderResult {
-  repo?: WebRepo
-  clone?: { id: string; repoId: string; path: string; status: string }
-  watchedPath?: { path: string; scanChildren: boolean }
-  importedCount?: number
-  remotes?: { name: string; url: string }[]
-}
-
-export interface AddFolderProbeResult {
-  path: string
-  exists: boolean
-  isGitRepo: boolean
-  canScanChildren: boolean
-  childRepoCount: number
-}
-
-export interface ConfigTestResult {
-  ok: boolean
-  serviceNames: string[]
-  services: ConfigTestServiceResult[]
-}
-
-export interface ConfigSignal {
-  kind: string
-  label: string
-  detail: string
-}
-
-export interface ConfigServiceSuggestion {
-  id: string
-  name: string
-  type: 'process' | 'container' | 'postgres' | 'redis'
-  command?: string
-  image?: string
-  port?: number
-  healthcheckUrl?: string
-  dependsOn?: string[]
-  source?: string
-  reason?: string
-  selected: boolean
-}
-
-export interface ConfigTestServiceResult {
-  name: string
-  type: string
-  status: string
-  url?: string
-  previewUrl?: string
-  probeOk: boolean
-  probeStatusCode?: number
-  probeBodyPreview?: string
-  probeError?: string
-  logs: string[]
-}
-
-export interface ConfigPreviewResult {
-  ok: boolean
-  previewId: string
-  env: Env
-}
-
-export interface ConfigSuggestResult {
-  signals: ConfigSignal[]
-  services: ConfigServiceSuggestion[]
-}
-
-export interface ConfigSaveResult {
-  ok: boolean
-  configPath: string
-  saveMode: 'repo' | 'global'
-}
+export type AddFolderResult = AddFolderResponse;
 
 export function useAddFolder() {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: { path: string; remoteName?: string; scanChildren?: boolean }) =>
-      apiFetch<AddFolderResult>('/web/repos/add', { method: 'POST', body: JSON.stringify(body) }),
+    mutationFn: (body: { path: string; remoteName?: string; scanChildren?: boolean; }) => api.addFolder(body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['web', 'repos'] })
+      invalidateAppQueries(queryClient);
     },
-  })
+  });
 }
 
 export function useProbeAddPath() {
   return useMutation({
-    mutationFn: (body: { path: string }) =>
-      apiFetch<AddFolderProbeResult>('/web/repos/probe', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-  })
+    mutationFn: (body: { path: string; }) => api.probeAddPath(body),
+  });
 }
 
 export function useRelinkClone() {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      repoSlug,
-      cloneID,
-      newPath,
-    }: {
-      repoSlug: string
-      cloneID: string
-      newPath: string
-    }) =>
-      apiFetch<Clone>(`/web/repos/${repoSlug}/clones/${cloneID}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ path: newPath }),
-      }),
-    onSuccess: (_data, { repoSlug }) => {
-      qc.invalidateQueries({ queryKey: ['web', 'repos', repoSlug] })
-      qc.invalidateQueries({ queryKey: ['web', 'repos'] })
+    mutationFn: (input: { repoSlug: string; cloneID: string; newPath: string; }) =>
+      api.relinkClone(input.repoSlug, input.cloneID, { path: input.newPath }),
+    onSuccess: () => {
+      invalidateAppQueries(queryClient);
     },
-  })
+  });
 }
 
 export function useDeleteClone() {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ repoSlug, cloneID }: { repoSlug: string; cloneID: string }) =>
-      apiFetch<void>(`/web/repos/${repoSlug}/clones/${cloneID}`, { method: 'DELETE' }),
-    onSuccess: (_data, { repoSlug }) => {
-      qc.invalidateQueries({ queryKey: ['web', 'repos', repoSlug] })
-      qc.invalidateQueries({ queryKey: ['web', 'repos'] })
+    mutationFn: (input: { repoSlug: string; cloneID: string; }) => api.deleteClone(input.repoSlug, input.cloneID),
+    onSuccess: () => {
+      invalidateAppQueries(queryClient);
     },
-  })
+  });
 }
 
 export function useArchiveWorktree() {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ repoSlug, path }: { repoSlug: string; path: string }) =>
-      apiFetch<void>(`/web/repos/${repoSlug}/worktrees/archive`, {
-        method: 'POST',
-        body: JSON.stringify({ path }),
-      }),
-    onSuccess: (_data, { repoSlug }) => {
-      qc.invalidateQueries({ queryKey: ['web', 'repos', repoSlug] })
-      qc.invalidateQueries({ queryKey: ['web', 'repos'] })
-      qc.invalidateQueries({ queryKey: ['envs'] })
+    mutationFn: (input: { repoSlug: string; path: string; }) =>
+      api.archiveWorktree(input.repoSlug, { path: input.path }),
+    onSuccess: () => {
+      invalidateAppQueries(queryClient);
     },
-  })
+  });
 }
 
 export function useTestConfig() {
   return useMutation({
-    mutationFn: (body: { repoPath: string; content: string }) =>
-      apiFetch<ConfigTestResult>('/web/config/test', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-  })
+    mutationFn: (body: { repoPath: string; content: string; }) => api.testConfig(body),
+  });
 }
 
 export function useSuggestConfig() {
   return useMutation({
-    mutationFn: (body: { repoPath: string }) =>
-      apiFetch<ConfigSuggestResult>('/web/config/suggest', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-  })
+    mutationFn: (body: { repoPath: string; }) => api.suggestConfig(body),
+  });
 }
 
 export function useStartConfigPreview() {
   return useMutation({
-    mutationFn: (body: { repoPath: string; content: string; serviceName?: string }) =>
-      apiFetch<ConfigPreviewResult>('/web/config/preview/start', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-  })
+    mutationFn: (body: { repoPath: string; content: string; serviceName?: string; }) => api.startConfigPreview(body),
+  });
 }
 
 export function useStopConfigPreview() {
   return useMutation({
-    mutationFn: (body: { previewId: string }) =>
-      apiFetch<void>('/web/config/preview/stop', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-  })
+    mutationFn: (body: { previewId: string; }) => api.stopConfigPreview(body),
+  });
 }
 
 export function useSaveConfig() {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: { repoPath: string; content: string; saveMode: 'repo' | 'global' }) =>
-      apiFetch<ConfigSaveResult>('/web/config/save', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
+    mutationFn: (body: { repoPath: string; content: string; saveMode: "repo" | "global"; }) => api.saveConfig(body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['web', 'repos'] })
-      qc.invalidateQueries({ queryKey: ['envs'] })
+      invalidateAppQueries(queryClient);
     },
-  })
+  });
+}
+
+export function createApiEventSource(since?: number) {
+  return new EventSource(api.getEventsUrl(since));
+}
+
+export function createLogEventSource(repoID: string, envID: string, options: {
+  repoPath?: string;
+  service?: string | null;
+  lines?: number;
+} = {}) {
+  return new EventSource(api.getLogStreamUrl(repoID, envID, {
+    repoPath: options.repoPath,
+    service: options.service ?? undefined,
+    lines: options.lines,
+  }));
+}
+
+function invalidateAppQueries(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: ["daemon"] });
+  void queryClient.invalidateQueries({ queryKey: ["envs"] });
+  void queryClient.invalidateQueries({ queryKey: ["infra"] });
+  void queryClient.invalidateQueries({ queryKey: ["web", "repos"] });
 }

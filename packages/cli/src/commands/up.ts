@@ -1,8 +1,8 @@
 import type { Command } from "commander";
-import { resolve } from "node:path";
 import { existsSync } from "node:fs";
-import { getClient, getCurrentRepoId, getCurrentEnvId, getRepoPath } from "../daemon-bridge.js";
+import { resolve } from "node:path";
 import type { LogLine } from "spawntree-core";
+import { getClient, getCurrentEnvId, getCurrentRepoId, getRepoPath } from "../daemon-bridge.ts";
 
 const COLORS: Record<string, string> = {};
 const COLOR_PALETTE = [
@@ -33,7 +33,7 @@ export function registerUpCommand(program: Command): void {
 
       if (!existsSync(configFile)) {
         console.error(`Config file not found: ${configFile}`);
-        console.error('Run "spawntree init" to create one.');
+        console.error("Run \"spawntree init\" to create one.");
         process.exit(1);
       }
 

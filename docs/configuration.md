@@ -2,7 +2,8 @@
 
 ## File Location
 
-spawntree looks for `spawntree.yaml` in the current directory. Override with `--config-file`:
+spawntree looks for `spawntree.yaml` in the current directory. Override with
+`--config-file`:
 
 ```bash
 spawntree up --config-file infra/spawntree.yaml
@@ -29,9 +30,12 @@ services:
       API_KEY: ${API_KEY}
 ```
 
-**Framework port injection**: spawntree auto-detects vite, next.js, astro, nuxt, and expo in the command and injects `--port` flags. These frameworks ignore the `PORT` env var, so spawntree handles it for you.
+**Framework port injection**: spawntree auto-detects vite, next.js, astro, nuxt,
+and expo in the command and injects `--port` flags. These frameworks ignore the
+`PORT` env var, so spawntree handles it for you.
 
-**portless coexistence**: if your command uses `portless run`, spawntree injects `PORTLESS=0` to disable portless. spawntree owns port allocation and proxy.
+**portless coexistence**: if your command uses `portless run`, spawntree injects
+`PORTLESS=0` to disable portless. spawntree owns port allocation and proxy.
 
 ### postgres
 
@@ -47,11 +51,14 @@ services:
     type: postgres                     # second database in same instance
 ```
 
-- Uses a shared Docker Postgres container with extension superset (pgvector, pg_cron, postgis, uuid-ossp, pg_trgm)
+- Uses a shared Docker Postgres container with extension superset (pgvector,
+  pg_cron, postgis, uuid-ossp, pg_trgm)
 - Each service gets its own database within the shared instance
 - Injects: `DATABASE_URL`, `DB_HOST`, `DB_PORT`, `DB_NAME`
-- Multiple postgres services get per-service vars: `DBOS_DB_DATABASE_URL`, `DBOS_DB_HOST`, etc.
-- If `DATABASE_URL` is already in your environment, Docker is skipped (use external server)
+- Multiple postgres services get per-service vars: `DBOS_DB_DATABASE_URL`,
+  `DBOS_DB_HOST`, etc.
+- If `DATABASE_URL` is already in your environment, Docker is skipped (use
+  external server)
 
 ### redis
 
@@ -87,7 +94,8 @@ services:
 
 ## depends_on
 
-Services start in dependency order. If a dependency fails, dependents are skipped.
+Services start in dependency order. If a dependency fails, dependents are
+skipped.
 
 ```yaml
 services:
@@ -107,9 +115,11 @@ Start order: db, then api, then worker. Stop order: worker, api, db.
 
 ## Variable Substitution
 
-Use `${VAR_NAME}` in: `command`, `healthcheck.url`, `environment` values, `fork_from`.
+Use `${VAR_NAME}` in: `command`, `healthcheck.url`, `environment` values,
+`fork_from`.
 
-Variables are resolved from `.env` files, CLI args, and spawntree's auto-injected vars (PORT, HOST_URL, DATABASE_URL, etc.).
+Variables are resolved from `.env` files, CLI args, and spawntree's
+auto-injected vars (PORT, HOST_URL, DATABASE_URL, etc.).
 
 ## YAML Anchors
 

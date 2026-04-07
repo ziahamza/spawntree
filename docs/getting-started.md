@@ -40,7 +40,8 @@ spawntree init --from-package   # from package.json scripts
 spawntree up
 ```
 
-A background daemon starts automatically. Services start in dependency order. Ctrl+C to stop.
+A background daemon starts automatically. Services start in dependency order.
+Ctrl+C to stop.
 
 4. Check what's running:
 
@@ -62,11 +63,17 @@ spawntree up → daemon starts (if not running) → services start → logs stre
                    └── Reverse proxy (*.localhost URLs)
 ```
 
-- **Shared infrastructure**: Postgres and Redis run as shared Docker containers reused across all your projects. Each environment gets its own database/keyspace.
-- **Port isolation**: spawntree allocates non-conflicting ports automatically. No more port conflicts between projects.
-- **Service discovery**: environment variables like `HOST_URL`, `DATABASE_URL`, `REDIS_URL` are injected automatically.
-- **Framework-aware**: vite, next.js, astro, and nuxt get `--port` flags injected automatically (they ignore the PORT env var).
-- **portless coexistence**: spawntree injects `PORTLESS=0` so embedded portless in dev scripts is bypassed cleanly.
+- **Shared infrastructure**: Postgres and Redis run as shared Docker containers
+  reused across all your projects. Each environment gets its own
+  database/keyspace.
+- **Port isolation**: spawntree allocates non-conflicting ports automatically.
+  No more port conflicts between projects.
+- **Service discovery**: environment variables like `HOST_URL`, `DATABASE_URL`,
+  `REDIS_URL` are injected automatically.
+- **Framework-aware**: vite, next.js, astro, and nuxt get `--port` flags
+  injected automatically (they ignore the PORT env var).
+- **portless coexistence**: spawntree injects `PORTLESS=0` so embedded portless
+  in dev scripts is bypassed cleanly.
 
 ## Example
 

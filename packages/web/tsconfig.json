@@ -9,6 +9,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "outDir": "dist",
+    "plugins": [{ "name": "@effect/language-service" }],
     "paths": {
       "~/*": ["./src/*"]
     }

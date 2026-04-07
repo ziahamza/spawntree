@@ -1,7 +1,7 @@
-import { readFileSync, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
 import { config as dotenvConfig } from "dotenv";
 import { expand } from "dotenv-expand";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 
 export interface EnvLoadOptions {
   envName: string;

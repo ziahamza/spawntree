@@ -1,7 +1,7 @@
 import Dockerode from "dockerode";
 import { PassThrough } from "node:stream";
-import type { Service, ServiceStatus, ServiceConfig } from "spawntree-core";
-import type { LogStreamer } from "../managers/log-streamer.js";
+import type { Service, ServiceConfig, ServiceStatus } from "spawntree-core";
+import type { LogStreamer } from "../managers/log-streamer.ts";
 
 export interface DockerRunnerOptions {
   name: string;
@@ -54,13 +54,13 @@ export class DockerRunner implements Service {
     // Build environment array
     const mergedEnv: Record<string, string> = {
       ...this.envVars,
-      ...(this.config.environment ?? {}),
+      ...this.config.environment,
     };
     const envArray = Object.entries(mergedEnv).map(([k, v]) => `${k}=${v}`);
 
     // Build port bindings: allocatedPort (host) → config.port (container)
     const containerPort = this.config.port ?? 80;
-    const portBindings: Record<string, Array<{ HostPort: string }>> = {
+    const portBindings: Record<string, Array<{ HostPort: string; }>> = {
       [`${containerPort}/tcp`]: [{ HostPort: String(this.allocatedPort) }],
     };
     const exposedPorts: Record<string, Record<string, never>> = {
@@ -216,7 +216,7 @@ export class DockerRunner implements Service {
               resolve();
             }
           },
-          (event: { status?: string; id?: string }) => {
+          (event: { status?: string; id?: string; }) => {
             if (event.status) {
               const line = event.id ? `${event.status} ${event.id}` : event.status;
               this.emit("system", line);
@@ -263,7 +263,7 @@ export class DockerRunner implements Service {
   }
 
   private watchExit(container: Dockerode.Container): void {
-    container.wait((err: Error | null, data: { StatusCode: number }) => {
+    container.wait((err: Error | null, data: { StatusCode: number; }) => {
       if (this._status === "stopped") return;
       const code = data?.StatusCode ?? -1;
       this._status = "failed";

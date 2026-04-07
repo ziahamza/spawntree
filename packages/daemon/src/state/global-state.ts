@@ -1,11 +1,6 @@
-import {
-  mkdirSync,
-  writeFileSync,
-  readFileSync,
-  existsSync,
-} from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { resolve } from "node:path";
 
 export interface PortSlot {
   envKey: string;
@@ -38,6 +33,12 @@ export interface RepoState {
   envs: RepoEnvRecord[];
 }
 
+export interface RuntimeMetadata {
+  pid: number;
+  startedAt: string;
+  httpPort: number;
+}
+
 const SPAWNTREE_HOME = resolve(homedir(), ".spawntree");
 
 export function spawntreeHome(): string {
@@ -48,6 +49,7 @@ export function ensureDir(): void {
   const subdirs = [
     SPAWNTREE_HOME,
     resolve(SPAWNTREE_HOME, "repos"),
+    resolve(SPAWNTREE_HOME, "runtime"),
   ];
   for (const dir of subdirs) {
     mkdirSync(dir, { recursive: true });
@@ -107,6 +109,23 @@ export function logDir(repoId: string, envId: string): string {
 
 export function socketPath(): string {
   return resolve(SPAWNTREE_HOME, "spawntree.sock");
+}
+
+export function runtimeMetadataPath(): string {
+  return resolve(SPAWNTREE_HOME, "runtime", "daemon.json");
+}
+
+export function saveRuntimeMetadata(metadata: RuntimeMetadata): void {
+  ensureDir();
+  writeFileSync(runtimeMetadataPath(), JSON.stringify(metadata, null, 2) + "\n");
+}
+
+export function loadRuntimeMetadata(): RuntimeMetadata | null {
+  try {
+    return JSON.parse(readFileSync(runtimeMetadataPath(), "utf-8")) as RuntimeMetadata;
+  } catch {
+    return null;
+  }
 }
 
 export function stateFileExists(repoId: string): boolean {

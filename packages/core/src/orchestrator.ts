@@ -1,8 +1,8 @@
-import type { Service, ServiceStatus } from "./services/interface.js";
-import type { SpawntreeConfig, ServiceConfig } from "./config/parser.js";
-import { substituteVars } from "./config/substitution.js";
-import { ProcessRunner } from "./services/process.js";
-import { PortAllocator } from "./env/ports.js";
+import type { ServiceConfig, SpawntreeConfig } from "./config/parser.ts";
+import { substituteVars } from "./config/substitution.ts";
+import { PortAllocator } from "./env/ports.ts";
+import type { Service, ServiceStatus } from "./services/interface.ts";
+import { ProcessRunner } from "./services/process.ts";
 
 export interface OrchestratorOptions {
   config: SpawntreeConfig;
@@ -80,11 +80,11 @@ export class Orchestrator {
       // the injected values, not the raw ${} strings.
       const resolvedEnv: Record<string, string> | undefined = serviceConfig.environment
         ? Object.fromEntries(
-            Object.entries(serviceConfig.environment).map(([k, v]) => [
-              k,
-              substituteVars(v, serviceEnvVars),
-            ]),
-          )
+          Object.entries(serviceConfig.environment).map(([k, v]) => [
+            k,
+            substituteVars(v, serviceEnvVars),
+          ]),
+        )
         : undefined;
 
       // Merge resolved environment overrides
@@ -99,9 +99,9 @@ export class Orchestrator {
           : serviceConfig.command,
         healthcheck: serviceConfig.healthcheck
           ? {
-              ...serviceConfig.healthcheck,
-              url: substituteVars(serviceConfig.healthcheck.url, serviceEnvVars),
-            }
+            ...serviceConfig.healthcheck,
+            url: substituteVars(serviceConfig.healthcheck.url, serviceEnvVars),
+          }
           : serviceConfig.healthcheck,
         fork_from: serviceConfig.fork_from
           ? substituteVars(serviceConfig.fork_from, serviceEnvVars)
@@ -224,8 +224,8 @@ export class Orchestrator {
       case "redis":
         // v0.1.1: these will have their own runners
         throw new Error(
-          `Service type "${config.type}" is not yet supported in v0.1.0. ` +
-            `Use type: "process" for now.`,
+          `Service type "${config.type}" is not yet supported in v0.1.0. `
+            + `Use type: "process" for now.`,
         );
       default:
         throw new Error(`Unknown service type: ${config.type}`);
