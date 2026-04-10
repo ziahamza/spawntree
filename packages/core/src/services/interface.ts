@@ -7,5 +7,4 @@ export interface Service {
   stop(): Promise<void>;
   status(): ServiceStatus;
   healthcheck?(): Promise<boolean>;
-  logs?(): AsyncIterable<string>;
 }

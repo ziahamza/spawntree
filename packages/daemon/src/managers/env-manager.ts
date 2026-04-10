@@ -50,6 +50,10 @@ function repoIdFromPath(repoPath: string): string {
   return "unknown";
 }
 
+function formatUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Topological sort of services by depends_on.
  * Returns service names in start order (dependencies first).
@@ -343,7 +347,7 @@ export class EnvManager {
         try {
           const proxyReady = await this.proxyManager.ensureRunning();
           if (proxyReady) {
-            const cleanUrl = this.proxyManager.register(repoId, envId, name, port);
+            const cleanUrl = this.proxyManager.register(envId, name, port);
             console.log(`[spawntree-daemon]   ${name} started → ${cleanUrl}`);
             this.logStreamer.addLine(repoId, envId, name, "system", `[spawntree] ${name} started → ${cleanUrl}`);
           } else {
@@ -429,8 +433,8 @@ export class EnvManager {
     const managed = this.getManaged(repoId, envId);
     console.log(`[spawntree-daemon] Stopping env ${envId} (keeping state)`);
 
-    await this.stopServices(managed.services, [...managed.serviceOrder].reverse());
-    this.proxyManager.unregisterAll(repoId, envId);
+    await this.stopServices(managed.services, managed.serviceOrder.toReversed());
+    this.proxyManager.unregisterAll(envId);
     this.persistRepoState(repoId);
   }
 
@@ -445,8 +449,8 @@ export class EnvManager {
     console.log(`[spawntree-daemon] Deleting env ${envId}`);
 
     // Stop services and unregister proxy routes
-    await this.stopServices(managed.services, [...managed.serviceOrder].reverse());
-    this.proxyManager.unregisterAll(repoId, envId);
+    await this.stopServices(managed.services, managed.serviceOrder.toReversed());
+    this.proxyManager.unregisterAll(envId);
 
     // Free Redis db indices (flush and de-allocate)
     if (managed.redisDbIndices.size > 0) {
@@ -457,14 +461,14 @@ export class EnvManager {
             await redisRunner.flushDb(dbIndex);
           } catch (err) {
             console.error(
-              `[spawntree-daemon] Failed to flush redis db ${dbIndex}: ${err instanceof Error ? err.message : err}`,
+              `[spawntree-daemon] Failed to flush redis db ${dbIndex}: ${formatUnknownError(err)}`,
             );
           }
           redisRunner.freeDbIndex(envKey);
         }
       } catch (err) {
         console.error(
-          `[spawntree-daemon] Failed to access redis for cleanup: ${err instanceof Error ? err.message : err}`,
+          `[spawntree-daemon] Failed to access redis for cleanup: ${formatUnknownError(err)}`,
         );
       }
     }
@@ -478,7 +482,7 @@ export class EnvManager {
         await pgRunner.dropDatabase(dbName);
       } catch (err) {
         console.error(
-          `[spawntree-daemon] Failed to drop postgres db "${dbName}": ${err instanceof Error ? err.message : err}`,
+          `[spawntree-daemon] Failed to drop postgres db "${dbName}": ${formatUnknownError(err)}`,
         );
       }
     }
@@ -683,7 +687,7 @@ export class EnvManager {
           await service.stop();
         } catch (err) {
           console.error(
-            `[spawntree-daemon]   Failed to stop ${name}: ${err instanceof Error ? err.message : err}`,
+            `[spawntree-daemon]   Failed to stop ${name}: ${formatUnknownError(err)}`,
           );
         }
       }

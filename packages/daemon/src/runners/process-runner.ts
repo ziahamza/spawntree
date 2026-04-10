@@ -163,6 +163,12 @@ export class ProcessRunner implements Service {
 
     return new Promise<void>((resolve) => {
       const startedAt = Date.now();
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
       const killTimer = setTimeout(() => {
         this.killProcess(processToStop, "SIGKILL");
       }, 10_000);
@@ -177,7 +183,7 @@ export class ProcessRunner implements Service {
           "system",
           `[spawntree] Process stopped in ${Date.now() - startedAt}ms`,
         );
-        resolve();
+        settle();
       });
 
       this.killProcess(processToStop, "SIGTERM");

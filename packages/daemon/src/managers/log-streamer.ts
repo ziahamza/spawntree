@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline";
 import type { LogLine } from "spawntree-core";
 import { logDir } from "../state/global-state.ts";
@@ -49,7 +49,7 @@ export class LogStreamer {
 
     if (!buf) {
       const dir = logDir(repoId, envId);
-      const filePath = resolve(dir, `${service}.log`);
+      const filePath = resolvePath(dir, `${service}.log`);
       const writeStream = createWriteStream(filePath, { flags: "a" });
       buf = {
         lines: [],
@@ -132,7 +132,7 @@ export class LogStreamer {
           let buf = this.buffers.get(key);
           if (!buf) {
             const dir = logDir(repoId, envId);
-            const filePath = resolve(dir, `${svc}.log`);
+            const filePath = resolvePath(dir, `${svc}.log`);
             const writeStream = createWriteStream(filePath, { flags: "a" });
             buf = { lines: [], subscribers: new Set(), writeStream };
             this.buffers.set(key, buf);
@@ -172,7 +172,7 @@ export class LogStreamer {
     const key = bufferKey(repoId, envId, service);
     if (!this.buffers.has(key)) {
       const dir = logDir(repoId, envId);
-      const filePath = resolve(dir, `${service}.log`);
+      const filePath = resolvePath(dir, `${service}.log`);
       const writeStream = createWriteStream(filePath, { flags: "a" });
       this.buffers.set(key, {
         lines: [],
@@ -200,7 +200,7 @@ export class LogStreamer {
 
     for (const svc of services) {
       const dir = logDir(repoId, envId);
-      const filePath = resolve(dir, `${svc}.log`);
+      const filePath = resolvePath(dir, `${svc}.log`);
 
       if (!existsSync(filePath)) continue;
 

@@ -269,7 +269,7 @@ export class DockerRunner implements Service {
   }
 
   private watchExit(container: Dockerode.Container): void {
-    container.wait((err: Error | null, data: { StatusCode: number }) => {
+    container.wait((_err: Error | null, data: { StatusCode: number }) => {
       if (this._status === "stopped") return;
       const code = data?.StatusCode ?? -1;
       this._status = "failed";
