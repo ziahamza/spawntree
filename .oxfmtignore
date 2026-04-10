@@ -1,0 +1,7 @@
+.agents/**
+**/dist/**
+**/build/**
+docs/**
+README.md
+**/CHANGELOG.md
+packages/web/src/routeTree.gen.ts

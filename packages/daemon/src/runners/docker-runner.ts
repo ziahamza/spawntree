@@ -60,7 +60,7 @@ export class DockerRunner implements Service {
 
     // Build port bindings: allocatedPort (host) → config.port (container)
     const containerPort = this.config.port ?? 80;
-    const portBindings: Record<string, Array<{ HostPort: string; }>> = {
+    const portBindings: Record<string, Array<{ HostPort: string }>> = {
       [`${containerPort}/tcp`]: [{ HostPort: String(this.allocatedPort) }],
     };
     const exposedPorts: Record<string, Record<string, never>> = {
@@ -111,7 +111,10 @@ export class DockerRunner implements Service {
     this.attachLogs(this.container);
 
     this._status = "running";
-    this.emit("system", `[spawntree-daemon] Container started: ${this.config.image} on port ${this.allocatedPort}`);
+    this.emit(
+      "system",
+      `[spawntree-daemon] Container started: ${this.config.image} on port ${this.allocatedPort}`,
+    );
 
     // Watch for container exit
     this.watchExit(this.container);
@@ -197,7 +200,7 @@ export class DockerRunner implements Service {
     this.emit("system", `[spawntree-daemon] Pulling image: ${image}`);
 
     return new Promise<void>((resolve, reject) => {
-      this.docker.pull(image, (err: Error | null, stream: NodeJS.ReadableStream) => {
+      void this.docker.pull(image, (err: Error | null, stream: NodeJS.ReadableStream) => {
         if (err) {
           // If image already exists locally, Docker may still succeed on create
           // Treat pull errors as warnings if it's a "not found" issue
@@ -216,7 +219,7 @@ export class DockerRunner implements Service {
               resolve();
             }
           },
-          (event: { status?: string; id?: string; }) => {
+          (event: { status?: string; id?: string }) => {
             if (event.status) {
               const line = event.id ? `${event.status} ${event.id}` : event.status;
               this.emit("system", line);
@@ -232,7 +235,10 @@ export class DockerRunner implements Service {
       { follow: true, stdout: true, stderr: true },
       (err: Error | null, stream?: NodeJS.ReadableStream) => {
         if (err || !stream) {
-          this.emit("system", `[spawntree-daemon] Could not attach log stream: ${err?.message ?? "no stream"}`);
+          this.emit(
+            "system",
+            `[spawntree-daemon] Could not attach log stream: ${err?.message ?? "no stream"}`,
+          );
           return;
         }
 
@@ -263,7 +269,7 @@ export class DockerRunner implements Service {
   }
 
   private watchExit(container: Dockerode.Container): void {
-    container.wait((err: Error | null, data: { StatusCode: number; }) => {
+    container.wait((err: Error | null, data: { StatusCode: number }) => {
       if (this._status === "stopped") return;
       const code = data?.StatusCode ?? -1;
       this._status = "failed";
