@@ -53,15 +53,34 @@
 - [ ] **DB version management**: separate PG instances per major version
 - [ ] **Snapshot/restore**: save and restore full environment state
 
-## v0.4 — Cloud Platform
+## v0.4 — Agent Sessions (in progress)
+
+First-class AI coding agent orchestration.
+
+- [x] **ACP integration layer**: normalized `ACPAdapter` interface over Claude
+      Code (native ACP) and Codex (JSON-RPC app-server facade)
+- [x] **Session manager + HTTP API**: `POST/GET/DELETE /api/v1/sessions`,
+      per-session SSE stream, typed SDK
+- [x] **Typed session errors**: 409 `SESSION_BUSY`, 501 `DELETE_NOT_SUPPORTED`,
+      400 `UNKNOWN_PROVIDER` / `PROVIDER_CAPABILITY_MISSING`
+- [x] **Custom providers**: `SessionManager.registerAdapter()` takes any
+      `ACPAdapter` implementation — HTTP schema accepts arbitrary names
+- [x] **Example federation host**: `examples/host-server/` aggregates multiple
+      spawntree daemons behind one dashboard
+- [ ] **Sessions attached to envs**: `createSession({ envId })` auto-injects
+      `DATABASE_URL`/`REDIS_URL`/per-service vars into the agent subprocess
+- [ ] **`spawntree session {list,start,send,kill}`**: CLI commands mirroring the
+      HTTP surface
+- [ ] **Sessions in the web dashboard**: live turn streaming, tool call
+      inspector, session launcher per env
+
+## v0.5 — Cloud Platform
 
 Per-PR and per-agent-session environments, hosted.
 
 - [ ] **packages/cloud**: Cloudflare Workers implementing same API contract
 - [ ] **Per-PR environments**: GitHub webhook → env creation on PR open,
       teardown on close
-- [ ] **Per-agent environments**: API for AI coding agents to create/destroy
-      environments
 - [ ] **`spawntree logs --cloud`**: same interface, cloud transport
 - [ ] **Dashboard**: web UI for managing environments across repos
 

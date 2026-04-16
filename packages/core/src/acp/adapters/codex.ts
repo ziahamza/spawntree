@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import { JsonRpcTransport } from "../json-rpc.ts";
+import { SessionBusyError, SessionDeleteUnsupportedError } from "../adapter.ts";
 import type {
   ACPAdapter,
   ContentBlock,
@@ -198,6 +199,14 @@ export class CodexACPAdapter implements ACPAdapter {
     await this.ensureStarted();
     const transport = this.getTransport();
 
+    // Reject concurrent sends on the same thread — Codex turns are strictly
+    // sequential. If a turn is already in flight, the caller must interrupt
+    // it before starting a new one.
+    const activeTurnId = this.activeTurns.get(sessionId);
+    if (activeTurnId) {
+      throw new SessionBusyError(sessionId, activeTurnId);
+    }
+
     const listResult = (await transport.request("thread/loaded/list")) as {
       data: string[];
     };
@@ -225,6 +234,17 @@ export class CodexACPAdapter implements ACPAdapter {
     await this.ensureStarted();
     const transport = this.getTransport();
     await transport.request("thread/resume", { threadId: sessionId });
+  }
+
+  /**
+   * Codex persists threads in its own app-server and does not expose a
+   * delete RPC. We surface `SessionDeleteUnsupportedError` so the HTTP
+   * layer returns 501 Not Implemented rather than a misleading 200 ok.
+   * Prevents clients from thinking the session has been removed when it
+   * still shows up in `thread/list`.
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    throw new SessionDeleteUnsupportedError(sessionId, this.name);
   }
 
   onSessionEvent(handler: (event: SessionEvent) => void): () => void {
@@ -353,6 +373,12 @@ function mapCodexThread(thread: CodexThread): DiscoveredSession {
     gitBranch: thread.gitInfo?.branch ?? null,
     gitHeadCommit: thread.gitInfo?.sha ?? null,
     gitRemoteUrl: thread.gitInfo?.originUrl ?? null,
+    // Normalized semantics: "conversation turns" = number of user messages.
+    // Each CodexTurn contains one user message + its agent response, so
+    // turns.length matches the conversational turn count reported by
+    // ClaudeCodeAdapter (which counts user-role entries in its flat list).
+    // Note: `thread/list` omits `turns` by default, so list mode reports 0
+    // and callers should use `getSessionDetail` for accurate counts.
     totalTurns: thread.turns?.length ?? 0,
     startedAt: new Date(thread.createdAt * 1000).toISOString(),
     updatedAt: new Date(thread.updatedAt * 1000).toISOString(),

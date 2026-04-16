@@ -1,9 +1,9 @@
 import { execSync } from "node:child_process";
 import type * as acp from "@zed-industries/agent-client-protocol";
 import { ACPConnection } from "../client.ts";
+import { SessionBusyError } from "../adapter.ts";
 import type {
   ACPAdapter,
-  ContentBlock,
   DiscoveredSession,
   SessionDetail,
   SessionEvent,
@@ -160,7 +160,11 @@ export class ClaudeCodeAdapter implements ACPAdapter {
         gitBranch: null,
         gitHeadCommit: null,
         gitRemoteUrl: null,
-        totalTurns: s.turns.length,
+        // Normalize to "conversation turns" = number of user messages so the
+        // value matches CodexACPAdapter. We store user and assistant records
+        // as separate entries in `s.turns`, so counting user-role entries
+        // gives the conversational turn count the UI expects.
+        totalTurns: s.turns.filter((t) => t.role === "user").length,
         startedAt: s.createdAt,
         updatedAt: s.updatedAt,
       });
@@ -180,6 +184,15 @@ export class ClaudeCodeAdapter implements ACPAdapter {
     const session = this.sessions.get(sessionId);
     if (!session) {
       throw new Error(`Unknown session: ${sessionId}. Call createSession first.`);
+    }
+
+    // Reject concurrent sends — ACP does not support parallel turns within
+    // one session. Allowing two sendMessage() calls would race: both would
+    // overwrite `session.activeTurnId`, and inbound session/update
+    // notifications would be misattributed to whichever turn id won the
+    // race. Clients should interrupt the active turn first.
+    if (session.activeTurnId !== null) {
+      throw new SessionBusyError(sessionId, session.activeTurnId);
     }
 
     const turnId = `${sessionId}-turn-${++session.turnCounter}`;
@@ -269,6 +282,29 @@ export class ClaudeCodeAdapter implements ACPAdapter {
       cwd: s.cwd,
       mcpServers: [],
     } satisfies acp.LoadSessionRequest);
+  }
+
+  /**
+   * Forget a Claude Code session. Since Claude Code sessions live only in
+   * memory (the ACP subprocess has no durable session store), this simply
+   * removes the local tracking record. If a turn is in flight we attempt
+   * to cancel it first so the subprocess doesn't keep streaming into a
+   * handler that no longer exists.
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      // Idempotent — deleting an unknown session is a no-op, not an error.
+      return;
+    }
+
+    if (session.activeTurnId && this.connection?.isAlive) {
+      await this.connection
+        .cancel({ sessionId } satisfies acp.CancelNotification)
+        .catch(() => {});
+    }
+
+    this.sessions.delete(sessionId);
   }
 
   onSessionEvent(handler: (event: SessionEvent) => void): () => void {

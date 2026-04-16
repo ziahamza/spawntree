@@ -423,8 +423,20 @@ export type DomainEvent = Schema.Schema.Type<typeof DomainEvent>;
 
 // ─── Session API types ──────────────────────────────────────────────────────
 
-export const SessionProvider = Schema.Literals(["claude-code", "codex"]);
+/**
+ * Session provider identifier. Two built-in providers (`claude-code`,
+ * `codex`) are always recognized; custom providers registered via
+ * `SessionManager.registerAdapter` are also accepted, so this is a
+ * `Schema.String` rather than a closed `Schema.Literals`. Unknown
+ * providers are rejected by the SessionManager at dispatch time with a
+ * clear error, not at schema decode.
+ */
+export const SessionProvider = Schema.String;
 export type SessionProvider = Schema.Schema.Type<typeof SessionProvider>;
+
+/** The two built-in providers. Kept separate for UI enumeration. */
+export const BUILTIN_SESSION_PROVIDERS = ["claude-code", "codex"] as const;
+export type BuiltinSessionProvider = (typeof BUILTIN_SESSION_PROVIDERS)[number];
 
 export const SessionStatus = Schema.Literals(["idle", "streaming", "waiting", "completed", "error"]);
 export type SessionStatus = Schema.Schema.Type<typeof SessionStatus>;

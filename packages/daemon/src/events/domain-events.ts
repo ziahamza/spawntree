@@ -102,17 +102,38 @@ export class DomainEvents {
   }
 
   /**
-   * Subscribe to raw SessionEvents (all sessions, all providers).
+   * Subscribe to raw SessionEvents.
+   *
+   * When `sessionId` is provided, only events for that session are
+   * delivered — both in the history replay and in live events. This
+   * matters for the per-session SSE endpoint: a new subscriber shouldn't
+   * be flooded with up to 64 events from every other session before it
+   * starts seeing its own live updates.
+   *
+   * When `sessionId` is omitted, all events are delivered (used by the
+   * mirrored `/api/v1/events` stream).
+   *
    * Returns an unsubscribe function.
    */
-  subscribeSessionEvent(handler: (event: SessionEvent) => void): () => void {
+  subscribeSessionEvent(
+    handler: (event: SessionEvent) => void,
+    sessionId?: string,
+  ): () => void {
+    const matches = sessionId
+      ? (event: SessionEvent) => event.sessionId === sessionId
+      : () => true;
+
     // Replay recent history so new subscribers don't miss buffered events.
     for (const { event } of this.sessionEventHistory) {
-      handler(event);
+      if (matches(event)) handler(event);
     }
-    this.sessionEventSubscribers.add(handler);
+
+    const filtered = (event: SessionEvent) => {
+      if (matches(event)) handler(event);
+    };
+    this.sessionEventSubscribers.add(filtered);
     return () => {
-      this.sessionEventSubscribers.delete(handler);
+      this.sessionEventSubscribers.delete(filtered);
     };
   }
 }

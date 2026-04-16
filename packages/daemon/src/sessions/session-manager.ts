@@ -4,7 +4,13 @@ import type {
   DiscoveredSession,
   SessionEvent,
 } from "spawntree-core";
-import { ClaudeCodeAdapter, CodexACPAdapter } from "spawntree-core";
+import {
+  ClaudeCodeAdapter,
+  CodexACPAdapter,
+  ProviderCapabilityError,
+  SessionDeleteUnsupportedError,
+  UnknownProviderError,
+} from "spawntree-core";
 import type { DomainEvents } from "../events/domain-events.ts";
 
 /**
@@ -19,6 +25,13 @@ export class SessionManager {
   private readonly adapters = new Map<string, ACPAdapter>();
   private readonly events: DomainEvents;
   private readonly unsubscribers: Array<() => void> = [];
+  /**
+   * sessionId → provider name cache. Populated on createSession and
+   * opportunistically during discoverSessions so we avoid iterating every
+   * adapter (which would spawn every adapter's subprocess) on each call.
+   */
+  private readonly sessionIndex = new Map<string, string>();
+  private readonly subscribedProviders = new Set<string>();
 
   constructor(events: DomainEvents) {
     this.events = events;
@@ -32,9 +45,21 @@ export class SessionManager {
   /**
    * Register a custom adapter (or override a built-in one).
    * Must be called before the adapter is first used.
+   *
+   * Replacing an adapter drops any existing event subscription for that
+   * provider so the old instance can be garbage collected cleanly.
    */
   registerAdapter(provider: string, adapter: ACPAdapter): void {
     this.adapters.set(provider, adapter);
+    this.subscribedProviders.delete(provider);
+  }
+
+  /**
+   * Returns the list of provider names currently registered. Useful for
+   * introspection / admin surfaces. Does not start any subprocesses.
+   */
+  registeredProviders(): string[] {
+    return [...this.adapters.keys()];
   }
 
   /**
@@ -52,18 +77,35 @@ export class SessionManager {
 
   /**
    * List all known sessions across all providers.
-   * Each adapter is queried; unavailable adapters return an empty list.
+   * Only adapters whose binary is available are queried; others return an
+   * empty list. Also populates the `sessionIndex` so subsequent operations
+   * can route without re-querying every adapter, and subscribes to each
+   * adapter we successfully queried so live events flow into the domain
+   * events bus — a dashboard that opens the session list should start
+   * receiving updates immediately.
    */
   async listSessions(): Promise<Array<DiscoveredSession & { provider: string }>> {
     const all: Array<DiscoveredSession & { provider: string }> = [];
     for (const [provider, adapter] of this.adapters) {
+      // Skip adapters whose binary is missing — otherwise discoverSessions
+      // would spawn a subprocess that immediately fails, just to return 0
+      // sessions. That's wasteful and noisy.
+      try {
+        if (!(await adapter.isAvailable())) continue;
+      } catch {
+        continue;
+      }
+
       try {
         const sessions = await adapter.discoverSessions();
         for (const s of sessions) {
           all.push({ ...s, provider });
+          this.sessionIndex.set(s.sourceId, provider);
         }
+        // Idempotent — only wires up the handler once per provider.
+        this.subscribeToAdapter(provider, adapter);
       } catch {
-        // Provider not running or unavailable — skip silently.
+        // Provider unreachable (subprocess crashed, etc.) — skip silently.
       }
     }
     return all;
@@ -72,14 +114,25 @@ export class SessionManager {
   /**
    * Create a new session with the given provider.
    * Starts the adapter if it hasn't been started yet.
+   *
+   * Order matters: we subscribe to the adapter's event stream BEFORE
+   * calling `createSession`. The adapter may emit session events during
+   * the startup handshake (status transitions, initialization echoes,
+   * etc.); subscribing afterwards would drop those early events because
+   * the adapter's internal handler set was empty at emission time.
+   * `subscribeToAdapter` is idempotent per-provider, so calling it
+   * here is a safe no-op when a previous call already wired things up.
    */
   async createSession(provider: string, params: { cwd: string; mcpServers?: unknown[] }): Promise<{ sessionId: string }> {
     const adapter = this.requireAdapter(provider);
     if (!adapter.createSession) {
-      throw new Error(`Provider "${provider}" does not support explicit session creation`);
+      throw new ProviderCapabilityError(provider, "createSession");
     }
-    const result = await adapter.createSession(params);
     this.subscribeToAdapter(provider, adapter);
+    const result = await adapter.createSession(params);
+    // Index so subsequent operations route directly without iterating
+    // every adapter's discoverSessions() (which would spawn subprocesses).
+    this.sessionIndex.set(result.sessionId, provider);
     return result;
   }
 
@@ -126,22 +179,30 @@ export class SessionManager {
   }
 
   /**
-   * Shut down a session by removing it from the adapter's memory.
-   * For adapters that persist sessions (Codex), this is a no-op on the
-   * agent side — the session remains in Codex's thread list.
+   * Delete a session by dispatching to the owning adapter. Adapters that
+   * do not support deletion (e.g. Codex, whose app-server has no delete
+   * RPC) throw `SessionDeleteUnsupportedError` which the HTTP layer maps
+   * to 501 Not Implemented.
+   *
+   * After a successful delete we drop the session from the index so
+   * subsequent lookups don't route to a stale provider.
    */
   async deleteSession(sessionId: string): Promise<void> {
-    // For Claude Code: sessions are in-memory; shutting down the whole adapter
-    // would kill all sessions. Instead we just let the session die naturally.
-    // For Codex: sessions persist in the codex app-server; we can't delete them.
-    // Nothing to do on the daemon side — the session stays discoverable.
-    // In a future iteration, track session→adapter mapping for finer control.
-    void sessionId;
+    const [provider, adapter] = await this.findSession(sessionId);
+    if (!adapter.deleteSession) {
+      throw new SessionDeleteUnsupportedError(sessionId, provider);
+    }
+    await adapter.deleteSession(sessionId);
+    this.sessionIndex.delete(sessionId);
   }
 
   /**
    * Subscribe to per-session events from a specific session.
    * Returns an async generator that yields events until the signal fires.
+   *
+   * The sessionId filter is applied at the DomainEvents layer (including
+   * during history replay) so a fresh subscriber doesn't receive a flood
+   * of events from other sessions before it gets its own live stream.
    */
   async *sessionEvents(sessionId: string, signal?: AbortSignal): AsyncIterable<SessionEvent> {
     const queue: SessionEvent[] = [];
@@ -149,14 +210,12 @@ export class SessionManager {
     let done = false;
 
     const push = (event: SessionEvent) => {
-      if (event.sessionId !== sessionId) return;
       queue.push(event);
       wake?.();
     };
 
-    // Subscribe at the domain-events level by filtering the raw adapter events.
-    // We register a temporary handler on the domain events bus.
-    const cleanup = this.events.subscribeSessionEvent(push);
+    // Push-down the sessionId filter so history replay is also scoped.
+    const cleanup = this.events.subscribeSessionEvent(push, sessionId);
     signal?.addEventListener("abort", () => {
       done = true;
       wake?.();
@@ -195,24 +254,55 @@ export class SessionManager {
   private requireAdapter(provider: string): ACPAdapter {
     const adapter = this.adapters.get(provider);
     if (!adapter) {
-      throw new Error(`Unknown provider: "${provider}". Available: ${[...this.adapters.keys()].join(", ")}`);
+      throw new UnknownProviderError(provider, [...this.adapters.keys()]);
     }
     return adapter;
   }
 
   /**
-   * Find which adapter owns a given sessionId by querying all adapters.
-   * Returns [providerName, adapter].
+   * Find which adapter owns a given sessionId.
+   *
+   * Fast path: consult the `sessionIndex` cache populated by
+   * `createSession` and `listSessions`. This avoids iterating every
+   * adapter on each call — crucially, it avoids triggering
+   * `discoverSessions` on adapters whose implementations spawn a
+   * subprocess (e.g. CodexACPAdapter), so a Claude Code session
+   * operation does not boot a Codex subprocess it never needed.
+   *
+   * Slow path: if the cache misses, fall back to iterating available
+   * adapters and populate the cache with everything we discover on the
+   * way. Unavailable adapters (binary not installed) are skipped so we
+   * don't spawn them speculatively.
    */
   private async findSession(sessionId: string): Promise<[string, ACPAdapter]> {
+    const cached = this.sessionIndex.get(sessionId);
+    if (cached) {
+      const adapter = this.adapters.get(cached);
+      if (adapter) {
+        return [cached, adapter];
+      }
+      // Provider was removed — stale cache entry, fall through to rediscover.
+      this.sessionIndex.delete(sessionId);
+    }
+
     for (const [provider, adapter] of this.adapters) {
       try {
-        const sessions = await adapter.discoverSessions();
-        if (sessions.some((s) => s.sourceId === sessionId)) {
-          return [provider, adapter];
-        }
+        if (!(await adapter.isAvailable())) continue;
       } catch {
-        // Adapter not running — skip.
+        continue;
+      }
+      try {
+        const sessions = await adapter.discoverSessions();
+        let hit: [string, ACPAdapter] | null = null;
+        for (const s of sessions) {
+          this.sessionIndex.set(s.sourceId, provider);
+          if (s.sourceId === sessionId) {
+            hit = [provider, adapter];
+          }
+        }
+        if (hit) return hit;
+      } catch {
+        // Adapter unreachable — skip.
       }
     }
     throw new Error(`Session not found: ${sessionId}`);
@@ -224,11 +314,8 @@ export class SessionManager {
    * provider are no-ops.
    */
   private subscribeToAdapter(provider: string, adapter: ACPAdapter): void {
-    // Use a simple presence check: if the adapter is in the map and we've
-    // already added a handler, its unsubscriber will be in `this.unsubscribers`.
-    // We tag it by prefixing. Simpler approach: track per-provider subscription.
-    if ((adapter as AdapterWithSubscribed)._spawntreeSubscribed) return;
-    (adapter as AdapterWithSubscribed)._spawntreeSubscribed = true;
+    if (this.subscribedProviders.has(provider)) return;
+    this.subscribedProviders.add(provider);
 
     const unsub = adapter.onSessionEvent((event) => {
       // Publish to domain events bus — SSE subscribers will receive it.
@@ -236,9 +323,4 @@ export class SessionManager {
     });
     this.unsubscribers.push(unsub);
   }
-}
-
-// Internal marker to track per-adapter subscription state without a separate Map.
-interface AdapterWithSubscribed extends ACPAdapter {
-  _spawntreeSubscribed?: boolean;
 }

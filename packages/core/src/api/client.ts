@@ -424,7 +424,14 @@ export class ApiClient {
 
   private toUrl(path: string) {
     if (!this.baseUrl) return path;
-    return new URL(path, this.baseUrl).toString();
+    // Concatenate so base URLs with a path prefix are preserved. For
+    // example, when the federation host server sits at
+    // `http://host/h/laptop`, using `new URL(path, baseUrl)` would
+    // treat `/api/v1/daemon` as absolute and resolve to
+    // `http://host/api/v1/daemon`, silently dropping `/h/laptop`.
+    // Strip a trailing slash on the base to normalize, but otherwise
+    // just string-concat.
+    return this.baseUrl.replace(/\/$/, "") + path;
   }
 
   private withSearch(path: string, params: Record<string, string | undefined>) {

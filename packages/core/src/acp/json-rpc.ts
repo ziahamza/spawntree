@@ -49,7 +49,7 @@ export class JsonRpcTransport extends EventEmitter {
   async start(): Promise<void> {
     this.proc = spawn(this.command, this.args as string[], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...(this.extraEnv ?? {}) },
+      env: { ...process.env, ...this.extraEnv },
     });
 
     if (!this.proc.stdout || !this.proc.stdin) {
@@ -114,7 +114,11 @@ export class JsonRpcTransport extends EventEmitter {
     }
 
     const id = ++this.requestId;
-    const msg = JSON.stringify({ id, method, params: params ?? {} });
+    // The `jsonrpc: "2.0"` field is required by the JSON-RPC 2.0 spec.
+    // Codex's app-server happens to be permissive today, but strict
+    // servers (and future Codex versions) would reject messages without
+    // it. Always send it.
+    const msg = JSON.stringify({ jsonrpc: "2.0", id, method, params: params ?? {} });
 
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -126,7 +130,7 @@ export class JsonRpcTransport extends EventEmitter {
     if (!this.proc?.stdin) {
       throw new Error("Transport not started");
     }
-    const msg = JSON.stringify({ method, params: params ?? {} });
+    const msg = JSON.stringify({ jsonrpc: "2.0", method, params: params ?? {} });
     this.proc.stdin.write(msg + "\n");
   }
 

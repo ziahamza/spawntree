@@ -63,7 +63,7 @@ export class ACPConnection {
     const label = this.options.label ?? this.options.command;
     this.proc = spawn(this.options.command, (this.options.args ?? []) as string[], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...(this.options.env ?? {}) },
+      env: { ...process.env, ...this.options.env },
     });
 
     if (!this.proc.stdout || !this.proc.stdin) {
@@ -156,7 +156,17 @@ export class ACPConnection {
  * Default Client implementation. Handles session/update, auto-responds to
  * permission requests per `permissionPolicy`, and serves fs/read_text_file
  * and fs/write_text_file via node:fs.
+ *
+ * Exported so callers can inspect or test the permission policy
+ * behavior in isolation without spawning a real ACP subprocess.
  */
+export function buildDefaultClient(
+  dispatch: SessionUpdateDispatch,
+  options: DefaultClientOptions = {},
+): acp.Client {
+  return defaultClientImpl(dispatch, options);
+}
+
 function defaultClientImpl(
   dispatch: SessionUpdateDispatch,
   options: DefaultClientOptions,
@@ -170,8 +180,33 @@ function defaultClientImpl(
     },
 
     requestPermission: async (params) => {
+      // Exact policy match — always honor if the agent offered it.
       const match = params.options.find((o) => o.kind === policy);
-      const chosen = match ?? params.options[0];
+      if (match) {
+        return { outcome: { outcome: "selected", optionId: match.optionId } };
+      }
+
+      // No exact match. Fail CLOSED when the user asked to reject: if the
+      // agent doesn't offer our preferred reject option, picking `options[0]`
+      // would silently flip a "reject" policy into an "allow" — a silent
+      // security regression. Instead, prefer any other reject-kind option
+      // and fall through to cancel if none exist.
+      if (policy.startsWith("reject_")) {
+        const anyReject = params.options.find((o) =>
+          typeof o.kind === "string" && o.kind.startsWith("reject_")
+        );
+        if (anyReject) {
+          return { outcome: { outcome: "selected", optionId: anyReject.optionId } };
+        }
+        return { outcome: { outcome: "cancelled" } };
+      }
+
+      // Allow-kind policy with no exact match — prefer any other allow option
+      // before falling back to the first option offered.
+      const anyAllow = params.options.find((o) =>
+        typeof o.kind === "string" && o.kind.startsWith("allow_")
+      );
+      const chosen = anyAllow ?? params.options[0];
       if (!chosen) {
         return { outcome: { outcome: "cancelled" } };
       }

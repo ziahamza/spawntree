@@ -24,6 +24,9 @@ spawntree down      # stop everything
 - **Framework-aware** — auto-injects `--port` for vite, next.js, astro, nuxt
 - **portless compatible** — injects `PORTLESS=0` to disable portless cleanly
   when embedded in dev scripts
+- **Drive AI coding agents** — first-class session API for Claude Code and Codex
+  via a normalized ACP adapter layer. One SSE stream for turns, tool calls, and
+  message deltas. ([docs](./docs/sessions.md))
 - **Single Node daemon** — one background server manages orchestration, state,
   the web API, and real-time updates.
 - **Shared typed contract** — CLI and web talk through the same `spawntree-core`
@@ -31,8 +34,10 @@ spawntree down      # stop everything
 
 ## Architecture
 
-- `packages/daemon` runs the single Node.js control plane
-- `packages/core` exposes the shared typed client and schemas
+- `packages/daemon` runs the single Node.js control plane (envs, infra,
+  sessions, SSE event bus)
+- `packages/core` exposes the shared typed client, schemas, and the `ACPAdapter`
+  layer for driving coding agents
 - `packages/cli` is a thin client that auto-starts the daemon
 - `packages/web` is the browser client and listens for daemon events over SSE
 
@@ -134,7 +139,11 @@ spawntree db restore mydata
 - [Configuration](./docs/configuration.md)
 - [Environment Variables](./docs/environment-variables.md)
 - [CLI Reference](./docs/cli-reference.md)
-- [Examples](./examples/)
+- [Agent Sessions](./docs/sessions.md) — driving Claude Code / Codex through the
+  daemon
+- [Examples](./examples/) — including the
+  [federation host server](./examples/host-server/) for running one dashboard
+  across multiple spawntree machines
 - [Roadmap](./ROADMAP.md)
 
 ## License

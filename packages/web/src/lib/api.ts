@@ -16,7 +16,27 @@ import {
   type WebRepo,
 } from "spawntree-core/browser";
 
-const api = createApiClient();
+/**
+ * The `api` reference is a `let` binding (not `const`) so the host
+ * switcher can point the dashboard at a different spawntree daemon
+ * without reloading the page. Every call site reads the current binding
+ * at call time, so reassigning the client picks up on the next refetch.
+ *
+ * `setApiBaseUrl("")` or `setApiBaseUrl(undefined)` reverts to same-origin
+ * (the default for the local daemon serving this bundle).
+ */
+let api = createApiClient();
+let currentBaseUrl: string = "";
+
+export function setApiBaseUrl(baseUrl: string | undefined | null): void {
+  const normalized = baseUrl ?? "";
+  currentBaseUrl = normalized;
+  api = createApiClient({ baseUrl: normalized || undefined });
+}
+
+export function getApiBaseUrl(): string {
+  return currentBaseUrl;
+}
 
 export type DaemonInfo = Awaited<ReturnType<typeof api.getDaemonInfo>>;
 export type Service = ServiceInfo;

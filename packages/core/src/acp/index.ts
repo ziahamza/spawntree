@@ -10,7 +10,13 @@ export type {
   // to avoid ambiguity when both are needed.
   SessionDetail as ACPSessionDetail,
 } from "./adapter.ts";
-export { ACPConnection } from "./client.ts";
+export {
+  ProviderCapabilityError,
+  SessionBusyError,
+  SessionDeleteUnsupportedError,
+  UnknownProviderError,
+} from "./adapter.ts";
+export { ACPConnection, buildDefaultClient } from "./client.ts";
 export type {
   ACPConnectionOptions,
   DefaultClientOptions,

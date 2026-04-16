@@ -1,6 +1,13 @@
 import { Schema } from "effect";
 import { type Context, Hono } from "hono";
-import { CreateSessionRequest, SendSessionMessageRequest } from "spawntree-core";
+import {
+  CreateSessionRequest,
+  ProviderCapabilityError,
+  SendSessionMessageRequest,
+  SessionBusyError,
+  SessionDeleteUnsupportedError,
+  UnknownProviderError,
+} from "spawntree-core";
 import { BadRequestError } from "../errors.ts";
 import type { SessionManager } from "../sessions/session-manager.ts";
 
@@ -195,6 +202,52 @@ function sessionErrorResponse(error: unknown): Response {
     return new Response(
       JSON.stringify({ error: error.message, code: error.code }),
       { status: 404, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  // Concurrent turn in flight — 409 Conflict so clients know to interrupt first.
+  if (error instanceof SessionBusyError) {
+    return new Response(
+      JSON.stringify({
+        error: error.message,
+        code: error.code,
+        details: { sessionId: error.sessionId, activeTurnId: error.activeTurnId },
+      }),
+      { status: 409, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  // Provider doesn't support delete (e.g. Codex) — 501 Not Implemented
+  // rather than a misleading 200 that pretends the session was removed.
+  if (error instanceof SessionDeleteUnsupportedError) {
+    return new Response(
+      JSON.stringify({
+        error: error.message,
+        code: error.code,
+        details: { sessionId: error.sessionId, provider: error.provider },
+      }),
+      { status: 501, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  // Caller used a provider name that isn't registered.
+  if (error instanceof UnknownProviderError) {
+    return new Response(
+      JSON.stringify({
+        error: error.message,
+        code: error.code,
+        details: { provider: error.provider, available: error.available },
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  // Provider exists but doesn't support the requested capability (e.g. Codex
+  // has no explicit createSession — its agent creates sessions implicitly).
+  if (error instanceof ProviderCapabilityError) {
+    return new Response(
+      JSON.stringify({
+        error: error.message,
+        code: error.code,
+        details: { provider: error.provider, capability: error.capability },
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
     );
   }
   const msg = error instanceof Error && error.message.includes("not found")
