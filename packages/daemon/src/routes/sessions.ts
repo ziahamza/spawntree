@@ -52,8 +52,11 @@ export function createSessionRoutes(manager: SessionManager) {
 
   // Create a new session.
   app.post("/", async (c) => {
-    const body = await decodeBody(CreateSessionRequest, c);
     try {
+      // decodeBody must be INSIDE the try so BadRequestError (invalid
+      // JSON / schema mismatch) maps to HTTP 400 via sessionErrorResponse
+      // instead of propagating uncaught and becoming a generic 500.
+      const body = await decodeBody(CreateSessionRequest, c);
       const result = await manager.createSession(body.provider, {
         cwd: body.cwd,
         mcpServers: body.mcpServers as unknown[] | undefined,
@@ -111,8 +114,10 @@ export function createSessionRoutes(manager: SessionManager) {
   // Send a message — starts a new turn.
   app.post("/:id/messages", async (c) => {
     const sessionId = c.req.param("id");
-    const body = await decodeBody(SendSessionMessageRequest, c);
     try {
+      // Same reason as POST /: keep decodeBody inside try so the thrown
+      // BadRequestError maps to HTTP 400 instead of becoming 500.
+      const body = await decodeBody(SendSessionMessageRequest, c);
       await manager.sendMessage(sessionId, body.content);
       return c.json({ ok: true });
     } catch (error) {

@@ -150,7 +150,23 @@ async function handleAdmin(
         json(res, 400, { error: "invalid or missing 'url'", code: "INVALID_URL" });
         return true;
       }
-      const row = store.upsert(body.name, body.url, body.label ?? null);
+      // Label is user-supplied free text. Enforce a reasonable cap and
+      // reject non-string values. Output is HTML-escaped on the landing
+      // page too, but accepting 10MB strings or non-strings into SQLite
+      // is still a bad idea.
+      let label: string | null = null;
+      if (body.label !== undefined && body.label !== null) {
+        if (typeof body.label !== "string") {
+          json(res, 400, { error: "'label' must be a string", code: "INVALID_LABEL" });
+          return true;
+        }
+        if (body.label.length > 256) {
+          json(res, 400, { error: "'label' too long (max 256 chars)", code: "INVALID_LABEL" });
+          return true;
+        }
+        label = body.label;
+      }
+      const row = store.upsert(body.name, body.url, label);
       json(res, 201, { host: row });
     } catch {
       json(res, 400, { error: "invalid JSON body", code: "INVALID_JSON" });
@@ -336,6 +352,24 @@ async function proxyToHost(
 
 // ─── Router ─────────────────────────────────────────────────────────────
 
+/**
+ * HTML-escape a string for safe insertion into HTML text or attribute
+ * contexts. Needed because `label` on a host row is user-supplied with
+ * no validation (name is regex-validated, url is URL-validated, but
+ * label is free-form) and is rendered back on the landing page — any
+ * unescaped HTML there is stored XSS. Escape everything we interpolate
+ * regardless of whether it's "already safe"; defense in depth beats
+ * auditing which fields are user-influenced.
+ */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function landingPage(res: ServerResponse) {
   const hosts = store.list();
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -356,16 +390,20 @@ function landingPage(res: ServerResponse) {
 </head>
 <body>
 <h1>spawntree host server</h1>
-<p>Listening on <code>${HOST}:${PORT}</code>. Registered hosts: ${hosts.length}.</p>
-${hosts.length === 0 ? '<p>No hosts registered yet.</p>' : hosts.map((h) => `
+<p>Listening on <code>${escapeHtml(HOST)}:${PORT}</code>. Registered hosts: ${hosts.length}.</p>
+${
+    hosts.length === 0 ? "<p>No hosts registered yet.</p>" : hosts.map((h) => `
   <div class="host">
-    <b>${h.name}</b> → <code>${h.url}</code>
-    ${h.label ? `<div class="muted">${h.label}</div>` : ''}
-    <div class="muted">proxy: <a href="/h/${h.name}/api/v1/daemon">/h/${h.name}/api/v1/daemon</a></div>
+    <b>${escapeHtml(h.name)}</b> → <code>${escapeHtml(h.url)}</code>
+    ${h.label ? `<div class="muted">${escapeHtml(h.label)}</div>` : ""}
+    <div class="muted">proxy: <a href="/h/${encodeURIComponent(h.name)}/api/v1/daemon">/h/${
+      escapeHtml(h.name)
+    }/api/v1/daemon</a></div>
   </div>
-`).join('')}
+`).join("")
+  }
 <h2 style="font-size:16px;margin-top:24px">Register a host</h2>
-<pre>curl -X POST http://${HOST}:${PORT}/api/hosts \\
+<pre>curl -X POST http://${escapeHtml(HOST)}:${PORT}/api/hosts \\
   -H 'content-type: application/json' \\
   -d '{"name":"laptop","url":"http://127.0.0.1:2222"}'</pre>
 <p><a href="/api/hosts">/api/hosts</a> — JSON list</p>
