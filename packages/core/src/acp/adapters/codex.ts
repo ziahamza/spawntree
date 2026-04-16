@@ -51,24 +51,44 @@ export class CodexACPAdapter implements ACPAdapter {
   async start(): Promise<void> {
     if (this.transport?.isAlive) return;
 
-    this.transport = new JsonRpcTransport(
+    // If a previous start() threw after spawning but before completing the
+    // handshake, tear down the dangling transport so we don't leak the
+    // subprocess on retry.
+    if (this.transport) {
+      await this.transport.shutdown().catch(() => {});
+      this.transport = null;
+    }
+
+    const transport = new JsonRpcTransport(
       "codex",
       ["app-server", "--listen", "stdio://"],
       { label: "codex" },
     );
-    await this.transport.start();
-    await this.transport.initialize({
-      name: this.clientName,
-      version: this.clientVersion,
-    });
+    this.transport = transport;
 
-    this.transport.on("notification", (method: string, params: unknown) => {
+    // Register notification and exit handlers BEFORE initialize() so we don't
+    // miss any notifications emitted during or immediately after the handshake.
+    transport.on("notification", (method: string, params: unknown) => {
       this.handleNotification(method, params);
     });
-
-    this.transport.on("exit", () => {
+    transport.on("exit", () => {
       this.activeTurns.clear();
     });
+
+    try {
+      await transport.start();
+      await transport.initialize({
+        name: this.clientName,
+        version: this.clientVersion,
+      });
+    } catch (err) {
+      // Handshake failed — kill the subprocess so isAlive becomes false and
+      // the next ensureStarted() can retry cleanly instead of getting stuck
+      // on a live-but-uninitialized transport.
+      await transport.shutdown().catch(() => {});
+      this.transport = null;
+      throw err;
+    }
   }
 
   private handleNotification(method: string, params: unknown): void {

@@ -74,30 +74,49 @@ export class ClaudeCodeAdapter implements ACPAdapter {
   async start(): Promise<void> {
     if (this.started && this.connection?.isAlive) return;
 
+    // If a previous start() threw before `this.started = true`, shut down
+    // the stale connection so we don't leak its subprocess on retry.
+    if (this.connection) {
+      await this.connection.shutdown().catch(() => {});
+      this.connection = null;
+    }
+
     const command = this.options.command ?? "npx";
     const args = this.options.args ?? ["-y", "@zed-industries/claude-code-acp"];
-    this.connection = new ACPConnection({
+    const connection = new ACPConnection({
       command,
       args,
       env: this.options.env,
       label: "claude-code",
       defaultClient: { permissionPolicy: this.options.permissionPolicy ?? "allow_once" },
     });
+    this.connection = connection;
 
-    await this.connection.start();
+    try {
+      await connection.start();
 
-    this.connection.onSessionUpdate((notification) => {
-      this.handleSessionUpdate(notification);
-    });
+      // Register the notification handler BEFORE initialize() so we don't
+      // miss any session/update events emitted during the handshake.
+      connection.onSessionUpdate((notification) => {
+        this.handleSessionUpdate(notification);
+      });
 
-    await this.connection.initialize({
-      protocolVersion: 1,
-      clientCapabilities: {
-        fs: { readTextFile: true, writeTextFile: true },
-      },
-    } satisfies acp.InitializeRequest);
+      await connection.initialize({
+        protocolVersion: 1,
+        clientCapabilities: {
+          fs: { readTextFile: true, writeTextFile: true },
+        },
+      } satisfies acp.InitializeRequest);
 
-    this.started = true;
+      this.started = true;
+    } catch (err) {
+      // Handshake failed — kill the subprocess so a retry creates a fresh one
+      // instead of overwriting this.connection and leaking the old process.
+      await connection.shutdown().catch(() => {});
+      this.connection = null;
+      this.started = false;
+      throw err;
+    }
   }
 
   async createSession(params: {
