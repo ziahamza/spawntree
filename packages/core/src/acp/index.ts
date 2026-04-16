@@ -1,12 +1,14 @@
 export type {
   ACPAdapter,
-  ContentBlock,
+  // ContentBlock, SessionStatus, SessionToolCallData, SessionTurnData are
+  // exported from api/schemas.ts with runtime-validatable Schema definitions.
+  // Export only the types that don't have Schema counterparts here.
   DiscoveredSession,
-  SessionDetail,
   SessionEvent,
-  SessionStatus,
-  SessionToolCallData,
-  SessionTurnData,
+  // SessionDetail is the plain interface from the adapter; the Schema version
+  // (with `session` metadata) is in api/schemas.ts. Export as ACPSessionDetail
+  // to avoid ambiguity when both are needed.
+  SessionDetail as ACPSessionDetail,
 } from "./adapter.ts";
 export { ACPConnection } from "./client.ts";
 export type {

@@ -8,15 +8,19 @@ import {
   ConfigSuggestResponse,
   ConfigTestResponse,
   CreateEnvResponse,
+  CreateSessionResponse,
   DaemonInfo,
   DomainEvent,
   DumpDbResponse,
   GetEnvResponse,
   InfraStatusResponse,
   ListEnvsResponse,
+  ListSessionsResponse,
   LogLine,
   RegisterRepoResponse,
   RestoreDbResponse,
+  SessionDetail,
+  SessionEventPayload,
   WebListReposResponse,
   WebRepoDetailResponse,
   WebRepoTreeResponse,
@@ -30,10 +34,12 @@ import type {
   ConfigSuggestRequest,
   ConfigTestRequest,
   CreateEnvRequest,
+  CreateSessionRequest,
   DumpDbRequest,
   RegisterRepoRequest,
   RelinkCloneRequest,
   RestoreDbRequest,
+  SendSessionMessageRequest,
   StopInfraRequest,
 } from "./types.ts";
 
@@ -253,6 +259,62 @@ export class ApiClient {
         repoPath: options.repoPath,
       }),
     );
+  }
+
+  // ─── Session API ─────────────────────────────────────────────────────────
+
+  async listSessions() {
+    return this.request("/api/v1/sessions", { schema: ListSessionsResponse });
+  }
+
+  async createSession(body: CreateSessionRequest) {
+    return this.request("/api/v1/sessions", {
+      method: "POST",
+      body,
+      schema: CreateSessionResponse,
+    });
+  }
+
+  async getSession(sessionId: string) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
+      schema: SessionDetail,
+    });
+  }
+
+  async deleteSession(sessionId: string) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async sendSessionMessage(sessionId: string, body: SendSessionMessageRequest) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`, {
+      method: "POST",
+      body,
+    });
+  }
+
+  async interruptSession(sessionId: string) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interrupt`, {
+      method: "POST",
+    });
+  }
+
+  async *streamSessionEvents(sessionId: string, signal?: AbortSignal): AsyncIterable<SessionEventPayload> {
+    const response = await this.fetchFn(
+      this.toUrl(`/api/v1/sessions/${encodeURIComponent(sessionId)}/events`),
+      {
+        method: "GET",
+        headers: { Accept: "text/event-stream" },
+        signal,
+      },
+    );
+
+    if (!response.ok || !response.body) {
+      throw await this.toClientError(response);
+    }
+
+    yield* parseSSE(response.body, SessionEventPayload);
   }
 
   getEventsUrl(since?: number) {

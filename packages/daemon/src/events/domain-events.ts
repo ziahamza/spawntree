@@ -1,11 +1,18 @@
-import type { DomainEvent } from "spawntree-core";
+import type { DomainEvent, SessionEvent } from "spawntree-core";
 
 const HISTORY_LIMIT = 256;
+// Per-session event queues are not history-limited — they're ephemeral.
+const SESSION_EVENT_HISTORY = 64;
 
 export class DomainEvents {
   private seq = 0;
   private history: Array<DomainEvent> = [];
   private readonly subscribers = new Set<(event: DomainEvent) => void>();
+
+  // Session events — separate channel so consumers can subscribe without
+  // parsing the opaque DomainEvent.detail string.
+  private readonly sessionEventHistory: Array<{ event: SessionEvent; provider: string }> = [];
+  private readonly sessionEventSubscribers = new Set<(event: SessionEvent) => void>();
 
   publish(event: Omit<DomainEvent, "seq" | "timestamp">) {
     const nextEvent: DomainEvent = {
@@ -71,5 +78,41 @@ export class DomainEvents {
       wakeSubscriber = undefined;
       this.subscribers.delete(subscriber);
     }
+  }
+
+  /**
+   * Publish a normalized SessionEvent from an ACP adapter.
+   * Also forwards it to the main DomainEvents stream so clients watching
+   * `/api/v1/events` see session activity alongside infra events.
+   */
+  publishSessionEvent(event: SessionEvent, provider: string): void {
+    this.sessionEventHistory.push({ event, provider });
+    if (this.sessionEventHistory.length > SESSION_EVENT_HISTORY) {
+      this.sessionEventHistory.shift();
+    }
+    for (const sub of this.sessionEventSubscribers) {
+      sub(event);
+    }
+    // Mirror to the main domain-events bus so existing `/api/v1/events`
+    // consumers see session events without subscribing separately.
+    this.publish({
+      type: "session_event",
+      detail: JSON.stringify(event),
+    });
+  }
+
+  /**
+   * Subscribe to raw SessionEvents (all sessions, all providers).
+   * Returns an unsubscribe function.
+   */
+  subscribeSessionEvent(handler: (event: SessionEvent) => void): () => void {
+    // Replay recent history so new subscribers don't miss buffered events.
+    for (const { event } of this.sessionEventHistory) {
+      handler(event);
+    }
+    this.sessionEventSubscribers.add(handler);
+    return () => {
+      this.sessionEventSubscribers.delete(handler);
+    };
   }
 }
