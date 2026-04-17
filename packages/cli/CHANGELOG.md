@@ -4,9 +4,13 @@
 
 ### Patch Changes
 
-- [#8](https://github.com/ziahamza/spawntree/pull/8) [`5fd202b`](https://github.com/ziahamza/spawntree/commit/5fd202b567ab22a3536fabaa4699d4e0a6cc93cc) Thanks [@ziahamza](https://github.com/ziahamza)! - Fix spaHandler race condition, bundle self-hosted fonts, add frontend tests
+- [#8](https://github.com/ziahamza/spawntree/pull/8)
+  [`5fd202b`](https://github.com/ziahamza/spawntree/commit/5fd202b567ab22a3536fabaa4699d4e0a6cc93cc)
+  Thanks [@ziahamza](https://github.com/ziahamza)! - Fix spaHandler race
+  condition, bundle self-hosted fonts, add frontend tests
 
-- Updated dependencies [[`5fd202b`](https://github.com/ziahamza/spawntree/commit/5fd202b567ab22a3536fabaa4699d4e0a6cc93cc)]:
+- Updated dependencies
+  [[`5fd202b`](https://github.com/ziahamza/spawntree/commit/5fd202b567ab22a3536fabaa4699d4e0a6cc93cc)]:
   - spawntree-core@0.3.1
   - spawntree-daemon@0.2.1
 

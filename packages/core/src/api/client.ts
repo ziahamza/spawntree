@@ -8,15 +8,19 @@ import {
   ConfigSuggestResponse,
   ConfigTestResponse,
   CreateEnvResponse,
+  CreateSessionResponse,
   DaemonInfo,
   DomainEvent,
   DumpDbResponse,
   GetEnvResponse,
   InfraStatusResponse,
   ListEnvsResponse,
+  ListSessionsResponse,
   LogLine,
   RegisterRepoResponse,
   RestoreDbResponse,
+  SessionDetail,
+  SessionEventPayload,
   WebListReposResponse,
   WebRepoDetailResponse,
   WebRepoTreeResponse,
@@ -30,10 +34,12 @@ import type {
   ConfigSuggestRequest,
   ConfigTestRequest,
   CreateEnvRequest,
+  CreateSessionRequest,
   DumpDbRequest,
   RegisterRepoRequest,
   RelinkCloneRequest,
   RestoreDbRequest,
+  SendSessionMessageRequest,
   StopInfraRequest,
 } from "./types.ts";
 
@@ -278,6 +284,65 @@ export class ApiClient {
     );
   }
 
+  // ─── Session API ─────────────────────────────────────────────────────────
+
+  async listSessions() {
+    return this.request("/api/v1/sessions", { schema: ListSessionsResponse });
+  }
+
+  async createSession(body: CreateSessionRequest) {
+    return this.request("/api/v1/sessions", {
+      method: "POST",
+      body,
+      schema: CreateSessionResponse,
+    });
+  }
+
+  async getSession(sessionId: string) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
+      schema: SessionDetail,
+    });
+  }
+
+  async deleteSession(sessionId: string) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async sendSessionMessage(sessionId: string, body: SendSessionMessageRequest) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`, {
+      method: "POST",
+      body,
+    });
+  }
+
+  async interruptSession(sessionId: string) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interrupt`, {
+      method: "POST",
+    });
+  }
+
+  async *streamSessionEvents(
+    sessionId: string,
+    signal?: AbortSignal,
+  ): AsyncIterable<SessionEventPayload> {
+    const response = await this.fetchFn(
+      this.toUrl(`/api/v1/sessions/${encodeURIComponent(sessionId)}/events`),
+      {
+        method: "GET",
+        headers: { Accept: "text/event-stream" },
+        signal,
+      },
+    );
+
+    if (!response.ok || !response.body) {
+      throw await this.toClientError(response);
+    }
+
+    yield* parseSSE(response.body, SessionEventPayload);
+  }
+
   getEventsUrl(since?: number) {
     return this.toUrl(
       this.withSearch("/api/v1/events", {
@@ -403,7 +468,14 @@ export class ApiClient {
 
   private toUrl(path: string) {
     if (!this.baseUrl) return path;
-    return new URL(path, this.baseUrl).toString();
+    // Concatenate so base URLs with a path prefix are preserved. For
+    // example, when the federation host server sits at
+    // `http://host/h/laptop`, using `new URL(path, baseUrl)` would
+    // treat `/api/v1/daemon` as absolute and resolve to
+    // `http://host/api/v1/daemon`, silently dropping `/h/laptop`.
+    // Strip a trailing slash on the base to normalize, but otherwise
+    // just string-concat.
+    return this.baseUrl.replace(/\/$/, "") + path;
   }
 
   private withSearch(path: string, params: Record<string, string | undefined>) {

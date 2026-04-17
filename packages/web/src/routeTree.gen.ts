@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as InfraRouteImport } from './routes/infra'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as SessionsIndexRouteImport } from './routes/sessions.index'
+import { Route as SessionsIdRouteImport } from './routes/sessions.$id'
 import { Route as ReposSlugRouteImport } from './routes/repos.$slug'
 import { Route as ReposSlugEnvsEnvIdRouteImport } from './routes/repos.$slug.envs.$envId'
 
@@ -22,6 +24,16 @@ const InfraRoute = InfraRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SessionsIndexRoute = SessionsIndexRouteImport.update({
+  id: '/sessions/',
+  path: '/sessions/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SessionsIdRoute = SessionsIdRouteImport.update({
+  id: '/sessions/$id',
+  path: '/sessions/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReposSlugRoute = ReposSlugRouteImport.update({
@@ -39,12 +51,16 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/infra': typeof InfraRoute
   '/repos/$slug': typeof ReposSlugRouteWithChildren
+  '/sessions/$id': typeof SessionsIdRoute
+  '/sessions/': typeof SessionsIndexRoute
   '/repos/$slug/envs/$envId': typeof ReposSlugEnvsEnvIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/infra': typeof InfraRoute
   '/repos/$slug': typeof ReposSlugRouteWithChildren
+  '/sessions/$id': typeof SessionsIdRoute
+  '/sessions': typeof SessionsIndexRoute
   '/repos/$slug/envs/$envId': typeof ReposSlugEnvsEnvIdRoute
 }
 export interface FileRoutesById {
@@ -52,20 +68,43 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/infra': typeof InfraRoute
   '/repos/$slug': typeof ReposSlugRouteWithChildren
+  '/sessions/$id': typeof SessionsIdRoute
+  '/sessions/': typeof SessionsIndexRoute
   '/repos/$slug/envs/$envId': typeof ReposSlugEnvsEnvIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/infra' | '/repos/$slug' | '/repos/$slug/envs/$envId'
+  fullPaths:
+    | '/'
+    | '/infra'
+    | '/repos/$slug'
+    | '/sessions/$id'
+    | '/sessions/'
+    | '/repos/$slug/envs/$envId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/infra' | '/repos/$slug' | '/repos/$slug/envs/$envId'
-  id: '__root__' | '/' | '/infra' | '/repos/$slug' | '/repos/$slug/envs/$envId'
+  to:
+    | '/'
+    | '/infra'
+    | '/repos/$slug'
+    | '/sessions/$id'
+    | '/sessions'
+    | '/repos/$slug/envs/$envId'
+  id:
+    | '__root__'
+    | '/'
+    | '/infra'
+    | '/repos/$slug'
+    | '/sessions/$id'
+    | '/sessions/'
+    | '/repos/$slug/envs/$envId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   InfraRoute: typeof InfraRoute
   ReposSlugRoute: typeof ReposSlugRouteWithChildren
+  SessionsIdRoute: typeof SessionsIdRoute
+  SessionsIndexRoute: typeof SessionsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -82,6 +121,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sessions/': {
+      id: '/sessions/'
+      path: '/sessions'
+      fullPath: '/sessions/'
+      preLoaderRoute: typeof SessionsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sessions/$id': {
+      id: '/sessions/$id'
+      path: '/sessions/$id'
+      fullPath: '/sessions/$id'
+      preLoaderRoute: typeof SessionsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/repos/$slug': {
@@ -117,6 +170,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   InfraRoute: InfraRoute,
   ReposSlugRoute: ReposSlugRouteWithChildren,
+  SessionsIdRoute: SessionsIdRoute,
+  SessionsIndexRoute: SessionsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
