@@ -5,7 +5,8 @@ import { Layer, ManagedRuntime, Match } from "effect";
 import { createServer } from "node:http";
 import { createApp, hasBundledWebApp } from "./server.ts";
 import { DaemonService } from "./services/daemon-service.ts";
-import { ensureDir, saveDaemonPid, saveRuntimeMetadata } from "./state/global-state.ts";
+import { ensureDir, saveDaemonPid, saveRuntimeMetadata, spawntreeHome } from "./state/global-state.ts";
+import { StorageManager } from "./storage/manager.ts";
 
 async function main() {
   ensureDir();
@@ -16,7 +17,14 @@ async function main() {
     memoMap: Layer.makeMemoMapUnsafe(),
   });
 
-  const app = createApp(runtime);
+  // StorageManager boots alongside DaemonService. For now it's wired up but
+  // not yet the source of truth for catalog/sessions — that migration is in
+  // a follow-up PR. What IS live: /api/v1/storage/* admin routes and the
+  // replicator loop (if configured in ~/.spawntree/storage.json).
+  const storage = new StorageManager({ dataDir: spawntreeHome() });
+  await storage.start();
+
+  const app = createApp(runtime, { storage });
   const listener = getRequestListener(app.fetch);
   const server = createServer(listener);
 
@@ -52,6 +60,7 @@ async function main() {
           .runPromise(DaemonService.use((service) => service.shutdown))
           .catch(() => undefined);
         await runtime.dispose();
+        await storage.stop().catch(() => undefined);
         await new Promise<void>((resolve) => server.close(() => resolve()));
         process.exit(0);
       }),

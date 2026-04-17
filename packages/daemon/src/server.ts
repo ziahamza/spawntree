@@ -19,12 +19,17 @@ import {
   StopInfraRequest,
 } from "spawntree-core";
 import { BadRequestError } from "./errors.ts";
+import { createStorageRoutes } from "./routes/storage.ts";
 import { DaemonService } from "./services/daemon-service.ts";
+import type { StorageManager } from "./storage/manager.ts";
 
 const webDistDir = resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
 const webIndexPath = resolve(webDistDir, "index.html");
 
-export function createApp(runtime: ManagedRuntime.ManagedRuntime<DaemonService, never>) {
+export function createApp(
+  runtime: ManagedRuntime.ManagedRuntime<DaemonService, never>,
+  options: { storage?: StorageManager } = {},
+) {
   const app = new Hono();
 
   app.use(async (context, next) => {
@@ -37,6 +42,11 @@ export function createApp(runtime: ManagedRuntime.ManagedRuntime<DaemonService, 
   });
 
   app.get("/health", (context) => context.text("ok"));
+
+  // Storage provider management routes.
+  if (options.storage) {
+    app.route("/api/v1/storage", createStorageRoutes(options.storage));
+  }
 
   app.get("/api/v1/daemon", (context) => runJson(runtime, context, DaemonService.use((service) => service.daemonInfo)));
 

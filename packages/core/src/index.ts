@@ -6,3 +6,4 @@ export { validateConfig } from "./config/schema.ts";
 export { substituteVars } from "./config/substitution.ts";
 export { WorktreeManager } from "./env/worktree.ts";
 export { type Service, type ServiceStatus } from "./services/interface.ts";
+export * from "./storage/index.ts";
