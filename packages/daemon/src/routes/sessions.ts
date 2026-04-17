@@ -61,10 +61,7 @@ export function createSessionRoutes(manager: SessionManager) {
         cwd: body.cwd,
         mcpServers: body.mcpServers as unknown[] | undefined,
       });
-      return c.json(
-        { sessionId: result.sessionId, provider: body.provider },
-        201,
-      );
+      return c.json({ sessionId: result.sessionId, provider: body.provider }, 201);
     } catch (error) {
       return sessionErrorResponse(error);
     }
@@ -187,7 +184,9 @@ async function decodeBody<A extends Schema.Top>(schema: A, c: Context) {
     throw new BadRequestError({ code: "INVALID_JSON", message: "Invalid JSON body" });
   }
   try {
-    return await (Schema.decodeUnknownPromise(schema as never)(raw) as Promise<Schema.Schema.Type<A>>);
+    return await (Schema.decodeUnknownPromise(schema as never)(raw) as Promise<
+      Schema.Schema.Type<A>
+    >);
   } catch (error) {
     throw new BadRequestError({
       code: "INVALID_BODY",
@@ -198,16 +197,16 @@ async function decodeBody<A extends Schema.Top>(schema: A, c: Context) {
 
 function sessionErrorResponse(error: unknown): Response {
   if (isTagged(error, "BadRequestError")) {
-    return new Response(
-      JSON.stringify({ error: error.message, code: error.code }),
-      { status: 400, headers: { "Content-Type": "application/json" } },
-    );
+    return new Response(JSON.stringify({ error: error.message, code: error.code }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
   }
   if (isTagged(error, "NotFoundError")) {
-    return new Response(
-      JSON.stringify({ error: error.message, code: error.code }),
-      { status: 404, headers: { "Content-Type": "application/json" } },
-    );
+    return new Response(JSON.stringify({ error: error.message, code: error.code }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
   }
   // Concurrent turn in flight — 409 Conflict so clients know to interrupt first.
   if (error instanceof SessionBusyError) {
@@ -255,9 +254,7 @@ function sessionErrorResponse(error: unknown): Response {
       { status: 400, headers: { "Content-Type": "application/json" } },
     );
   }
-  const msg = error instanceof Error && error.message.includes("not found")
-    ? 404
-    : 500;
+  const msg = error instanceof Error && error.message.includes("not found") ? 404 : 500;
   return new Response(
     JSON.stringify({
       error: error instanceof Error ? error.message : String(error),

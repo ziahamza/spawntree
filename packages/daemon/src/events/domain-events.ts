@@ -115,13 +115,8 @@ export class DomainEvents {
    *
    * Returns an unsubscribe function.
    */
-  subscribeSessionEvent(
-    handler: (event: SessionEvent) => void,
-    sessionId?: string,
-  ): () => void {
-    const matches = sessionId
-      ? (event: SessionEvent) => event.sessionId === sessionId
-      : () => true;
+  subscribeSessionEvent(handler: (event: SessionEvent) => void, sessionId?: string): () => void {
+    const matches = sessionId ? (event: SessionEvent) => event.sessionId === sessionId : () => true;
 
     // Replay recent history so new subscribers don't miss buffered events.
     for (const { event } of this.sessionEventHistory) {

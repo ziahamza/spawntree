@@ -81,11 +81,9 @@ export class CodexACPAdapter implements ACPAdapter {
       this.transport = null;
     }
 
-    const transport = new JsonRpcTransport(
-      "codex",
-      ["app-server", "--listen", "stdio://"],
-      { label: "codex" },
-    );
+    const transport = new JsonRpcTransport("codex", ["app-server", "--listen", "stdio://"], {
+      label: "codex",
+    });
 
     // Register notification and exit handlers BEFORE initialize() so we don't
     // miss any notifications emitted during or immediately after the handshake.

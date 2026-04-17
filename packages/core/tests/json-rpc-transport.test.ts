@@ -25,7 +25,7 @@ function makeFakeProc() {
 }
 
 describe("JsonRpcTransport spec compliance", () => {
-  it("includes jsonrpc: \"2.0\" on every request", async () => {
+  it('includes jsonrpc: "2.0" on every request', async () => {
     const { proc, stdin } = makeFakeProc();
     const transport = new JsonRpcTransport("fake", [], { label: "fake" });
     // Inject fake subprocess so we can observe stdin writes.
@@ -48,7 +48,7 @@ describe("JsonRpcTransport spec compliance", () => {
     expect(parsed.params).toEqual({ foo: "bar" });
   });
 
-  it("includes jsonrpc: \"2.0\" on every notification", async () => {
+  it('includes jsonrpc: "2.0" on every notification', async () => {
     const { proc, stdin } = makeFakeProc();
     const transport = new JsonRpcTransport("fake", [], { label: "fake" });
     (transport as unknown as { proc: typeof proc }).proc = proc;

@@ -137,7 +137,8 @@ export function useWebRepoDetail(slug: string, enabled = true) {
     refetchInterval: 60_000,
     queryFn: async () => {
       const response = await api.getWebRepoDetail(slug);
-      const activityScore = (path: string) => Date.parse(response.gitPaths[path]?.activityAt ?? "") || 0;
+      const activityScore = (path: string) =>
+        Date.parse(response.gitPaths[path]?.activityAt ?? "") || 0;
       const clones: Array<Clone> = response.clones
         .map((clone) => ({
           id: clone.id,
@@ -201,7 +202,7 @@ export function useWebRepoTree(slug: string, enabled = true) {
 export function useCreateEnv() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (body: { repoPath: string; configFile?: string; envId?: string; }) =>
+    mutationFn: async (body: { repoPath: string; configFile?: string; envId?: string }) =>
       (await api.createEnv(body)).env,
     onSuccess: () => {
       invalidateAppQueries(queryClient);
@@ -212,7 +213,7 @@ export function useCreateEnv() {
 export function useStopEnv() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { repoID: string; envID: string; repoPath?: string; }) =>
+    mutationFn: (input: { repoID: string; envID: string; repoPath?: string }) =>
       api.downEnv(input.repoID, input.envID, input.repoPath),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
@@ -223,7 +224,7 @@ export function useStopEnv() {
 export function useDeleteEnv() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { repoID: string; envID: string; repoPath?: string; }) =>
+    mutationFn: (input: { repoID: string; envID: string; repoPath?: string }) =>
       api.deleteEnv(input.repoID, input.envID, input.repoPath),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
@@ -245,7 +246,8 @@ export type AddFolderResult = AddFolderResponse;
 export function useAddFolder() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: { path: string; remoteName?: string; scanChildren?: boolean; }) => api.addFolder(body),
+    mutationFn: (body: { path: string; remoteName?: string; scanChildren?: boolean }) =>
+      api.addFolder(body),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
     },
@@ -254,14 +256,14 @@ export function useAddFolder() {
 
 export function useProbeAddPath() {
   return useMutation({
-    mutationFn: (body: { path: string; }) => api.probeAddPath(body),
+    mutationFn: (body: { path: string }) => api.probeAddPath(body),
   });
 }
 
 export function useRelinkClone() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { repoSlug: string; cloneID: string; newPath: string; }) =>
+    mutationFn: (input: { repoSlug: string; cloneID: string; newPath: string }) =>
       api.relinkClone(input.repoSlug, input.cloneID, { path: input.newPath }),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
@@ -272,7 +274,8 @@ export function useRelinkClone() {
 export function useDeleteClone() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { repoSlug: string; cloneID: string; }) => api.deleteClone(input.repoSlug, input.cloneID),
+    mutationFn: (input: { repoSlug: string; cloneID: string }) =>
+      api.deleteClone(input.repoSlug, input.cloneID),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
     },
@@ -282,7 +285,7 @@ export function useDeleteClone() {
 export function useArchiveWorktree() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { repoSlug: string; path: string; }) =>
+    mutationFn: (input: { repoSlug: string; path: string }) =>
       api.archiveWorktree(input.repoSlug, { path: input.path }),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
@@ -292,32 +295,34 @@ export function useArchiveWorktree() {
 
 export function useTestConfig() {
   return useMutation({
-    mutationFn: (body: { repoPath: string; content: string; }) => api.testConfig(body),
+    mutationFn: (body: { repoPath: string; content: string }) => api.testConfig(body),
   });
 }
 
 export function useSuggestConfig() {
   return useMutation({
-    mutationFn: (body: { repoPath: string; }) => api.suggestConfig(body),
+    mutationFn: (body: { repoPath: string }) => api.suggestConfig(body),
   });
 }
 
 export function useStartConfigPreview() {
   return useMutation({
-    mutationFn: (body: { repoPath: string; content: string; serviceName?: string; }) => api.startConfigPreview(body),
+    mutationFn: (body: { repoPath: string; content: string; serviceName?: string }) =>
+      api.startConfigPreview(body),
   });
 }
 
 export function useStopConfigPreview() {
   return useMutation({
-    mutationFn: (body: { previewId: string; }) => api.stopConfigPreview(body),
+    mutationFn: (body: { previewId: string }) => api.stopConfigPreview(body),
   });
 }
 
 export function useSaveConfig() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: { repoPath: string; content: string; saveMode: "repo" | "global"; }) => api.saveConfig(body),
+    mutationFn: (body: { repoPath: string; content: string; saveMode: "repo" | "global" }) =>
+      api.saveConfig(body),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
     },
@@ -328,16 +333,22 @@ export function createApiEventSource(since?: number) {
   return new EventSource(api.getEventsUrl(since));
 }
 
-export function createLogEventSource(repoID: string, envID: string, options: {
-  repoPath?: string;
-  service?: string | null;
-  lines?: number;
-} = {}) {
-  return new EventSource(api.getLogStreamUrl(repoID, envID, {
-    repoPath: options.repoPath,
-    service: options.service ?? undefined,
-    lines: options.lines,
-  }));
+export function createLogEventSource(
+  repoID: string,
+  envID: string,
+  options: {
+    repoPath?: string;
+    service?: string | null;
+    lines?: number;
+  } = {},
+) {
+  return new EventSource(
+    api.getLogStreamUrl(repoID, envID, {
+      repoPath: options.repoPath,
+      service: options.service ?? undefined,
+      lines: options.lines,
+    }),
+  );
 }
 
 function invalidateAppQueries(queryClient: ReturnType<typeof useQueryClient>) {

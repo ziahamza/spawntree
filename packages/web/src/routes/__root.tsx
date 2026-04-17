@@ -87,7 +87,7 @@ function LiveUpdates() {
   return null;
 }
 
-function SidebarContent({ onNavigate }: { onNavigate?: () => void; }) {
+function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const [addOpen, setAddOpen] = useState(false);
   const { data: daemon } = useDaemonInfo();
 

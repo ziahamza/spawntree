@@ -1,9 +1,4 @@
-import type {
-  ACPAdapter,
-  ACPSessionDetail,
-  DiscoveredSession,
-  SessionEvent,
-} from "spawntree-core";
+import type { ACPAdapter, ACPSessionDetail, DiscoveredSession, SessionEvent } from "spawntree-core";
 import {
   ClaudeCodeAdapter,
   CodexACPAdapter,
@@ -159,7 +154,10 @@ export class SessionManager {
    * `subscribeToAdapter` is idempotent per-provider, so calling it
    * here is a safe no-op when a previous call already wired things up.
    */
-  async createSession(provider: string, params: { cwd: string; mcpServers?: unknown[] }): Promise<{ sessionId: string }> {
+  async createSession(
+    provider: string,
+    params: { cwd: string; mcpServers?: unknown[] },
+  ): Promise<{ sessionId: string }> {
     const adapter = this.requireAdapter(provider);
     if (!adapter.createSession) {
       throw new ProviderCapabilityError(provider, "createSession");

@@ -323,7 +323,10 @@ export class ApiClient {
     });
   }
 
-  async *streamSessionEvents(sessionId: string, signal?: AbortSignal): AsyncIterable<SessionEventPayload> {
+  async *streamSessionEvents(
+    sessionId: string,
+    signal?: AbortSignal,
+  ): AsyncIterable<SessionEventPayload> {
     const response = await this.fetchFn(
       this.toUrl(`/api/v1/sessions/${encodeURIComponent(sessionId)}/events`),
       {

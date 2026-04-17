@@ -19,7 +19,7 @@ first-class sessions.
 - Typed errors with HTTP status translations: `SessionBusyError` → 409,
   `SessionDeleteUnsupportedError` → 501, `UnknownProviderError` /
   `ProviderCapabilityError` → 400.
-- Fixes: permission policy fails closed on reject_*, concurrent sendMessage
+- Fixes: permission policy fails closed on reject\_\*, concurrent sendMessage
   rejected with 409, deleteSession actually works (or returns 501), findSession
   cached to avoid spawning unrelated adapter subprocesses, totalTurns normalized
   across providers, per-session event history replay filtered by sessionId.

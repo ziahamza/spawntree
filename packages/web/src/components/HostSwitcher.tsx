@@ -1,11 +1,6 @@
 import { ChevronDown, Globe, Monitor, Settings } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import {
-  setRegistryUrl,
-  useHostState,
-  useRegisteredHosts,
-  useSwitchHost,
-} from "../lib/hosts";
+import { setRegistryUrl, useHostState, useRegisteredHosts, useSwitchHost } from "../lib/hosts";
 
 /**
  * Dropdown that picks which spawntree daemon the dashboard talks to.
@@ -46,7 +41,7 @@ export function HostSwitcher() {
 
   const hosts = data?.hosts ?? [];
   const activeLabel = activeHost
-    ? hosts.find((h) => h.name === activeHost)?.label ?? activeHost
+    ? (hosts.find((h) => h.name === activeHost)?.label ?? activeHost)
     : "local";
 
   const onSelectLocal = () => {
@@ -94,9 +89,7 @@ export function HostSwitcher() {
               <div className="font-medium">local</div>
               <div className="text-[10px] text-muted">same-origin daemon</div>
             </div>
-            {activeHost === null && (
-              <span className="text-[10px] text-foreground">●</span>
-            )}
+            {activeHost === null && <span className="text-[10px] text-foreground">●</span>}
           </button>
 
           {/* Remote hosts, if a registry is configured */}
@@ -107,14 +100,10 @@ export function HostSwitcher() {
                 {isFetching && <span className="ml-1 text-[9px]">…</span>}
               </div>
               {error && (
-                <div className="px-3 py-2 text-[11px] text-red-400">
-                  registry unreachable
-                </div>
+                <div className="px-3 py-2 text-[11px] text-red-400">registry unreachable</div>
               )}
               {hosts.length === 0 && !error && !isFetching && (
-                <div className="px-3 py-2 text-[11px] text-muted">
-                  no hosts registered
-                </div>
+                <div className="px-3 py-2 text-[11px] text-muted">no hosts registered</div>
               )}
               {hosts.map((h) => (
                 <button
@@ -130,9 +119,7 @@ export function HostSwitcher() {
                     <div className="font-medium truncate">{h.label ?? h.name}</div>
                     <div className="text-[10px] text-muted truncate">{h.url}</div>
                   </div>
-                  {activeHost === h.name && (
-                    <span className="text-[10px] text-foreground">●</span>
-                  )}
+                  {activeHost === h.name && <span className="text-[10px] text-foreground">●</span>}
                 </button>
               ))}
             </>
@@ -151,9 +138,7 @@ export function HostSwitcher() {
               </button>
             ) : (
               <div className="p-2 space-y-2">
-                <div className="text-[10px] text-muted">
-                  Host-server registry URL
-                </div>
+                <div className="text-[10px] text-muted">Host-server registry URL</div>
                 <input
                   type="text"
                   value={draftUrl}
@@ -188,8 +173,8 @@ export function HostSwitcher() {
                 </div>
                 <div className="text-[10px] text-muted leading-relaxed">
                   Run the federation server from{" "}
-                  <code className="text-foreground/70">examples/host-server</code>{" "}
-                  and register daemons. Stored in this browser only.
+                  <code className="text-foreground/70">examples/host-server</code> and register
+                  daemons. Stored in this browser only.
                 </div>
               </div>
             )}

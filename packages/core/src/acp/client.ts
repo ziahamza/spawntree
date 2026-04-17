@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { Readable, Writable } from "node:stream";
-import type { ReadableStream as NodeReadableStream, WritableStream as NodeWritableStream } from "node:stream/web";
+import type {
+  ReadableStream as NodeReadableStream,
+  WritableStream as NodeWritableStream,
+} from "node:stream/web";
 import * as acp from "@zed-industries/agent-client-protocol";
 
 /**
@@ -192,8 +195,8 @@ function defaultClientImpl(
       // security regression. Instead, prefer any other reject-kind option
       // and fall through to cancel if none exist.
       if (policy.startsWith("reject_")) {
-        const anyReject = params.options.find((o) =>
-          typeof o.kind === "string" && o.kind.startsWith("reject_")
+        const anyReject = params.options.find(
+          (o) => typeof o.kind === "string" && o.kind.startsWith("reject_"),
         );
         if (anyReject) {
           return { outcome: { outcome: "selected", optionId: anyReject.optionId } };
@@ -203,8 +206,8 @@ function defaultClientImpl(
 
       // Allow-kind policy with no exact match — prefer any other allow option
       // before falling back to the first option offered.
-      const anyAllow = params.options.find((o) =>
-        typeof o.kind === "string" && o.kind.startsWith("allow_")
+      const anyAllow = params.options.find(
+        (o) => typeof o.kind === "string" && o.kind.startsWith("allow_"),
       );
       const chosen = anyAllow ?? params.options[0];
       if (!chosen) {

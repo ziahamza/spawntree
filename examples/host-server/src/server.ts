@@ -74,8 +74,10 @@ function openStore(path: string) {
       return db.prepare(`DELETE FROM hosts WHERE name = ?`).run(name).changes > 0;
     },
     touch(name: string) {
-      db.prepare(`UPDATE hosts SET last_seen_at = ? WHERE name = ?`)
-        .run(new Date().toISOString(), name);
+      db.prepare(`UPDATE hosts SET last_seen_at = ? WHERE name = ?`).run(
+        new Date().toISOString(),
+        name,
+      );
     },
   };
 }
@@ -188,7 +190,11 @@ async function handleAdmin(
     }
     if (req.method === "DELETE") {
       const removed = store.delete(name);
-      json(res, removed ? 200 : 404, removed ? { ok: true } : { error: "not found", code: "HOST_NOT_FOUND" });
+      json(
+        res,
+        removed ? 200 : 404,
+        removed ? { ok: true } : { error: "not found", code: "HOST_NOT_FOUND" },
+      );
       return true;
     }
   }
@@ -253,7 +259,8 @@ async function proxyToHost(
 
   const target = new URL(upstreamPath, host.url);
   const method = (req.method ?? "GET").toUpperCase();
-  const bodyless = method === "GET" || method === "HEAD" || method === "OPTIONS" || method === "DELETE";
+  const bodyless =
+    method === "GET" || method === "HEAD" || method === "OPTIONS" || method === "DELETE";
 
   // Pass through headers minus hop-by-hop + our own host header.
   const forwardedHeaders: Record<string, string> = {};
@@ -271,7 +278,8 @@ async function proxyToHost(
       key === "te" ||
       key === "trailer" ||
       key === "upgrade"
-    ) continue;
+    )
+      continue;
     forwardedHeaders[key] = Array.isArray(v) ? v.join(", ") : String(v);
   }
   forwardedHeaders["x-forwarded-host"] = req.headers.host ?? "";
@@ -308,7 +316,9 @@ async function proxyToHost(
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[host-server] upstream fail: ${message} (${method} ${target.pathname})\n`);
+    process.stderr.write(
+      `[host-server] upstream fail: ${message} (${method} ${target.pathname})\n`,
+    );
     if (!res.headersSent) {
       json(res, 502, {
         error: `upstream error: ${message}`,
@@ -392,16 +402,22 @@ function landingPage(res: ServerResponse) {
 <h1>spawntree host server</h1>
 <p>Listening on <code>${escapeHtml(HOST)}:${PORT}</code>. Registered hosts: ${hosts.length}.</p>
 ${
-    hosts.length === 0 ? "<p>No hosts registered yet.</p>" : hosts.map((h) => `
+  hosts.length === 0
+    ? "<p>No hosts registered yet.</p>"
+    : hosts
+        .map(
+          (h) => `
   <div class="host">
     <b>${escapeHtml(h.name)}</b> → <code>${escapeHtml(h.url)}</code>
     ${h.label ? `<div class="muted">${escapeHtml(h.label)}</div>` : ""}
-    <div class="muted">proxy: <a href="/h/${encodeURIComponent(h.name)}/api/v1/daemon">/h/${
-      escapeHtml(h.name)
-    }/api/v1/daemon</a></div>
+    <div class="muted">proxy: <a href="/h/${encodeURIComponent(h.name)}/api/v1/daemon">/h/${escapeHtml(
+      h.name,
+    )}/api/v1/daemon</a></div>
   </div>
-`).join("")
-  }
+`,
+        )
+        .join("")
+}
 <h2 style="font-size:16px;margin-top:24px">Register a host</h2>
 <pre>curl -X POST http://${escapeHtml(HOST)}:${PORT}/api/hosts \\
   -H 'content-type: application/json' \\
@@ -437,9 +453,7 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  process.stderr.write(
-    `[host-server] listening on http://${HOST}:${PORT} (db: ${DB_PATH})\n`,
-  );
+  process.stderr.write(`[host-server] listening on http://${HOST}:${PORT} (db: ${DB_PATH})\n`);
 });
 
 let shuttingDown = false;

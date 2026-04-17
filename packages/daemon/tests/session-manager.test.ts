@@ -1,10 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type {
-  ACPAdapter,
-  DiscoveredSession,
-  SessionDetail,
-  SessionEvent,
-} from "spawntree-core";
+import type { ACPAdapter, DiscoveredSession, SessionDetail, SessionEvent } from "spawntree-core";
 import { SessionDeleteUnsupportedError } from "spawntree-core";
 import { DomainEvents } from "../src/events/domain-events.ts";
 import { SessionManager } from "../src/sessions/session-manager.ts";
@@ -178,7 +173,9 @@ describe("SessionManager", () => {
       const { manager } = makeManager({ codex });
 
       await manager.listSessions();
-      await expect(manager.deleteSession("s2")).rejects.toBeInstanceOf(SessionDeleteUnsupportedError);
+      await expect(manager.deleteSession("s2")).rejects.toBeInstanceOf(
+        SessionDeleteUnsupportedError,
+      );
     });
   });
 
@@ -250,12 +247,15 @@ describe("SessionManager", () => {
         createOrder.push("subscribed");
         // Immediately fire a fake "status changed" event to simulate
         // an event racing with createSession startup.
-        setTimeout(() =>
-          handler({
-            type: "session_status_changed",
-            sessionId: "sess-1",
-            status: "idle",
-          }), 0);
+        setTimeout(
+          () =>
+            handler({
+              type: "session_status_changed",
+              sessionId: "sess-1",
+              status: "idle",
+            }),
+          0,
+        );
         return () => {};
       };
 

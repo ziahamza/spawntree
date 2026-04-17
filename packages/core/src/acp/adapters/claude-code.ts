@@ -321,9 +321,7 @@ export class ClaudeCodeAdapter implements ACPAdapter {
     }
 
     if (session.activeTurnId && this.connection?.isAlive) {
-      await this.connection
-        .cancel({ sessionId } satisfies acp.CancelNotification)
-        .catch(() => {});
+      await this.connection.cancel({ sessionId } satisfies acp.CancelNotification).catch(() => {});
     }
 
     this.sessions.delete(sessionId);
@@ -433,11 +431,7 @@ export class ClaudeCodeAdapter implements ACPAdapter {
     }
   }
 
-  private appendAssistantText(
-    session: TrackedSession,
-    turnId: string,
-    text: string,
-  ): void {
+  private appendAssistantText(session: TrackedSession, turnId: string, text: string): void {
     const turnRecordId = `${turnId}-agent`;
     let turn = session.turns.find((t) => t.id === turnRecordId);
     if (!turn) {
@@ -507,4 +501,3 @@ function mapToolStatus(status: string | undefined | null): SessionToolCallData["
       return "in_progress";
   }
 }
-
