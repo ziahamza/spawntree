@@ -1,11 +1,6 @@
 import * as Collapsible from "@radix-ui/react-collapsible";
 import { Link, useRouterState } from "@tanstack/react-router";
-import {
-  ChevronRight,
-  FolderOpen,
-  FolderTree,
-  GitBranch,
-} from "lucide-react";
+import { ChevronRight, FolderOpen, FolderTree, GitBranch, MessagesSquare } from "lucide-react";
 import { useState } from "react";
 import { deriveEnvStatus, useWebRepoTree, useWebRepos } from "../lib/api";
 import type { Clone, EnvListItem, Worktree } from "../lib/api";
@@ -49,9 +44,7 @@ function EnvNode({
       search={{ repoPath: env.repoPath }}
       onClick={onNavigate}
       className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs transition-colors ${
-        isActive
-          ? "bg-blue/10 text-blue"
-          : "text-muted hover:text-foreground hover:bg-surface"
+        isActive ? "bg-blue/10 text-blue" : "text-muted hover:text-foreground hover:bg-surface"
       }`}
       title={env.repoPath}
     >
@@ -87,12 +80,7 @@ function WorktreeNode({
             <GitBranch className="w-3 h-3 flex-shrink-0" />
           </button>
         </Collapsible.Trigger>
-        <Link
-          to="/repos/$slug"
-          params={{ slug }}
-          onClick={onNavigate}
-          className="min-w-0 flex-1"
-        >
+        <Link to="/repos/$slug" params={{ slug }} onClick={onNavigate} className="min-w-0 flex-1">
           <div className="truncate text-foreground" title={worktree.path}>
             {worktree.path}
           </div>
@@ -107,7 +95,9 @@ function WorktreeNode({
 
       <Collapsible.Content>
         <div className="ml-4 border-l border-border-subtle pl-2 my-0.5 space-y-0.5">
-          {worktree.envs.length === 0 ? <div className="px-2 py-1 text-[11px] text-muted">No envs</div> : (
+          {worktree.envs.length === 0 ? (
+            <div className="px-2 py-1 text-[11px] text-muted">No envs</div>
+          ) : (
             worktree.envs.map((env) => (
               <EnvNode
                 key={`${worktree.path}:${env.envId}:${env.repoPath}`}
@@ -247,17 +237,21 @@ function RepoNode({
             </Link>
           </button>
         </Collapsible.Trigger>
-        {activeEnvCount > 0 && <span className="text-xs text-muted ml-1 flex-shrink-0">{activeEnvCount}</span>}
+        {activeEnvCount > 0 && (
+          <span className="text-xs text-muted ml-1 flex-shrink-0">{activeEnvCount}</span>
+        )}
       </div>
 
       <Collapsible.Content>
         <div className="ml-4 border-l border-border-subtle pl-2 my-0.5 space-y-0.5">
           {isLoading && <div className="px-2 py-1 text-[11px] text-muted">Loading paths…</div>}
 
-          {!isLoading && repo?.clones.length === 0 && <div className="px-2 py-1 text-[11px] text-muted">No clones</div>}
+          {!isLoading && repo?.clones.length === 0 && (
+            <div className="px-2 py-1 text-[11px] text-muted">No clones</div>
+          )}
 
-          {!isLoading
-            && repo?.clones.map((clone) => (
+          {!isLoading &&
+            repo?.clones.map((clone) => (
               <CloneNode
                 key={clone.id}
                 slug={slug}
@@ -295,7 +289,9 @@ export function RepoTree({ onNavigate }: RepoTreeProps) {
   if (isLoading) {
     return (
       <div className="p-3 text-xs text-muted space-y-2">
-        {[1, 2, 3].map((i) => <div key={i} className="h-4 bg-surface rounded animate-pulse" />)}
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="h-4 bg-surface rounded animate-pulse" />
+        ))}
       </div>
     );
   }
@@ -327,7 +323,19 @@ export function RepoTree({ onNavigate }: RepoTreeProps) {
         />
       ))}
 
-      <div className="mt-2 pt-2 border-t border-border mx-2">
+      <div className="mt-2 pt-2 border-t border-border mx-2 space-y-0.5">
+        <Link
+          to="/sessions"
+          onClick={onNavigate}
+          className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs transition-colors ${
+            currentPath === "/sessions" || currentPath.startsWith("/sessions/")
+              ? "bg-blue/10 text-blue"
+              : "text-muted hover:text-foreground hover:bg-surface"
+          }`}
+        >
+          <MessagesSquare className="w-3 h-3 flex-shrink-0" />
+          <span>Sessions</span>
+        </Link>
         <Link
           to="/infra"
           onClick={onNavigate}

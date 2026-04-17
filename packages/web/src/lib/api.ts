@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import {
   type AddFolderResponse,
   type ConfigPreviewResponse,
@@ -9,9 +10,17 @@ import {
   type ConfigTestResponse,
   type ConfigTestServiceResult,
   createApiClient,
+  type CreateSessionRequest,
   type EnvInfo,
   type GitPathInfo,
   type InfraStatusResponse,
+  type ListSessionsResponse,
+  type SendSessionMessageRequest,
+  type SessionDetail,
+  type SessionEventPayload,
+  type SessionInfo,
+  type SessionToolCallData,
+  type SessionTurnData,
   type ServiceInfo,
   type WebRepo,
 } from "spawntree-core/browser";
@@ -356,4 +365,123 @@ function invalidateAppQueries(queryClient: ReturnType<typeof useQueryClient>) {
   void queryClient.invalidateQueries({ queryKey: ["envs"] });
   void queryClient.invalidateQueries({ queryKey: ["infra"] });
   void queryClient.invalidateQueries({ queryKey: ["web", "repos"] });
+}
+
+// ─── Sessions ───────────────────────────────────────────────────────────────
+
+export type Session = SessionInfo;
+export type SessionTurn = SessionTurnData;
+export type SessionToolCall = SessionToolCallData;
+export type SessionEvent = SessionEventPayload;
+export type SessionDetailResponse = SessionDetail;
+
+export function useSessions() {
+  return useQuery<ListSessionsResponse>({
+    queryKey: ["sessions"],
+    queryFn: () => api.listSessions(),
+    refetchInterval: 15_000,
+  });
+}
+
+export function useSession(sessionId: string | undefined) {
+  return useQuery<SessionDetail>({
+    queryKey: ["sessions", sessionId],
+    queryFn: () => api.getSession(sessionId!),
+    enabled: !!sessionId,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useCreateSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateSessionRequest) => api.createSession(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+}
+
+export function useSendSessionMessage(sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SendSessionMessageRequest) => api.sendSessionMessage(sessionId, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["sessions", sessionId] });
+    },
+  });
+}
+
+export function useInterruptSession(sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.interruptSession(sessionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["sessions", sessionId] });
+    },
+  });
+}
+
+export function useDeleteSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) => api.deleteSession(sessionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+}
+
+/**
+ * Live stream of session events via SSE. Events are buffered into a
+ * FIFO array and rendered as they arrive. Reconnects on host switch
+ * (because `sessionId` stays the same but `api` rebinds underneath).
+ *
+ * Returns:
+ *   - events: chronological array of delivered payloads
+ *   - connected: true while an active reader holds the stream open
+ *   - error: any fatal error from the SSE reader
+ *
+ * The hook owns its own AbortController; unmount cleanly aborts.
+ */
+export function useSessionEventStream(sessionId: string | undefined) {
+  const [events, setEvents] = useState<SessionEventPayload[]>([]);
+  const [connected, setConnected] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  // Reset whenever the session id changes.
+  const sessionRef = useRef(sessionId);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    if (sessionRef.current !== sessionId) {
+      sessionRef.current = sessionId;
+      setEvents([]);
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+    setConnected(true);
+    setError(null);
+
+    (async () => {
+      try {
+        for await (const event of api.streamSessionEvents(sessionId, controller.signal)) {
+          if (cancelled) break;
+          setEvents((prev) => [...prev, event]);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err : new Error(String(err)));
+      } finally {
+        if (!cancelled) setConnected(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [sessionId]);
+
+  return { events, connected, error };
 }
