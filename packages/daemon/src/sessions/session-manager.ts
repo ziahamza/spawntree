@@ -24,7 +24,13 @@ import type { DomainEvents } from "../events/domain-events.ts";
 export class SessionManager {
   private readonly adapters = new Map<string, ACPAdapter>();
   private readonly events: DomainEvents;
-  private readonly unsubscribers: Array<() => void> = [];
+  /**
+   * Per-provider event unsubscribe functions. Map keyed by provider name
+   * so `registerAdapter` can find the old subscription when replacing an
+   * adapter and tear it down cleanly. An `Array<() => void>` wouldn't
+   * let us identify which unsubscriber belonged to which provider.
+   */
+  private readonly unsubscribers = new Map<string, () => void>();
   /**
    * sessionId → provider name cache. Populated on createSession and
    * opportunistically during discoverSessions so we avoid iterating every
@@ -44,14 +50,44 @@ export class SessionManager {
 
   /**
    * Register a custom adapter (or override a built-in one).
-   * Must be called before the adapter is first used.
    *
-   * Replacing an adapter drops any existing event subscription for that
-   * provider so the old instance can be garbage collected cleanly.
+   * Replacing an already-registered adapter is safe: we unsubscribe the
+   * old instance's event handler, shut down its subprocess (best-effort,
+   * in the background so callers don't block on a slow teardown), and
+   * drop any sessionIndex entries that pointed at it. The new adapter
+   * starts with a clean slate.
+   *
+   * Returns synchronously; if the old adapter's shutdown fails, the
+   * error is swallowed — there's no caller waiting for it.
    */
   registerAdapter(provider: string, adapter: ACPAdapter): void {
+    const previous = this.adapters.get(provider);
+    if (previous && previous !== adapter) {
+      // Unsubscribe the old instance's event handler so it can be GC'd.
+      const unsub = this.unsubscribers.get(provider);
+      if (unsub) {
+        try {
+          unsub();
+        } catch {
+          // best-effort
+        }
+        this.unsubscribers.delete(provider);
+      }
+      this.subscribedProviders.delete(provider);
+      // Drop sessionIndex entries that belonged to the replaced adapter
+      // — otherwise cached routing would still send operations to the
+      // dead handle.
+      for (const [sessionId, providerName] of this.sessionIndex) {
+        if (providerName === provider) this.sessionIndex.delete(sessionId);
+      }
+      // Shut down the old subprocess in the background so we don't leak it.
+      void previous.shutdown().catch(() => {});
+    } else {
+      // Brand-new provider name — still clear any stale subscription state
+      // (defensive: registerAdapter called before any adapter was wired up).
+      this.subscribedProviders.delete(provider);
+    }
     this.adapters.set(provider, adapter);
-    this.subscribedProviders.delete(provider);
   }
 
   /**
@@ -240,10 +276,15 @@ export class SessionManager {
 
   /** Shut down all adapters. Called when the daemon process exits. */
   async shutdown(): Promise<void> {
-    for (const unsub of this.unsubscribers) {
-      unsub();
+    for (const unsub of this.unsubscribers.values()) {
+      try {
+        unsub();
+      } catch {
+        // best-effort
+      }
     }
-    this.unsubscribers.length = 0;
+    this.unsubscribers.clear();
+    this.subscribedProviders.clear();
     for (const adapter of this.adapters.values()) {
       await adapter.shutdown().catch(() => {});
     }
@@ -311,7 +352,9 @@ export class SessionManager {
   /**
    * Subscribe to a provider's event stream exactly once and forward events
    * to the DomainEvents bus. Idempotent — subsequent calls for the same
-   * provider are no-ops.
+   * provider are no-ops. Storing the unsubscribe function keyed by
+   * provider name lets `registerAdapter` tear it down cleanly when the
+   * adapter is replaced.
    */
   private subscribeToAdapter(provider: string, adapter: ACPAdapter): void {
     if (this.subscribedProviders.has(provider)) return;
@@ -321,6 +364,6 @@ export class SessionManager {
       // Publish to domain events bus — SSE subscribers will receive it.
       this.events.publishSessionEvent(event, provider);
     });
-    this.unsubscribers.push(unsub);
+    this.unsubscribers.set(provider, unsub);
   }
 }

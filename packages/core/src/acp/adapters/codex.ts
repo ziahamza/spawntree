@@ -31,6 +31,16 @@ export class CodexACPAdapter implements ACPAdapter {
   private readonly clientVersion: string;
 
   private transport: JsonRpcTransport | null = null;
+  private initialized = false;
+  /**
+   * In-flight start promise. Concurrent `ensureStarted` callers await
+   * the same promise instead of skipping early — without this guard,
+   * `this.transport?.isAlive` becomes true as soon as the subprocess
+   * spawns, but `await transport.initialize(...)` is still running, so
+   * a second caller could try to send RPC through an un-initialized
+   * transport and hit a handshake-race failure.
+   */
+  private startPromise: Promise<void> | null = null;
   private eventHandlers: Array<(event: SessionEvent) => void> = [];
   /** Track active turn IDs per thread so `turn/interrupt` has a target. */
   private readonly activeTurns = new Map<string, string>();
@@ -50,8 +60,19 @@ export class CodexACPAdapter implements ACPAdapter {
   }
 
   async start(): Promise<void> {
-    if (this.transport?.isAlive) return;
+    // Fully started and transport healthy — nothing to do.
+    if (this.initialized && this.transport?.isAlive) return;
+    // Another caller is already starting — piggyback on that promise so
+    // we don't double-spawn or race the initialize() handshake.
+    if (this.startPromise) return this.startPromise;
 
+    this.startPromise = this.doStart().finally(() => {
+      this.startPromise = null;
+    });
+    return this.startPromise;
+  }
+
+  private async doStart(): Promise<void> {
     // If a previous start() threw after spawning but before completing the
     // handshake, tear down the dangling transport so we don't leak the
     // subprocess on retry.
@@ -65,7 +86,6 @@ export class CodexACPAdapter implements ACPAdapter {
       ["app-server", "--listen", "stdio://"],
       { label: "codex" },
     );
-    this.transport = transport;
 
     // Register notification and exit handlers BEFORE initialize() so we don't
     // miss any notifications emitted during or immediately after the handshake.
@@ -82,12 +102,19 @@ export class CodexACPAdapter implements ACPAdapter {
         name: this.clientName,
         version: this.clientVersion,
       });
+      // Only publish `this.transport` AFTER the handshake completes.
+      // Before this point, `isAlive` must read false so concurrent
+      // ensureStarted() callers hit the startPromise branch rather than
+      // skipping and sending RPC against an un-initialized transport.
+      this.transport = transport;
+      this.initialized = true;
     } catch (err) {
       // Handshake failed — kill the subprocess so isAlive becomes false and
       // the next ensureStarted() can retry cleanly instead of getting stuck
       // on a live-but-uninitialized transport.
       await transport.shutdown().catch(() => {});
       this.transport = null;
+      this.initialized = false;
       throw err;
     }
   }
@@ -258,12 +285,13 @@ export class CodexACPAdapter implements ACPAdapter {
   async shutdown(): Promise<void> {
     await this.transport?.shutdown();
     this.transport = null;
+    this.initialized = false;
     this.eventHandlers = [];
     this.activeTurns.clear();
   }
 
   private async ensureStarted(): Promise<void> {
-    if (!this.transport?.isAlive) {
+    if (!this.initialized || !this.transport?.isAlive) {
       await this.start();
     }
   }

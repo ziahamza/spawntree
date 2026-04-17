@@ -240,9 +240,9 @@ describe("SessionManager", () => {
 
   describe("createSession event wiring", () => {
     it("subscribes to the adapter BEFORE calling createSession", async () => {
-      // Regression guard for Devin comment #3: events emitted by the
-      // adapter during createSession() must be captured by the domain
-      // events bus. Subscribing after creation would drop them.
+      // Regression guard for Devin pass-1 comment #3: events emitted by
+      // the adapter during createSession() must be captured by the
+      // domain events bus. Subscribing after creation would drop them.
       const adapter = makeFakeAdapter("claude-code");
       const createOrder: string[] = [];
 
@@ -269,6 +269,78 @@ describe("SessionManager", () => {
 
       // Subscription must come first so events during creation are captured.
       expect(createOrder).toEqual(["subscribed", "createSession"]);
+    });
+  });
+
+  describe("registerAdapter replacement", () => {
+    it("tears down the old adapter's subscription and shuts it down when replaced", async () => {
+      // Regression guard for Devin pass-3: replacing a subscribed
+      // adapter must unsubscribe + shut down the old instance so the
+      // subprocess isn't leaked and the old handler doesn't keep firing.
+      const oldAdapter = makeFakeAdapter("claude-code", [discovered("s1", "claude-code")]);
+      let oldUnsubscribeCalled = false;
+      let oldShutdownCalled = false;
+
+      const originalOnSessionEvent = oldAdapter.onSessionEvent;
+      oldAdapter.onSessionEvent = (handler) => {
+        const inner = originalOnSessionEvent.call(oldAdapter, handler);
+        return () => {
+          oldUnsubscribeCalled = true;
+          inner();
+        };
+      };
+      const originalShutdown = oldAdapter.shutdown;
+      oldAdapter.shutdown = async () => {
+        oldShutdownCalled = true;
+        await originalShutdown.call(oldAdapter);
+      };
+
+      const { manager } = makeManager({ "claude-code": oldAdapter });
+      // Trigger the old adapter's subscription by running listSessions.
+      await manager.listSessions();
+
+      // Replace with a fresh adapter.
+      const newAdapter = makeFakeAdapter("claude-code");
+      manager.registerAdapter("claude-code", newAdapter);
+
+      // Give the background shutdown a tick to run.
+      await new Promise((r) => setImmediate(r));
+
+      expect(oldUnsubscribeCalled).toBe(true);
+      expect(oldShutdownCalled).toBe(true);
+    });
+
+    it("drops sessionIndex entries for the replaced provider", async () => {
+      // Cached routing must not send operations to a decommissioned adapter.
+      const oldAdapter = makeFakeAdapter("claude-code", [discovered("s1", "claude-code")]);
+      const { manager } = makeManager({ "claude-code": oldAdapter });
+      await manager.listSessions();
+      // Cache is populated — sanity check via the private field.
+      const idx = (manager as unknown as { sessionIndex: Map<string, string> }).sessionIndex;
+      expect(idx.has("s1")).toBe(true);
+
+      const newAdapter = makeFakeAdapter("claude-code");
+      manager.registerAdapter("claude-code", newAdapter);
+
+      expect(idx.has("s1")).toBe(false);
+    });
+
+    it("no-ops when the same adapter instance is re-registered", async () => {
+      // Re-registering the same object should not tear anything down.
+      const adapter = makeFakeAdapter("claude-code", [discovered("s1", "claude-code")]);
+      let shutdownCalled = false;
+      const original = adapter.shutdown;
+      adapter.shutdown = async () => {
+        shutdownCalled = true;
+        await original.call(adapter);
+      };
+
+      const { manager } = makeManager({ "claude-code": adapter });
+      await manager.listSessions();
+      manager.registerAdapter("claude-code", adapter);
+      await new Promise((r) => setImmediate(r));
+
+      expect(shutdownCalled).toBe(false);
     });
   });
 });

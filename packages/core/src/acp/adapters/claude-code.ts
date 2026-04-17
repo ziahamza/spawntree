@@ -57,6 +57,15 @@ export class ClaudeCodeAdapter implements ACPAdapter {
   private eventHandlers: Array<(event: SessionEvent) => void> = [];
   private connection: ACPConnection | null = null;
   private started = false;
+  /**
+   * In-flight start promise. Concurrent `ensureStarted()` callers (e.g.
+   * the two arms of `Promise.all([getSessionInfo, getSessionDetail])`
+   * in the GET /:id route) await the same promise instead of racing the
+   * `initialize()` handshake. Without this guard the second caller
+   * could see `this.connection.isAlive` true while `initialize()` is
+   * still in flight, and send prompts against an un-initialized link.
+   */
+  private startPromise: Promise<void> | null = null;
 
   constructor(options: ClaudeCodeAdapterOptions = {}) {
     this.options = options;
@@ -73,7 +82,17 @@ export class ClaudeCodeAdapter implements ACPAdapter {
 
   async start(): Promise<void> {
     if (this.started && this.connection?.isAlive) return;
+    // Concurrent callers piggyback on the in-flight start so the
+    // initialize() handshake doesn't race.
+    if (this.startPromise) return this.startPromise;
 
+    this.startPromise = this.doStart().finally(() => {
+      this.startPromise = null;
+    });
+    return this.startPromise;
+  }
+
+  private async doStart(): Promise<void> {
     // If a previous start() threw before `this.started = true`, shut down
     // the stale connection so we don't leak its subprocess on retry.
     if (this.connection) {
@@ -90,7 +109,6 @@ export class ClaudeCodeAdapter implements ACPAdapter {
       label: "claude-code",
       defaultClient: { permissionPolicy: this.options.permissionPolicy ?? "allow_once" },
     });
-    this.connection = connection;
 
     try {
       await connection.start();
@@ -108,6 +126,10 @@ export class ClaudeCodeAdapter implements ACPAdapter {
         },
       } satisfies acp.InitializeRequest);
 
+      // Publish connection + started AFTER the handshake so concurrent
+      // callers entering ensureStarted() during initialize() correctly
+      // see started === false and wait on the shared startPromise.
+      this.connection = connection;
       this.started = true;
     } catch (err) {
       // Handshake failed — kill the subprocess so a retry creates a fresh one
