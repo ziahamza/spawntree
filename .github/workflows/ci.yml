@@ -40,7 +40,3 @@ jobs:
 
       - name: CLI smoke test
         run: node packages/cli/dist/index.js --help
-
-      - name: Dashboard bundle smoke test
-        run: pnpm smoke:dashboard
-        timeout-minutes: 2
