@@ -1,6 +1,6 @@
 import Dockerode from "dockerode";
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve as resolvePath } from "node:path";
 import type { InfraStatus } from "spawntree-core";
 import { spawntreeHome } from "../state/global-state.ts";
 
@@ -9,13 +9,13 @@ import { spawntreeHome } from "../state/global-state.ts";
 // ---------------------------------------------------------------------------
 
 function pgDataDir(version: string): string {
-  const dir = resolve(spawntreeHome(), "postgres", version, "data");
+  const dir = resolvePath(spawntreeHome(), "postgres", version, "data");
   mkdirSync(dir, { recursive: true });
   return dir;
 }
 
 function pgTemplateDir(): string {
-  const dir = resolve(spawntreeHome(), "postgres", "templates");
+  const dir = resolvePath(spawntreeHome(), "postgres", "templates");
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -34,6 +34,10 @@ function dockerfileContent(version: string): string {
 
 const IMAGE_TAG_PREFIX = "spawntree-postgres";
 const CONTAINER_NAME_PREFIX = "spawntree-postgres";
+
+function describeDockerProgressValue(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
 
 // Execute a command inside a running container and return stdout.
 async function execInContainer(
@@ -152,6 +156,7 @@ export class PostgresRunner {
         throw new Error(
           `[spawntree-daemon] Docker is not running or not installed. `
             + `Please start Docker Desktop or install Docker Engine. (${msg})`,
+          { cause: err },
         );
       }
       throw err;
@@ -303,7 +308,7 @@ export class PostgresRunner {
 
   async dumpToTemplate(dbName: string, templateName: string): Promise<void> {
     console.log(`[spawntree-daemon] [postgres:${this.version}] Dumping "${dbName}" to template "${templateName}"...`);
-    const templatePath = resolve(pgTemplateDir(), `${templateName}.dump`);
+    const templatePath = resolvePath(pgTemplateDir(), `${templateName}.dump`);
     const container = this.requireContainer();
 
     // pg_dump -Fc inside container, pipe out to host file
@@ -349,7 +354,7 @@ export class PostgresRunner {
     console.log(
       `[spawntree-daemon] [postgres:${this.version}] Restoring "${dbName}" from template "${templateName}"...`,
     );
-    const templatePath = resolve(pgTemplateDir(), `${templateName}.dump`);
+    const templatePath = resolvePath(pgTemplateDir(), `${templateName}.dump`);
 
     if (!existsSync(templatePath)) {
       throw new Error(`Template "${templateName}" not found at ${templatePath}`);
@@ -384,7 +389,7 @@ export class PostgresRunner {
       return readdirSync(dir)
         .filter((f) => f.endsWith(".dump"))
         .map((f) => {
-          const filePath = resolve(dir, f);
+          const filePath = resolvePath(dir, f);
           const s = statSync(filePath);
           return {
             name: f.replace(/\.dump$/, ""),
@@ -439,9 +444,9 @@ export class PostgresRunner {
     console.log(`[spawntree-daemon] [postgres:${this.version}] Building image ${tag}...`);
 
     // Write Dockerfile
-    const dockerfileDir = resolve(spawntreeHome(), "postgres");
+    const dockerfileDir = resolvePath(spawntreeHome(), "postgres");
     mkdirSync(dockerfileDir, { recursive: true });
-    const dockerfilePath = resolve(dockerfileDir, `Dockerfile.${this.version}`);
+    const dockerfilePath = resolvePath(dockerfileDir, `Dockerfile.${this.version}`);
     writeFileSync(dockerfilePath, dockerfileContent(this.version));
 
     // Build via dockerode using the Dockerfile directory as context
@@ -460,7 +465,7 @@ export class PostgresRunner {
             // Check for error in output
             const lastLine = output[output.length - 1] as Record<string, unknown> | undefined;
             if (lastLine?.error) {
-              reject(new Error(String(lastLine.error)));
+              reject(new Error(describeDockerProgressValue(lastLine.error)));
             } else {
               console.log(`[spawntree-daemon] [postgres:${this.version}] Image ${tag} built successfully`);
               resolve();
@@ -469,7 +474,7 @@ export class PostgresRunner {
         },
         (event: Record<string, unknown>) => {
           if (event.stream) {
-            const line = String(event.stream).trimEnd();
+            const line = describeDockerProgressValue(event.stream).trimEnd();
             if (line) console.log(`[spawntree-daemon] [postgres:${this.version}] build: ${line}`);
           }
         },

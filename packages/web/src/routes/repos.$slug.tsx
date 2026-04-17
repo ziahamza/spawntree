@@ -5,7 +5,13 @@ import { AddConfigDialog } from "../components/AddConfigDialog";
 import { StatusDot } from "../components/StatusDot";
 import type { Status } from "../components/StatusDot";
 import { WarningBanner } from "../components/WarningBanner";
-import { deriveEnvStatus, useCreateEnv, useDeleteClone, useRelinkClone, useWebRepoTree } from "../lib/api";
+import {
+  deriveEnvStatus,
+  useCreateEnv,
+  useDeleteClone,
+  useRelinkClone,
+  useWebRepoTree,
+} from "../lib/api";
 import type { Clone, EnvListItem, Worktree } from "../lib/api";
 
 export const Route = createFileRoute("/repos/$slug")({
@@ -34,7 +40,7 @@ function StartButton({
   async function handleStart() {
     try {
       const env = await createEnv.mutateAsync({ repoPath: path });
-      navigate({
+      await navigate({
         to: "/repos/$slug/envs/$envId",
         params: { slug, envId: env.envId },
         search: { repoPath: env.repoPath },
@@ -62,7 +68,7 @@ function StartButton({
   );
 }
 
-function AddConfigButton({ path, onOpen }: { path: string; onOpen: (path: string) => void; }) {
+function AddConfigButton({ path, onOpen }: { path: string; onOpen: (path: string) => void }) {
   return (
     <button
       type="button"
@@ -75,7 +81,7 @@ function AddConfigButton({ path, onOpen }: { path: string; onOpen: (path: string
   );
 }
 
-function EnvRow({ env, slug }: { env: EnvListItem; slug: string; }) {
+function EnvRow({ env, slug }: { env: EnvListItem; slug: string }) {
   const status = deriveEnvStatus(env);
   const serviceCount = env.services?.length ?? 0;
   return (
@@ -93,9 +99,15 @@ function EnvRow({ env, slug }: { env: EnvListItem; slug: string; }) {
   );
 }
 
-function WorktreeRow(
-  { wt, slug, onOpenConfig }: { wt: Worktree; slug: string; onOpenConfig: (path: string) => void; },
-) {
+function WorktreeRow({
+  wt,
+  slug,
+  onOpenConfig,
+}: {
+  wt: Worktree;
+  slug: string;
+  onOpenConfig: (path: string) => void;
+}) {
   return (
     <div className="pl-6 border-l border-border-subtle ml-4 py-2">
       <div className="flex items-start gap-2 py-1 text-xs text-muted">
@@ -113,13 +125,17 @@ function WorktreeRow(
           <StartButton path={wt.path} slug={slug} onNeedConfig={onOpenConfig} />
         </div>
       </div>
-      {wt.envs.length > 0
-        ? (
-          <div className="mt-1 space-y-1">
-            {wt.envs.map((env) => <EnvRow key={`${wt.path}:${env.envId}:${env.repoPath}`} env={env} slug={slug} />)}
-          </div>
-        )
-        : <div className="mt-1 px-3 py-1 text-[11px] text-muted">No envs running from this worktree</div>}
+      {wt.envs.length > 0 ? (
+        <div className="mt-1 space-y-1">
+          {wt.envs.map((env) => (
+            <EnvRow key={`${wt.path}:${env.envId}:${env.repoPath}`} env={env} slug={slug} />
+          ))}
+        </div>
+      ) : (
+        <div className="mt-1 px-3 py-1 text-[11px] text-muted">
+          No envs running from this worktree
+        </div>
+      )}
     </div>
   );
 }
@@ -187,7 +203,9 @@ function CloneSection({
 
       {!clone.missing && clone.worktrees.length > 0 && (
         <div className="p-3 space-y-1">
-          {clone.worktrees.map((wt) => <WorktreeRow key={wt.path} wt={wt} slug={slug} onOpenConfig={onOpenConfig} />)}
+          {clone.worktrees.map((wt) => (
+            <WorktreeRow key={wt.path} wt={wt} slug={slug} onOpenConfig={onOpenConfig} />
+          ))}
         </div>
       )}
 
@@ -225,7 +243,12 @@ function RepoDetail() {
       <div className="p-6 max-w-3xl mx-auto">
         <div className="h-6 w-48 bg-surface rounded animate-pulse mb-6" />
         <div className="space-y-3">
-          {[1, 2].map((i) => <div key={i} className="h-24 rounded-lg bg-surface border border-border animate-pulse" />)}
+          {[1, 2].map((i) => (
+            <div
+              key={i}
+              className="h-24 rounded-lg bg-surface border border-border animate-pulse"
+            />
+          ))}
         </div>
       </div>
     );
@@ -266,26 +289,24 @@ function RepoDetail() {
         <h2 className="text-xs font-medium text-muted uppercase tracking-wider mb-3">
           Clones ({repo.clones.length})
         </h2>
-        {repo.clones.length === 0
-          ? (
-            <div className="rounded-lg border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
-              No clones found for this repo
-            </div>
-          )
-          : (
-            repo.clones.map((clone) => (
-              <CloneSection
-                key={clone.id}
-                clone={clone}
-                slug={slug}
-                onRelink={handleRelink}
-                onRemove={handleRemove}
-                relinkingId={relinkClone.isPending ? (relinkClone.variables?.cloneID ?? null) : null}
-                removingId={deleteClone.isPending ? (deleteClone.variables?.cloneID ?? null) : null}
-                onOpenConfig={handleOpenConfig}
-              />
-            ))
-          )}
+        {repo.clones.length === 0 ? (
+          <div className="rounded-lg border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
+            No clones found for this repo
+          </div>
+        ) : (
+          repo.clones.map((clone) => (
+            <CloneSection
+              key={clone.id}
+              clone={clone}
+              slug={slug}
+              onRelink={handleRelink}
+              onRemove={handleRemove}
+              relinkingId={relinkClone.isPending ? (relinkClone.variables?.cloneID ?? null) : null}
+              removingId={deleteClone.isPending ? (deleteClone.variables?.cloneID ?? null) : null}
+              onOpenConfig={handleOpenConfig}
+            />
+          ))
+        )}
       </div>
 
       <AddConfigDialog
