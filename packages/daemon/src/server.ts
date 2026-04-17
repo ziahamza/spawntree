@@ -23,7 +23,26 @@ import { createSessionRoutes } from "./routes/sessions.ts";
 import { DaemonService } from "./services/daemon-service.ts";
 import { SessionManager } from "./sessions/session-manager.ts";
 
-const webDistDir = resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
+/**
+ * Where the SPA bundle lives at runtime. Two layouts supported:
+ *
+ *   1. **Published** (user ran `npm i -g spawntree`): the web bundle is
+ *      copied into `packages/daemon/dist/web/` by the root `pnpm build`
+ *      so `files: ["dist"]` ships everything together. This is the
+ *      default — always checked first.
+ *
+ *   2. **Monorepo dev** (running `node packages/daemon/dist/...`): the
+ *      web bundle lives at `packages/web/dist/`. We fall back to this
+ *      when the self-contained location is missing.
+ *
+ * The fallback order is deterministic, not a scan — easy to reason
+ * about and fast to check (one `existsSync` call at module load).
+ */
+const BUNDLED_WEB_DIR = resolve(fileURLToPath(new URL("./web", import.meta.url)));
+const DEV_WEB_DIR = resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
+const webDistDir = existsSync(resolve(BUNDLED_WEB_DIR, "index.html"))
+  ? BUNDLED_WEB_DIR
+  : DEV_WEB_DIR;
 const webIndexPath = resolve(webDistDir, "index.html");
 
 export function createApp(
