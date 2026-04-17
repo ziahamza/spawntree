@@ -1,0 +1,67 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": {
+    "includes": [
+      "packages/**/src/**/*.ts",
+      "packages/**/src/**/*.tsx",
+      "!packages/**/dist/**",
+      "!packages/web/src/routeTree.gen.ts",
+    ],
+  },
+  "linter": {
+    "rules": {
+      "recommended": false,
+    },
+  },
+  "overrides": [
+    {
+      "includes": [
+        "packages/core/src/api/client.ts",
+        "packages/core/src/api/schemas.ts",
+        "packages/daemon/src/errors.ts",
+        "packages/daemon/src/server-main.ts",
+      ],
+      "plugins": [
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-ladder.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-call-in-effect-arg.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-nested-effect-call.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-as.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-wrapper-alias.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-option-as.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-never.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-async.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-fn-generator.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-sync-console.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-do.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-bind.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-nested-effect-gen.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-runtime-runfork.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-match-void-branch.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-match-effect-branch.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/warn-effect-sync-wrapper.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-side-effect-wrapper.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-all-step-sequencing.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-orElse-ladder.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-try-catch.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/prevent-dynamic-imports.grit",
+      ],
+    },
+    {
+      "includes": [
+        "packages/core/src/**/*.ts",
+        "packages/cli/src/**/*.ts",
+        "packages/web/src/**/*.ts",
+        "packages/web/src/**/*.tsx",
+      ],
+      "plugins": [
+        "./node_modules/@catenarycloud/linteffect/rules/no-effect-type-alias.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-model-overlay-cast.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-unknown-boolean-coercion-helper.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-fromnullable-nullish-coalesce.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-option-boolean-normalization.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-string-sentinel-return.grit",
+        "./node_modules/@catenarycloud/linteffect/rules/no-string-sentinel-const.grit",
+      ],
+    },
+  ],
+}

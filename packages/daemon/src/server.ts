@@ -97,7 +97,7 @@ export function createApp(
         DaemonService.use((service) =>
           service.logs(context.req.param("repoId"), context.req.param("envId"), context.req.query("repoPath"), {
             service: context.req.query("service"),
-            follow: context.req.query("follow") === "false" ? false : true,
+            follow: context.req.query("follow") !== "false",
             lines: context.req.query("lines") ? Number.parseInt(context.req.query("lines") ?? "50", 10) : 50,
           })
         ),

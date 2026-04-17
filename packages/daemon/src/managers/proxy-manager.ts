@@ -40,18 +40,18 @@ export class ProxyManager {
    * Register a service and return its clean URL.
    * Pattern: <serviceName>-<envId>.localhost:<proxyPort>
    */
-  register(repoId: string, envId: string, serviceName: string, targetPort: number): string {
+  register(envId: string, serviceName: string, targetPort: number): string {
     const hostname = `${serviceName}-${envId}.localhost`;
     this.proxy.register(hostname, targetPort);
     return `http://${hostname}:${this.proxy.port}`;
   }
 
-  unregister(repoId: string, envId: string, serviceName: string): void {
+  unregister(envId: string, serviceName: string): void {
     const hostname = `${serviceName}-${envId}.localhost`;
     this.proxy.unregister(hostname);
   }
 
-  unregisterAll(repoId: string, envId: string): void {
+  unregisterAll(envId: string): void {
     for (const hostname of this.proxy.registeredHostnames()) {
       // Hostname format: <serviceName>-<envId>.localhost
       // Extract envId by removing .localhost suffix and taking everything after first hyphen

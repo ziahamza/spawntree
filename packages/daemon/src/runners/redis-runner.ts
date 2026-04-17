@@ -1,6 +1,6 @@
 import Dockerode from "dockerode";
 import { mkdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve as resolvePath } from "node:path";
 import type { InfraStatus } from "spawntree-core";
 import { spawntreeHome } from "../state/global-state.ts";
 
@@ -9,13 +9,17 @@ import { spawntreeHome } from "../state/global-state.ts";
 // ---------------------------------------------------------------------------
 
 function redisDataDir(): string {
-  const dir = resolve(spawntreeHome(), "redis", "data");
+  const dir = resolvePath(spawntreeHome(), "redis", "data");
   mkdirSync(dir, { recursive: true });
   return dir;
 }
 
 const REDIS_IMAGE = "redis:7-alpine";
 const REDIS_CONTAINER_NAME = "spawntree-redis";
+
+function describeDockerProgressValue(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
 
 // Execute a command inside a running container and return stdout.
 async function execInContainer(
@@ -122,6 +126,7 @@ export class RedisRunner {
         throw new Error(
           `[spawntree-daemon] Docker is not running or not installed. `
             + `Please start Docker Desktop or install Docker Engine. (${msg})`,
+          { cause: err },
         );
       }
       throw err;
@@ -226,8 +231,10 @@ export class RedisRunner {
         },
         (event: Record<string, unknown>) => {
           if (event.status) {
+            const status = describeDockerProgressValue(event.status);
+            const progress = event.progress ? ` ${describeDockerProgressValue(event.progress)}` : "";
             console.log(
-              `[spawntree-daemon] [redis] pull: ${event.status}${event.progress ? " " + event.progress : ""}`,
+              `[spawntree-daemon] [redis] pull: ${status}${progress}`,
             );
           }
         },

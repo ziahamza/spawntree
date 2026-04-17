@@ -1,7 +1,6 @@
 import type { InfraStatusResponse, PostgresInstanceInfo, RedisInstanceInfo } from "spawntree-core";
 import { PostgresRunner } from "../runners/postgres-runner.ts";
 import { RedisRunner } from "../runners/redis-runner.ts";
-import type { PortRegistry } from "./port-registry.ts";
 
 // Fixed well-known ports for shared infra (outside the dynamic range 10000+)
 // These are chosen to not conflict with the dynamic per-env port allocations.
@@ -11,7 +10,7 @@ const REDIS_PORT = 16379; // Redis default 6379 shifted
 function postgresPort(version: string): number {
   // Major version number offset so pg14→15432, pg15→15433, pg16→15434, pg17→15435
   const major = parseInt(version, 10);
-  if (isNaN(major)) return POSTGRES_BASE_PORT;
+  if (Number.isNaN(major)) return POSTGRES_BASE_PORT;
   return POSTGRES_BASE_PORT + (major - 14);
 }
 
@@ -22,11 +21,6 @@ function postgresPort(version: string): number {
 export class InfraManager {
   private postgresRunners: Map<string, PostgresRunner> = new Map(); // version → runner
   private redisRunner: RedisRunner | null = null;
-  private readonly portRegistry: PortRegistry;
-
-  constructor(portRegistry: PortRegistry) {
-    this.portRegistry = portRegistry;
-  }
 
   // --------------------------------------------------------------------------
   // ensurePostgres
@@ -133,18 +127,5 @@ export class InfraManager {
       postgres: postgresInfos,
       redis: redisInfo,
     };
-  }
-
-  // --------------------------------------------------------------------------
-  // Expose port info (for env vars injection)
-  // --------------------------------------------------------------------------
-
-  getPostgresPort(version = "17"): number {
-    const runner = this.postgresRunners.get(version);
-    return runner?.port ?? postgresPort(version);
-  }
-
-  getRedisPort(): number {
-    return this.redisRunner?.port ?? REDIS_PORT;
   }
 }

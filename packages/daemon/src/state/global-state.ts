@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
@@ -107,10 +107,6 @@ export function logDir(repoId: string, envId: string): string {
   return dir;
 }
 
-export function socketPath(): string {
-  return resolve(SPAWNTREE_HOME, "spawntree.sock");
-}
-
 export function runtimeMetadataPath(): string {
   return resolve(SPAWNTREE_HOME, "runtime", "daemon.json");
 }
@@ -118,16 +114,4 @@ export function runtimeMetadataPath(): string {
 export function saveRuntimeMetadata(metadata: RuntimeMetadata): void {
   ensureDir();
   writeFileSync(runtimeMetadataPath(), JSON.stringify(metadata, null, 2) + "\n");
-}
-
-export function loadRuntimeMetadata(): RuntimeMetadata | null {
-  try {
-    return JSON.parse(readFileSync(runtimeMetadataPath(), "utf-8")) as RuntimeMetadata;
-  } catch {
-    return null;
-  }
-}
-
-export function stateFileExists(repoId: string): boolean {
-  return existsSync(resolve(SPAWNTREE_HOME, "repos", repoId, "state.json"));
 }

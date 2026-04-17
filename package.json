@@ -10,8 +10,12 @@
     "build": "pnpm --filter spawntree-core run build && pnpm --filter spawntree-daemon run build && pnpm --filter spawntree run build && pnpm --filter spawntree-web run build:only",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "oxlint . && dprint check",
-    "format": "dprint fmt",
+    "lint": "pnpm lint:ox && pnpm lint:type-aware && pnpm lint:effect",
+    "lint:ox": "oxlint .",
+    "lint:type-aware": "oxlint --type-aware .",
+    "lint:effect": "biome lint packages/core/src/api/client.ts packages/core/src/api/schemas.ts packages/daemon/src/errors.ts packages/daemon/src/server-main.ts",
+    "format": "oxfmt --check --ignore-path .oxfmtignore .",
+    "format:write": "oxfmt --write --ignore-path .oxfmtignore .",
     "effect:lsp:patch": "effect-language-service patch",
     "typecheck": "pnpm --filter spawntree-core run build && pnpm --filter spawntree-daemon run build && tsc -p packages/cli/tsconfig.json --noEmit && tsc -p packages/web/tsconfig.json --noEmit",
     "changeset": "changeset",
@@ -19,25 +23,28 @@
     "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.11",
+    "@catenarycloud/linteffect": "0.0.4-0",
     "@changesets/changelog-github": "^0.6.0",
     "@changesets/cli": "^2.30.0",
     "@effect/language-service": "^0.75.1",
+    "@effect/tsgo": "^0.3.1",
     "@playwright/test": "^1.59.1",
     "@types/node": "^25.5.0",
-    "dprint": "^0.51.1",
     "jsdom": "^29.0.1",
+    "oxfmt": "^0.44.0",
     "oxlint": "^1.42.0",
+    "oxlint-tsgolint": "^0.20.0",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3",
-      "dprint"
-    ]
-  },
-  "packageManager": "pnpm@10.27.0",
   "engines": {
     "node": ">=20"
+  },
+  "packageManager": "pnpm@10.27.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }

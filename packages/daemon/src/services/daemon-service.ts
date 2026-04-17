@@ -136,7 +136,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       const startedAt = Date.now();
       const portRegistry = new PortRegistry();
       const logStreamer = new LogStreamer();
-      const infraManager = new InfraManager(portRegistry);
+      const infraManager = new InfraManager();
       const proxyManager = new ProxyManager();
       const envManager = new EnvManager(portRegistry, logStreamer, infraManager, proxyManager);
       const catalog = new CatalogDatabase();
@@ -145,10 +145,6 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
 
       const publish = (event: Omit<DomainEvent, "seq" | "timestamp">) => {
         events.publish(event);
-      };
-      const log = (message: string, details?: Record<string, unknown>) => {
-        const suffix = details ? ` ${JSON.stringify(details)}` : "";
-        process.stderr.write(`[spawntree-daemon] ${message}${suffix}\n`);
       };
 
       const shutdown = Effect.gen(function*() {
@@ -192,12 +188,12 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       });
 
       const createEnv = Effect.fn("DaemonService.createEnv")(function*(request: CreateEnvRequest) {
-        log("create env", { repoPath: request.repoPath, envId: request.envId, configFile: request.configFile });
+        logDaemonMessage("create env", { repoPath: request.repoPath, envId: request.envId, configFile: request.configFile });
         const env = yield* Effect.tryPromise({
           try: () => envManager.createEnv(request),
           catch: mapCreateEnvError,
         });
-        log("env ready", { repoId: env.repoId, envId: env.envId, repoPath: env.repoPath });
+        logDaemonMessage("env ready", { repoId: env.repoId, envId: env.envId, repoPath: env.repoPath });
         publish({ type: "env.updated", repoId: env.repoId, envId: env.envId, repoSlug: repoSlugForRepoId(catalog, env.repoId) });
         return { env };
       });
@@ -209,7 +205,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
 
       const downEnv = Effect.fn("DaemonService.downEnv")(function*(repoRef: string, envId: string, repoPath?: string) {
         const resolved = yield* resolveRepoEnv(catalog, envManager, previewSessions, repoRef, envId, repoPath);
-        log("down env", { repoId: resolved.repoId, envId: resolved.env.envId, repoPath: resolved.env.repoPath });
+        logDaemonMessage("down env", { repoId: resolved.repoId, envId: resolved.env.envId, repoPath: resolved.env.repoPath });
         yield* Effect.tryPromise({
           try: () => envManager.downEnv(resolved.repoId, resolved.env.envId),
           catch: (error) => mapInternalError("DOWN_ENV_FAILED", error),
@@ -225,7 +221,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       const deleteEnv = Effect.fn("DaemonService.deleteEnv")(
         function*(repoRef: string, envId: string, repoPath?: string) {
           const resolved = yield* resolveRepoEnv(catalog, envManager, previewSessions, repoRef, envId, repoPath);
-          log("delete env", { repoId: resolved.repoId, envId: resolved.env.envId, repoPath: resolved.env.repoPath });
+          logDaemonMessage("delete env", { repoId: resolved.repoId, envId: resolved.env.envId, repoPath: resolved.env.repoPath });
           yield* Effect.tryPromise({
             try: () => envManager.deleteEnv(resolved.repoId, resolved.env.envId),
             catch: (error) => mapInternalError("DELETE_ENV_FAILED", error),
@@ -246,7 +242,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         options: { service?: string; follow?: boolean; lines?: number; },
       ) {
         const resolved = yield* resolveRepoEnv(catalog, envManager, previewSessions, repoRef, envId, repoPath);
-        log("open log stream", {
+        logDaemonMessage("open log stream", {
           repoId: resolved.repoId,
           envId: resolved.env.envId,
           service: options.service ?? "all",
@@ -342,18 +338,18 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       });
 
       const listWebRepos = Effect.gen(function*() {
-        const startedAt = Date.now();
+        const listStartedAt = Date.now();
         const repos = yield* Effect.sync(() => catalog.listRepos());
         const enriched = repos.map((repo) => enrichRepo(repo, catalog, envManager));
-        log("repo list ready", {
+        logDaemonMessage("repo list ready", {
           repoCount: enriched.length,
-          durationMs: Date.now() - startedAt,
+          durationMs: Date.now() - listStartedAt,
         });
         return { repos: enriched };
       });
 
       const getWebRepoTree = Effect.fn("DaemonService.getWebRepoTree")(function*(repoSlugValue: string) {
-        const startedAt = Date.now();
+        const treeStartedAt = Date.now();
         const repo = yield* getRepoBySlug(catalog, repoSlugValue);
         const clones = yield* Effect.sync(() => catalog.listClones(repo.id));
         const worktreesByClone: Record<string, Array<Worktree>> = {};
@@ -366,11 +362,11 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         const refreshedClones = yield* Effect.sync(() => catalog.listClones(repo.id));
         const envs = listRepoEnvsForRepo(catalog, envManager, repo);
 
-        log("repo tree ready", {
+        logDaemonMessage("repo tree ready", {
           repoSlug: repoSlugValue,
           cloneCount: refreshedClones.length,
           envCount: envs.length,
-          durationMs: Date.now() - startedAt,
+          durationMs: Date.now() - treeStartedAt,
         });
 
         return {
@@ -382,7 +378,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       });
 
       const getWebRepo = Effect.fn("DaemonService.getWebRepo")(function*(repoSlugValue: string) {
-        const startedAt = Date.now();
+        const detailStartedAt = Date.now();
         const repo = yield* getRepoBySlug(catalog, repoSlugValue);
         const clones = yield* Effect.sync(() => catalog.listClones(repo.id));
         const worktreesByClone: Record<string, Array<Worktree>> = {};
@@ -397,13 +393,13 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         const gitStartedAt = Date.now();
         const gitPaths = buildGitPathInfoMap(repo, refreshedClones, worktreesByClone, envs);
 
-        log("repo detail ready", {
+        logDaemonMessage("repo detail ready", {
           repoSlug: repoSlugValue,
           cloneCount: refreshedClones.length,
           envCount: envs.length,
-          worktreeSyncMs: gitStartedAt - startedAt,
+          worktreeSyncMs: gitStartedAt - detailStartedAt,
           gitMetaMs: Date.now() - gitStartedAt,
-          durationMs: Date.now() - startedAt,
+          durationMs: Date.now() - detailStartedAt,
         });
 
         return {
@@ -423,7 +419,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       });
 
       const addFolder = Effect.fn("DaemonService.addFolder")(function*(request: AddFolderRequest) {
-        log("add folder", { path: request.path, remoteName: request.remoteName, scanChildren: request.scanChildren });
+        logDaemonMessage("add folder", { path: request.path, remoteName: request.remoteName, scanChildren: request.scanChildren });
         const probe = yield* Effect.try({
           try: () => probePath(request.path),
           catch: (error) => new BadRequestError({ code: "INVALID_PATH", message: toMessage(error) }),
@@ -564,7 +560,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
 
       const suggestConfigEffect = Effect.fn("DaemonService.suggestConfig")(function*(request: ConfigSuggestRequest) {
         const repoPath = yield* normalizeRepoPath(request.repoPath);
-        log("suggest config", { repoPath });
+        logDaemonMessage("suggest config", { repoPath });
         return yield* Effect.try({
           try: () => buildConfigSuggestions(repoPath),
           catch: (error) =>
@@ -576,7 +572,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
 
       const testConfig = Effect.fn("DaemonService.testConfig")(function*(request: ConfigTestRequest) {
         const repoPath = yield* normalizeRepoPath(request.repoPath);
-        log("test config", { repoPath });
+        logDaemonMessage("test config", { repoPath });
         return yield* Effect.try({
           try: () => runConfigTest(repoPath, request.content),
           catch: (error) =>
@@ -594,7 +590,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
             const configPath = resolve(previewsDir, `${previewId}.yaml`);
             mkdirSync(previewsDir, { recursive: true });
             writeFileSync(configPath, request.content, "utf8");
-            log("start preview", { repoPath, previewId, serviceName: request.serviceName ?? "all" });
+            logDaemonMessage("start preview", { repoPath, previewId, serviceName: request.serviceName ?? "all" });
 
             const env = yield* Effect.tryPromise({
               try: () =>
@@ -617,7 +613,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
             configPath,
             env,
             });
-            log("preview ready", { previewId, envId: env.envId, repoId: env.repoId, repoPath: env.repoPath });
+            logDaemonMessage("preview ready", { previewId, envId: env.envId, repoId: env.repoId, repoPath: env.repoPath });
             return { ok: true, previewId, env };
           },
         );
@@ -628,7 +624,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
             if (!session) {
               return yield* new NotFoundError({ code: "PREVIEW_NOT_FOUND", message: "Preview not found" });
             }
-            log("stop preview", { previewId: request.previewId, envId: session.envId });
+            logDaemonMessage("stop preview", { previewId: request.previewId, envId: session.envId });
             yield* Effect.tryPromise({
             try: () => envManager.deleteEnv(session.repoId, session.envId),
             catch: (error) => mapInternalError("STOP_PREVIEW_FAILED", error),
@@ -640,7 +636,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
 
       const saveConfig = Effect.fn("DaemonService.saveConfig")(function*(request: ConfigSaveRequest) {
         const repoPath = yield* normalizeRepoPath(request.repoPath);
-        log("save config", { repoPath, saveMode: request.saveMode });
+        logDaemonMessage("save config", { repoPath, saveMode: request.saveMode });
         const gitRoot = yield* Effect.try({
           try: () => validateGitRepo(repoPath),
           catch: (error) => new BadRequestError({ code: "NOT_A_GIT_REPO", message: toMessage(error) }),
@@ -823,6 +819,11 @@ function mapStopInfraError(error: unknown) {
 
 function toMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function logDaemonMessage(message: string, details?: Record<string, unknown>) {
+  const suffix = details ? ` ${JSON.stringify(details)}` : "";
+  process.stderr.write(`[spawntree-daemon] ${message}${suffix}\n`);
 }
 
 function safeRemove(path: string) {

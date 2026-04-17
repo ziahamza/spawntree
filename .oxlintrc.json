@@ -4,6 +4,7 @@
     "**/dist",
     "**/build",
     "**/.tsbuildinfo",
+    "**/routeTree.gen.ts",
     ".agents/**/*"
   ],
   "overrides": [

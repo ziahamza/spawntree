@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { getRequestListener } from "@hono/node-server";
-import { Layer, ManagedRuntime } from "effect";
+import { Layer, ManagedRuntime, Match } from "effect";
 import { createServer } from "node:http";
 import { createApp, hasBundledWebApp } from "./server.ts";
 import { DaemonService } from "./services/daemon-service.ts";
@@ -44,38 +44,42 @@ async function main() {
   if (hasBundledWebApp()) {
     process.stderr.write(`[spawntree-daemon] Web: ${origin}/\n`);
   } else {
-    process.stderr.write("[spawntree-daemon] Web bundle not found. Run `pnpm build` to serve the UI from the daemon.\n");
+    process.stderr.write(
+      "[spawntree-daemon] Web bundle not found. Run `pnpm build` to serve the UI from the daemon.\n",
+    );
   }
 
   let shuttingDown = false;
-  const shutdown = async (signal: string) => {
-    if (shuttingDown) {
-      return;
-    }
-    shuttingDown = true;
-    process.stderr.write(`[spawntree-daemon] Received ${signal}, shutting down...\n`);
-    try {
-      await sessionManager.shutdown();
-    } catch {
-      // best effort
-    }
-    try {
-      await runtime.runPromise(DaemonService.use((service) => service.shutdown));
-    } catch {
-      // best effort
-    }
-    await runtime.dispose();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    process.exit(0);
-  };
+  const shutdown = async (signal: string) =>
+    Match.value(shuttingDown).pipe(
+      Match.when(true, () => undefined),
+      Match.orElse(async () => {
+        shuttingDown = true;
+        process.stderr.write(`[spawntree-daemon] Received ${signal}, shutting down...\n`);
+        // Tear down the session manager first so ACP adapter subprocesses
+        // release before the runtime disposes the services they might use.
+        await sessionManager.shutdown().catch(() => undefined);
+        await runtime
+          .runPromise(DaemonService.use((service) => service.shutdown))
+          .catch(() => undefined);
+        await runtime.dispose();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        process.exit(0);
+      }),
+    );
 
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
 main().catch((error) => {
-  process.stderr.write(
-    `[spawntree-daemon] Fatal: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`,
-  );
+  process.stderr.write(`[spawntree-daemon] Fatal: ${formatFatalError(error)}\n`);
   process.exit(1);
 });
+
+function formatFatalError(error: unknown) {
+  return Match.value(error).pipe(
+    Match.when(Match.instanceOf(Error), (cause) => cause.stack ?? cause.message),
+    Match.orElse((cause) => String(cause)),
+  );
+}

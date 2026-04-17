@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Match, Option, Schema } from "effect";
 import {
   AddFolderProbeResult,
   AddFolderResponse,
@@ -84,33 +84,47 @@ export class ApiClient {
   }
 
   async listEnvs(repoId?: string) {
-    const path = repoId ? `/api/v1/repos/${encodeURIComponent(repoId)}/envs` : "/api/v1/envs";
+    const path = Option.fromNullishOr(repoId).pipe(
+      Option.match({
+        onNone: () => "/api/v1/envs",
+        onSome: (value) => `/api/v1/repos/${encodeURIComponent(value)}/envs`,
+      }),
+    );
     return this.request(path, { schema: ListEnvsResponse });
   }
 
   async getEnv(repoId: string, envId: string, repoPath?: string) {
     return this.request(
-      this.withSearch(`/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}`, {
-        repoPath,
-      }),
+      this.withSearch(
+        `/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}`,
+        {
+          repoPath,
+        },
+      ),
       { schema: GetEnvResponse },
     );
   }
 
   async downEnv(repoId: string, envId: string, repoPath?: string) {
     return this.request(
-      this.withSearch(`/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}/down`, {
-        repoPath,
-      }),
+      this.withSearch(
+        `/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}/down`,
+        {
+          repoPath,
+        },
+      ),
       { method: "POST" },
     );
   }
 
   async deleteEnv(repoId: string, envId: string, repoPath?: string) {
     return this.request(
-      this.withSearch(`/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}`, {
-        repoPath,
-      }),
+      this.withSearch(
+        `/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}`,
+        {
+          repoPath,
+        },
+      ),
       { method: "DELETE" },
     );
   }
@@ -166,7 +180,7 @@ export class ApiClient {
     });
   }
 
-  async probeAddPath(body: { path: string; }) {
+  async probeAddPath(body: { path: string }) {
     return this.request("/api/v1/web/repos/probe", {
       method: "POST",
       body,
@@ -183,16 +197,22 @@ export class ApiClient {
   }
 
   async relinkClone(repoSlug: string, cloneId: string, body: RelinkCloneRequest) {
-    return this.request(`/api/v1/web/repos/${encodeURIComponent(repoSlug)}/clones/${encodeURIComponent(cloneId)}`, {
-      method: "PATCH",
-      body,
-    });
+    return this.request(
+      `/api/v1/web/repos/${encodeURIComponent(repoSlug)}/clones/${encodeURIComponent(cloneId)}`,
+      {
+        method: "PATCH",
+        body,
+      },
+    );
   }
 
   async deleteClone(repoSlug: string, cloneId: string) {
-    return this.request(`/api/v1/web/repos/${encodeURIComponent(repoSlug)}/clones/${encodeURIComponent(cloneId)}`, {
-      method: "DELETE",
-    });
+    return this.request(
+      `/api/v1/web/repos/${encodeURIComponent(repoSlug)}/clones/${encodeURIComponent(cloneId)}`,
+      {
+        method: "DELETE",
+      },
+    );
   }
 
   async archiveWorktree(repoSlug: string, body: ArchiveWorktreeRequest) {
@@ -252,12 +272,15 @@ export class ApiClient {
     } = {},
   ) {
     return this.toUrl(
-      this.withSearch(`/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}/logs`, {
-        service: options.service,
-        follow: options.follow === undefined ? undefined : String(options.follow),
-        lines: options.lines === undefined ? undefined : String(options.lines),
-        repoPath: options.repoPath,
-      }),
+      this.withSearch(
+        `/api/v1/repos/${encodeURIComponent(repoId)}/envs/${encodeURIComponent(envId)}/logs`,
+        {
+          service: options.service,
+          follow: stringifyOptional(options.follow),
+          lines: stringifyOptional(options.lines),
+          repoPath: options.repoPath,
+        },
+      ),
     );
   }
 
@@ -318,9 +341,11 @@ export class ApiClient {
   }
 
   getEventsUrl(since?: number) {
-    return this.toUrl(this.withSearch("/api/v1/events", {
-      since: since === undefined ? undefined : String(since),
-    }));
+    return this.toUrl(
+      this.withSearch("/api/v1/events", {
+        since: stringifyOptional(since),
+      }),
+    );
   }
 
   async *streamLogs(
@@ -346,11 +371,8 @@ export class ApiClient {
       },
     );
 
-    if (!response.ok || !response.body) {
-      throw await this.toClientError(response);
-    }
-
-    yield* parseSSE(response.body, LogLine);
+    const body = await this.requireEventStream(response);
+    yield* parseSSE(body, LogLine);
   }
 
   async *streamEvents(since?: number): AsyncIterable<DomainEvent> {
@@ -359,17 +381,17 @@ export class ApiClient {
       headers: { Accept: "text/event-stream" },
     });
 
-    if (!response.ok || !response.body) {
-      throw await this.toClientError(response);
-    }
-
-    yield* parseSSE(response.body, DomainEvent);
+    const body = await this.requireEventStream(response);
+    yield* parseSSE(body, DomainEvent);
   }
 
-  private request(path: string, options: {
-    method?: string;
-    body?: unknown;
-  }): Promise<void>;
+  private request(
+    path: string,
+    options: {
+      method?: string;
+      body?: unknown;
+    },
+  ): Promise<void>;
   private request<A extends Schema.Top>(
     path: string,
     options: {
@@ -386,40 +408,59 @@ export class ApiClient {
       schema?: A;
     },
   ): Promise<Schema.Schema.Type<A> | void> {
-    const headers: Record<string, string> = {};
-    if (options.body !== undefined) {
-      headers["Content-Type"] = "application/json";
-    }
+    const headers = Match.value(options.body).pipe(
+      Match.when(undefined, () => ({})),
+      Match.orElse(() => ({ "Content-Type": "application/json" })),
+    ) satisfies Record<string, string>;
 
     const response = await this.fetchFn(this.toUrl(path), {
       method: options.method ?? "GET",
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: Match.value(options.body).pipe(
+        Match.when(undefined, () => undefined),
+        Match.orElse((value) => JSON.stringify(value)),
+      ),
     });
 
-    if (!response.ok) {
-      throw await this.toClientError(response);
-    }
+    const successfulResponse = await Match.value(response.ok).pipe(
+      Match.when(true, () => Promise.resolve(response)),
+      Match.orElse(async () => {
+        throw await this.toClientError(response);
+      }),
+    );
 
-    if (options.schema === undefined || response.status === 204) {
-      return;
-    }
-
-    const json = await response.json();
-    return await decodeSchema(options.schema, json);
+    return Option.fromUndefinedOr(options.schema).pipe(
+      Option.match({
+        onNone: () => undefined,
+        onSome: (schema) =>
+          Match.value(successfulResponse.status).pipe(
+            Match.when(204, () => undefined),
+            Match.orElse(async () => {
+              const json = await successfulResponse.json();
+              return decodeSchema(schema, json);
+            }),
+          ),
+      }),
+    );
   }
 
   private async toClientError(response: Response) {
     const fallback = new ApiClientError(response.status, response.statusText || "Request failed");
     const text = await response.text().catch(() => "");
 
-    try {
-      const json = text ? JSON.parse(text) : {};
-      const decoded = await decodeSchema(ApiError, json);
-      return new ApiClientError(response.status, decoded.error, decoded.code, decoded.details);
-    } catch {
-      return new ApiClientError(response.status, text || fallback.message);
-    }
+    return Option.fromNullishOr(text).pipe(
+      Option.filter((value) => value.length > 0),
+      Option.flatMap(parseJsonText),
+      Option.match({
+        onNone: () => new ApiClientError(response.status, text || fallback.message),
+        onSome: (json) =>
+          decodeSchema(ApiError, json).then(
+            (decoded) =>
+              new ApiClientError(response.status, decoded.error, decoded.code, decoded.details),
+            () => new ApiClientError(response.status, text || fallback.message),
+          ),
+      }),
+    );
   }
 
   private toUrl(path: string) {
@@ -444,14 +485,32 @@ export class ApiClient {
     const suffix = search.toString();
     return suffix ? `${path}?${suffix}` : path;
   }
+
+  private async requireEventStream(response: Response) {
+    return await Match.value({ ok: response.ok, body: response.body }).pipe(
+      Match.when({ ok: true, body: Match.defined }, ({ body }) => Promise.resolve(body)),
+      Match.orElse(async () => {
+        throw await this.toClientError(response);
+      }),
+    );
+  }
 }
 
 export function createApiClient(options?: ApiClientOptions) {
   return new ApiClient(options);
 }
 
+const parseJsonText = Option.liftThrowable((value: string): unknown => JSON.parse(value));
+const stringifyOptional = (value: string | number | boolean | undefined) =>
+  Match.value(value).pipe(
+    Match.when(undefined, () => undefined),
+    Match.orElse((current) => String(current)),
+  );
+
 async function decodeSchema<A extends Schema.Top>(schema: A, value: unknown) {
-  return await (Schema.decodeUnknownPromise(schema as never)(value) as Promise<Schema.Schema.Type<A>>);
+  return await (Schema.decodeUnknownPromise(schema as never)(value) as Promise<
+    Schema.Schema.Type<A>
+  >);
 }
 
 async function* parseSSE<A extends Schema.Top>(
@@ -478,7 +537,7 @@ async function* parseSSE<A extends Schema.Top>(
         if (payload === undefined) {
           continue;
         }
-        const parsed = JSON.parse(payload) as unknown;
+        const parsed = JSON.parse(payload);
         yield await decodeSchema(schema, parsed);
       }
     }
@@ -486,7 +545,7 @@ async function* parseSSE<A extends Schema.Top>(
     buffer += decoder.decode();
     const payload = getEventData(buffer);
     if (payload !== undefined) {
-      yield await decodeSchema(schema, JSON.parse(payload) as unknown);
+      yield await decodeSchema(schema, JSON.parse(payload));
     }
   } finally {
     reader.releaseLock();
