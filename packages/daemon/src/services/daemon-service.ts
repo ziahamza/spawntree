@@ -81,6 +81,7 @@ import { LogStreamer } from "../managers/log-streamer.ts";
 import { PortRegistry } from "../managers/port-registry.ts";
 import { ProxyManager } from "../managers/proxy-manager.ts";
 import { spawntreeHome } from "../state/global-state.ts";
+import type { StorageManager } from "../storage/manager.ts";
 
 const VERSION = "0.4.0";
 type DaemonError = BadRequestError | ConflictError | InternalError | NotFoundError;
@@ -128,16 +129,22 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
   stopConfigPreview(request: ConfigPreviewStopRequest): Effect.Effect<void, DaemonError>;
   saveConfig(request: ConfigSaveRequest): Effect.Effect<ConfigSaveResponse, DaemonError>;
 }>()("spawntree/DaemonService") {
-  static readonly layer = Layer.effect(
+  /**
+   * Factory that binds the service to a live `StorageManager`. The catalog
+   * is opened against `storage.client` during layer construction, so every
+   * read/write the daemon does flows through the active primary provider —
+   * which is exactly what replicators snapshot.
+   */
+  static readonly makeLayer = (storage: StorageManager) => Layer.effect(
     DaemonService,
-    Effect.sync(() => {
+    Effect.gen(function*() {
       const startedAt = Date.now();
       const portRegistry = new PortRegistry();
       const logStreamer = new LogStreamer();
       const infraManager = new InfraManager();
       const proxyManager = new ProxyManager();
       const envManager = new EnvManager(portRegistry, logStreamer, infraManager, proxyManager);
-      const catalog = new CatalogDatabase();
+      const catalog = yield* Effect.promise(() => CatalogDatabase.open(storage.client));
       const events = new DomainEvents();
       const previewSessions = new Map<string, PreviewSession>();
 
@@ -168,18 +175,22 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           catch: (error) => new InternalError({ code: "PROXY_STOP_FAILED", message: toMessage(error) }),
         }).pipe(Effect.catchTag("InternalError", () => Effect.void));
 
-        yield* Effect.sync(() => {
-          catalog.close();
-        });
+        yield* Effect.promise(() => catalog.close());
       });
 
-      const daemonInfo = Effect.sync(() => ({
-        version: VERSION,
-        pid: process.pid,
-        uptime: Math.floor((Date.now() - startedAt) / 1000),
-        repos: catalog.repoCount(),
-        activeEnvs: envManager.listEnvs().length,
-      }));
+      const daemonInfo = Effect.gen(function*() {
+        const repos = yield* Effect.tryPromise({
+          try: () => catalog.repoCount(),
+          catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+        });
+        return {
+          version: VERSION,
+          pid: process.pid,
+          uptime: Math.floor((Date.now() - startedAt) / 1000),
+          repos,
+          activeEnvs: envManager.listEnvs().length,
+        };
+      });
 
       const listEnvs = Effect.fn("DaemonService.listEnvs")(function*(repoId?: string) {
         return yield* Effect.succeed({ envs: envManager.listEnvs(repoId) });
@@ -192,7 +203,11 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           catch: mapCreateEnvError,
         });
         logDaemonMessage("env ready", { repoId: env.repoId, envId: env.envId, repoPath: env.repoPath });
-        publish({ type: "env.updated", repoId: env.repoId, envId: env.envId, repoSlug: repoSlugForRepoId(catalog, env.repoId) });
+        const slug = yield* Effect.tryPromise({
+          try: () => repoSlugForRepoId(catalog, env.repoId),
+          catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+        });
+        publish({ type: "env.updated", repoId: env.repoId, envId: env.envId, repoSlug: slug });
         return { env };
       });
 
@@ -208,11 +223,15 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           try: () => envManager.downEnv(resolved.repoId, resolved.env.envId),
           catch: (error) => mapInternalError("DOWN_ENV_FAILED", error),
         });
+        const slug = yield* Effect.tryPromise({
+          try: () => repoSlugForRepoId(catalog, resolved.repoId),
+          catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+        });
         publish({
           type: "env.updated",
           repoId: resolved.repoId,
           envId: resolved.env.envId,
-          repoSlug: repoSlugForRepoId(catalog, resolved.repoId),
+          repoSlug: slug,
         });
       });
 
@@ -224,11 +243,15 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
             try: () => envManager.deleteEnv(resolved.repoId, resolved.env.envId),
             catch: (error) => mapInternalError("DELETE_ENV_FAILED", error),
           });
+          const slug = yield* Effect.tryPromise({
+            try: () => repoSlugForRepoId(catalog, resolved.repoId),
+            catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+          });
           publish({
             type: "env.deleted",
             repoId: resolved.repoId,
             envId: resolved.env.envId,
-            repoSlug: repoSlugForRepoId(catalog, resolved.repoId),
+            repoSlug: slug,
           });
         },
       );
@@ -263,8 +286,9 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           configPath: request.configPath,
           lastSeenAt: new Date().toISOString(),
         };
-        yield* Effect.sync(() => {
-          catalog.registerRepo(repo);
+        yield* Effect.tryPromise({
+          try: () => catalog.registerRepo(repo),
+          catch: (error) => mapInternalError("CATALOG_WRITE_FAILED", error),
         });
         publish({ type: "repo.updated", repoId });
         return { repo };
@@ -337,8 +361,19 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
 
       const listWebRepos = Effect.gen(function*() {
         const listStartedAt = Date.now();
-        const repos = yield* Effect.sync(() => catalog.listRepos());
-        const enriched = repos.map((repo) => enrichRepo(repo, catalog, envManager));
+        const repos = yield* Effect.tryPromise({
+          try: () => catalog.listRepos(),
+          catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+        });
+        const enriched: Array<WebRepo> = [];
+        for (const repo of repos) {
+          enriched.push(
+            yield* Effect.tryPromise({
+              try: () => enrichRepo(repo, catalog, envManager),
+              catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+            }),
+          );
+        }
         logDaemonMessage("repo list ready", {
           repoCount: enriched.length,
           durationMs: Date.now() - listStartedAt,
@@ -349,16 +384,28 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       const getWebRepoTree = Effect.fn("DaemonService.getWebRepoTree")(function*(repoSlugValue: string) {
         const treeStartedAt = Date.now();
         const repo = yield* getRepoBySlug(catalog, repoSlugValue);
-        const clones = yield* Effect.sync(() => catalog.listClones(repo.id));
+        const clones = yield* Effect.tryPromise({
+          try: () => catalog.listClones(repo.id),
+          catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+        });
         const worktreesByClone: Record<string, Array<Worktree>> = {};
 
         for (const clone of clones) {
           yield* syncCloneWorktrees(catalog, clone);
-          worktreesByClone[clone.id] = catalog.listWorktrees(clone.id);
+          worktreesByClone[clone.id] = yield* Effect.tryPromise({
+            try: () => catalog.listWorktrees(clone.id),
+            catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+          });
         }
 
-        const refreshedClones = yield* Effect.sync(() => catalog.listClones(repo.id));
-        const envs = listRepoEnvsForRepo(catalog, envManager, repo);
+        const refreshedClones = yield* Effect.tryPromise({
+          try: () => catalog.listClones(repo.id),
+          catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+        });
+        const envs = yield* Effect.tryPromise({
+          try: () => listRepoEnvsForRepo(catalog, envManager, repo),
+          catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+        });
 
         logDaemonMessage("repo tree ready", {
           repoSlug: repoSlugValue,
@@ -378,16 +425,28 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       const getWebRepo = Effect.fn("DaemonService.getWebRepo")(function*(repoSlugValue: string) {
         const detailStartedAt = Date.now();
         const repo = yield* getRepoBySlug(catalog, repoSlugValue);
-        const clones = yield* Effect.sync(() => catalog.listClones(repo.id));
+        const clones = yield* Effect.tryPromise({
+          try: () => catalog.listClones(repo.id),
+          catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+        });
         const worktreesByClone: Record<string, Array<Worktree>> = {};
 
         for (const clone of clones) {
           yield* syncCloneWorktrees(catalog, clone);
-          worktreesByClone[clone.id] = catalog.listWorktrees(clone.id);
+          worktreesByClone[clone.id] = yield* Effect.tryPromise({
+            try: () => catalog.listWorktrees(clone.id),
+            catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+          });
         }
 
-        const refreshedClones = yield* Effect.sync(() => catalog.listClones(repo.id));
-        const envs = listRepoEnvsForRepo(catalog, envManager, repo);
+        const refreshedClones = yield* Effect.tryPromise({
+          try: () => catalog.listClones(repo.id),
+          catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+        });
+        const envs = yield* Effect.tryPromise({
+          try: () => listRepoEnvsForRepo(catalog, envManager, repo),
+          catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+        });
         const gitStartedAt = Date.now();
         const gitPaths = buildGitPathInfoMap(repo, refreshedClones, worktreesByClone, envs);
 
@@ -443,8 +502,9 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           addedAt: new Date().toISOString(),
         };
 
-        yield* Effect.sync(() => {
-          catalog.upsertWatchedPath(watchedPath);
+        yield* Effect.tryPromise({
+          try: () => catalog.upsertWatchedPath(watchedPath),
+          catch: (error) => mapInternalError("CATALOG_WRITE_FAILED", error),
         });
 
         if (probe.isGitRepo) {
@@ -471,11 +531,11 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           yield* getRepoBySlug(catalog, repoSlugValue);
           const clone = yield* getClone(catalog, cloneId);
           const gitRoot = yield* normalizeRepoPath(request.path);
-          yield* Effect.try({
-            try: () => {
+          yield* Effect.tryPromise({
+            try: async () => {
               validateGitRepo(gitRoot);
-              catalog.updateClonePath(clone.id, gitRoot);
-              syncCloneWorktreesSync(catalog, { ...clone, path: gitRoot });
+              await catalog.updateClonePath(clone.id, gitRoot);
+              await syncCloneWorktreesAsync(catalog, { ...clone, path: gitRoot });
             },
             catch: (error) => new BadRequestError({ code: "RELINK_FAILED", message: toMessage(error) }),
           });
@@ -486,10 +546,17 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       const deleteClone = Effect.fn("DaemonService.deleteClone")(function*(repoSlugValue: string, cloneId: string) {
         const repo = yield* getRepoBySlug(catalog, repoSlugValue);
         const clone = yield* getClone(catalog, cloneId);
-        const worktrees = yield* Effect.sync(() => catalog.listWorktrees(clone.id));
+        const worktrees = yield* Effect.tryPromise({
+          try: () => catalog.listWorktrees(clone.id),
+          catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+        });
         const activePaths = new Set<string>([clone.path, ...worktrees.map((worktree) => worktree.path)]);
+        const envs = yield* Effect.tryPromise({
+          try: () => listRepoEnvsForRepo(catalog, envManager, repo),
+          catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+        });
 
-        for (const env of listRepoEnvsForRepo(catalog, envManager, repo)) {
+        for (const env of envs) {
           if (!activePaths.has(env.repoPath)) {
             continue;
           }
@@ -503,8 +570,9 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           }
         }
 
-        yield* Effect.sync(() => {
-          catalog.deleteClone(cloneId);
+        yield* Effect.tryPromise({
+          try: () => catalog.deleteClone(cloneId),
+          catch: (error) => mapInternalError("CATALOG_WRITE_FAILED", error),
         });
         publish({ type: "repo.updated", repoSlug: repoSlugValue });
       });
@@ -512,11 +580,22 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       const archiveWorktree = Effect.fn("DaemonService.archiveWorktree")(
         function*(repoSlugValue: string, request: ArchiveWorktreeRequest) {
           const repo = yield* getRepoBySlug(catalog, repoSlugValue);
-          const clones = yield* Effect.sync(() => catalog.listClones(repo.id));
+          const clones = yield* Effect.tryPromise({
+            try: () => catalog.listClones(repo.id),
+            catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+          });
 
-          const ownerClone = clones.find((clone) =>
-            catalog.listWorktrees(clone.id).some((worktree) => worktree.path === request.path)
-          );
+          let ownerClone: Clone | undefined;
+          for (const clone of clones) {
+            const wts = yield* Effect.tryPromise({
+              try: () => catalog.listWorktrees(clone.id),
+              catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+            });
+            if (wts.some((worktree) => worktree.path === request.path)) {
+              ownerClone = clone;
+              break;
+            }
+          }
           if (!ownerClone) {
             return yield* new NotFoundError({ code: "WORKTREE_NOT_FOUND", message: "Worktree not found" });
           }
@@ -527,7 +606,11 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
             });
           }
 
-          if (listRepoEnvsForRepo(catalog, envManager, repo).some((env) => env.repoPath === request.path)) {
+          const repoEnvs = yield* Effect.tryPromise({
+            try: () => listRepoEnvsForRepo(catalog, envManager, repo),
+            catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
+          });
+          if (repoEnvs.some((env) => env.repoPath === request.path)) {
             return yield* new ConflictError({
               code: "WORKTREE_HAS_ENVS",
               message: "Remove environments for this worktree before archiving it.",
@@ -545,10 +628,11 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
             });
           }
 
-          yield* Effect.try({
-            try: () => {
+          const archiveOwner = ownerClone;
+          yield* Effect.tryPromise({
+            try: async () => {
               removeGitWorktree(request.path);
-              syncCloneWorktreesSync(catalog, ownerClone);
+              await syncCloneWorktreesAsync(catalog, archiveOwner);
             },
             catch: (error) => new InternalError({ code: "WORKTREE_ARCHIVE_FAILED", message: toMessage(error) }),
           });
@@ -655,11 +739,14 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           );
         mkdirSync(resolve(configPath, ".."), { recursive: true });
         writeFileSync(configPath, request.content, "utf8");
-        catalog.registerRepo({
-          repoId: deriveRepoId(gitRoot),
-          repoPath: gitRoot,
-          configPath,
-          lastSeenAt: new Date().toISOString(),
+        yield* Effect.tryPromise({
+          try: () => catalog.registerRepo({
+            repoId: deriveRepoId(gitRoot),
+            repoPath: gitRoot,
+            configPath,
+            lastSeenAt: new Date().toISOString(),
+          }),
+          catch: (error) => mapInternalError("CATALOG_WRITE_FAILED", error),
         });
         publish({ type: "repo.updated", repoId: deriveRepoId(gitRoot) });
         return { ok: true, configPath, saveMode };
@@ -698,12 +785,17 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
   );
 }
 
-function listRepoEnvsForRepo(catalog: CatalogDatabase, envManager: EnvManager, repo: Repo) {
-  const clones = catalog.listClones(repo.id);
+async function listRepoEnvsForRepo(
+  catalog: CatalogDatabase,
+  envManager: EnvManager,
+  repo: Repo,
+): Promise<Array<EnvInfo>> {
+  const clones = await catalog.listClones(repo.id);
   const paths = new Set<string>();
   for (const clone of clones) {
     paths.add(clone.path);
-    for (const worktree of catalog.listWorktrees(clone.id)) {
+    const worktrees = await catalog.listWorktrees(clone.id);
+    for (const worktree of worktrees) {
       paths.add(worktree.path);
     }
   }
@@ -746,9 +838,9 @@ function buildGitPathInfoMap(
   return gitPaths;
 }
 
-function enrichRepo(repo: Repo, catalog: CatalogDatabase, envManager: EnvManager): WebRepo {
-  const clones = catalog.listClones(repo.id);
-  const envs = listRepoEnvsForRepo(catalog, envManager, repo);
+async function enrichRepo(repo: Repo, catalog: CatalogDatabase, envManager: EnvManager): Promise<WebRepo> {
+  const clones = await catalog.listClones(repo.id);
+  const envs = await listRepoEnvsForRepo(catalog, envManager, repo);
   let overallStatus: WebRepo["overallStatus"] = "offline";
   let activeEnvCount = 0;
 
@@ -783,8 +875,8 @@ function enrichRepo(repo: Repo, catalog: CatalogDatabase, envManager: EnvManager
   };
 }
 
-function repoSlugForRepoId(catalog: CatalogDatabase, repoId: string) {
-  return catalog.getRepo(repoId)?.slug;
+async function repoSlugForRepoId(catalog: CatalogDatabase, repoId: string): Promise<string | undefined> {
+  return (await catalog.getRepo(repoId))?.slug;
 }
 
 function mapCreateEnvError(error: unknown) {
@@ -865,42 +957,46 @@ function sseStream(events: (signal: AbortSignal) => AsyncIterable<DomainEvent>) 
   });
 }
 
-function syncCloneWorktreesSync(catalog: CatalogDatabase, clone: Clone) {
+async function syncCloneWorktreesAsync(catalog: CatalogDatabase, clone: Clone): Promise<void> {
   if (!existsSync(clone.path)) {
-    catalog.updateCloneStatus(clone.id, "missing");
-    catalog.replaceWorktrees(clone.id, []);
+    await catalog.updateCloneStatus(clone.id, "missing");
+    await catalog.replaceWorktrees(clone.id, []);
     return;
   }
-  catalog.updateCloneStatus(clone.id, "active");
-  catalog.replaceWorktrees(clone.id, discoverWorktrees(clone.path, clone.id));
+  await catalog.updateCloneStatus(clone.id, "active");
+  await catalog.replaceWorktrees(clone.id, discoverWorktrees(clone.path, clone.id));
 }
 
 function syncCloneWorktrees(catalog: CatalogDatabase, clone: Clone) {
-  return Effect.sync(() => {
-    syncCloneWorktreesSync(catalog, clone);
+  return Effect.tryPromise({
+    try: () => syncCloneWorktreesAsync(catalog, clone),
+    catch: (error) => mapInternalError("CATALOG_WRITE_FAILED", error),
   });
 }
 
 function syncWatchedPath(catalog: CatalogDatabase, watchedPath: WatchedPath) {
-  return Effect.sync(() => {
-    const probe = probePath(watchedPath.path);
-    if (!probe.exists) {
-      throw new Error("path not found");
-    }
+  return Effect.tryPromise({
+    try: async () => {
+      const probe = probePath(watchedPath.path);
+      if (!probe.exists) {
+        throw new Error("path not found");
+      }
 
-    let imported = 0;
-    if (probe.isGitRepo) {
-      importGitRepoPathSync(catalog, probe.path, undefined, false);
-      imported += 1;
-    }
-    if (!probe.isGitRepo && watchedPath.scanChildren) {
-      for (const repoPath of findImmediateGitRepos(watchedPath.path)) {
-        importGitRepoPathSync(catalog, repoPath, undefined, false);
+      let imported = 0;
+      if (probe.isGitRepo) {
+        await importGitRepoPathAsync(catalog, probe.path, undefined, false);
         imported += 1;
       }
-    }
-    catalog.updateWatchedPathScan(watchedPath.path, new Date().toISOString(), "");
-    return imported;
+      if (!probe.isGitRepo && watchedPath.scanChildren) {
+        for (const repoPath of findImmediateGitRepos(watchedPath.path)) {
+          await importGitRepoPathAsync(catalog, repoPath, undefined, false);
+          imported += 1;
+        }
+      }
+      await catalog.updateWatchedPathScan(watchedPath.path, new Date().toISOString(), "");
+      return imported;
+    },
+    catch: (error) => mapInternalError("WATCHED_PATH_SYNC_FAILED", error),
   });
 }
 
@@ -910,15 +1006,18 @@ function importGitRepoPath(
   remoteName: string | undefined,
   requireRemotePick: boolean,
 ) {
-  return Effect.sync(() => importGitRepoPathSync(catalog, gitRoot, remoteName, requireRemotePick));
+  return Effect.tryPromise({
+    try: () => importGitRepoPathAsync(catalog, gitRoot, remoteName, requireRemotePick),
+    catch: (error) => mapInternalError("IMPORT_GIT_REPO_FAILED", error),
+  });
 }
 
-function importGitRepoPathSync(
+async function importGitRepoPathAsync(
   catalog: CatalogDatabase,
   gitRoot: string,
   remoteName: string | undefined,
   requireRemotePick: boolean,
-) {
+): Promise<{ repo: Repo; clone: Clone }> {
   const { info: detectedInfo, remotes } = detectRepoInfo(gitRoot);
   let info = detectedInfo;
 
@@ -960,7 +1059,7 @@ function importGitRepoPathSync(
     };
   }
 
-  catalog.upsertRepo(repo);
+  await catalog.upsertRepo(repo);
   const clone: Clone = {
     id: deriveCloneId(gitRoot),
     repoId: repo.id,
@@ -969,8 +1068,8 @@ function importGitRepoPathSync(
     lastSeenAt: "",
     registeredAt: "",
   };
-  catalog.upsertClone(clone);
-  syncCloneWorktreesSync(catalog, clone);
+  await catalog.upsertClone(clone);
+  await syncCloneWorktreesAsync(catalog, clone);
 
   return { repo, clone };
 }
@@ -983,52 +1082,61 @@ function resolveRepoEnv(
   envId: string,
   repoPath?: string,
 ) {
-  return Effect.sync(() => {
-    try {
-      const env = envManager.getEnv(repoRef, envId);
-      if (!repoPath || env.repoPath === repoPath) {
-        return { env, repoId: repoRef };
+  return Effect.tryPromise({
+    try: async () => {
+      try {
+        const env = envManager.getEnv(repoRef, envId);
+        if (!repoPath || env.repoPath === repoPath) {
+          return { env, repoId: repoRef };
+        }
+      } catch {
+        // fall through
       }
-    } catch {
-      // fall through
-    }
 
-    const repo = catalog.getRepoBySlug(repoRef) ?? catalog.getRepo(repoRef);
-    if (repo) {
-      const envs = listRepoEnvsForRepo(catalog, envManager, repo);
-      const found = envs.find((env) => env.envId === envId && (!repoPath || env.repoPath === repoPath));
-      if (found) {
-        return { env: found, repoId: found.repoId };
+      const repo = (await catalog.getRepoBySlug(repoRef)) ?? (await catalog.getRepo(repoRef));
+      if (repo) {
+        const envs = await listRepoEnvsForRepo(catalog, envManager, repo);
+        const found = envs.find((env) => env.envId === envId && (!repoPath || env.repoPath === repoPath));
+        if (found) {
+          return { env: found, repoId: found.repoId };
+        }
       }
-    }
 
-    for (const session of previewSessions.values()) {
-      if (session.envId === envId && (!repoPath || session.repoPath === repoPath)) {
-        return { env: session.env, repoId: session.repoId };
+      for (const session of previewSessions.values()) {
+        if (session.envId === envId && (!repoPath || session.repoPath === repoPath)) {
+          return { env: session.env, repoId: session.repoId };
+        }
       }
-    }
 
-    throw new NotFoundError({ code: "ENV_NOT_FOUND", message: `Environment "${envId}" not found` });
+      throw new NotFoundError({ code: "ENV_NOT_FOUND", message: `Environment "${envId}" not found` });
+    },
+    catch: (error) => mapInternalError("RESOLVE_REPO_ENV_FAILED", error),
   });
 }
 
 function getRepoBySlug(catalog: CatalogDatabase, slug: string) {
-  return Effect.sync(() => {
-    const repo = catalog.getRepoBySlug(slug);
-    if (!repo) {
-      throw new NotFoundError({ code: "REPO_NOT_FOUND", message: `Repo "${slug}" not found` });
-    }
-    return repo;
+  return Effect.tryPromise({
+    try: async () => {
+      const repo = await catalog.getRepoBySlug(slug);
+      if (!repo) {
+        throw new NotFoundError({ code: "REPO_NOT_FOUND", message: `Repo "${slug}" not found` });
+      }
+      return repo;
+    },
+    catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
   });
 }
 
 function getClone(catalog: CatalogDatabase, cloneId: string) {
-  return Effect.sync(() => {
-    const clone = catalog.getClone(cloneId);
-    if (!clone) {
-      throw new NotFoundError({ code: "CLONE_NOT_FOUND", message: `Clone "${cloneId}" not found` });
-    }
-    return clone;
+  return Effect.tryPromise({
+    try: async () => {
+      const clone = await catalog.getClone(cloneId);
+      if (!clone) {
+        throw new NotFoundError({ code: "CLONE_NOT_FOUND", message: `Clone "${cloneId}" not found` });
+      }
+      return clone;
+    },
+    catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
   });
 }
 

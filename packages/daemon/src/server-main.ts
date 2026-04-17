@@ -13,16 +13,18 @@ async function main() {
   saveDaemonPid(process.pid);
 
   const port = Number.parseInt(process.env.SPAWNTREE_PORT ?? "2222", 10) || 2222;
-  const runtime = ManagedRuntime.make(DaemonService.layer, {
-    memoMap: Layer.makeMemoMapUnsafe(),
-  });
 
-  // StorageManager boots alongside DaemonService. For now it's wired up but
-  // not yet the source of truth for catalog/sessions — that migration is in
-  // a follow-up PR. What IS live: /api/v1/storage/* admin routes and the
-  // replicator loop (if configured in ~/.spawntree/storage.json).
+  // StorageManager is the source of truth for the daemon's libSQL client.
+  // Boot it BEFORE the DaemonService so the catalog can open against the
+  // live primary (local, turso-embedded, or whatever the user configured in
+  // ~/.spawntree/storage.json). This way the replicator loop snapshots the
+  // real catalog DB, not an empty sidecar.
   const storage = new StorageManager({ dataDir: spawntreeHome() });
   await storage.start();
+
+  const runtime = ManagedRuntime.make(DaemonService.makeLayer(storage), {
+    memoMap: Layer.makeMemoMapUnsafe(),
+  });
 
   const app = createApp(runtime, { storage });
   const listener = getRequestListener(app.fetch);
