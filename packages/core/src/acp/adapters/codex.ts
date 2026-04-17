@@ -134,12 +134,19 @@ export class CodexACPAdapter implements ACPAdapter {
         const delta = p["delta"] as string | undefined;
         const turnId = (p["turnId"] as string) ?? "";
         if (delta) {
+          // Emit the raw turnId. Earlier versions appended `-agent` here
+          // to match the suffixed IDs `mapCodexThreadDetail` produces,
+          // but that made the live SSE stream internally inconsistent:
+          // `turn_started` and `turn_completed` carried the raw id
+          // while `message_delta` carried `${id}-agent`, breaking any
+          // client that grouped events by turnId. The detail API and
+          // the live stream are separate surfaces; clients shouldn't
+          // have to reconcile suffixes between them. Aligns with
+          // ClaudeCodeAdapter which emits the raw turnId throughout.
           this.emitEvent({
             type: "message_delta",
             sessionId: threadId,
-            // Match the `-agent` suffix applied in mapCodexThreadDetail so
-            // downstream consumers keyed by mapped turn.id resolve correctly.
-            turnId: turnId ? `${turnId}-agent` : turnId,
+            turnId,
             text: delta,
           });
         }

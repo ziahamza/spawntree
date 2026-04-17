@@ -89,3 +89,42 @@ describe("adapter start race", () => {
 // real test signal).
 void spawn;
 void JsonRpcTransport;
+
+describe("Codex adapter turnId consistency", () => {
+  it("emits the raw turnId (no -agent suffix) on message_delta events", () => {
+    // Regression guard for the final Devin finding: message_delta,
+    // turn_started, and turn_completed must all carry the same turnId
+    // so SSE consumers can group events by turn.
+    const adapter = new CodexACPAdapter({ clientName: "test" });
+
+    const events: Array<{ type: string; turnId?: string }> = [];
+    adapter.onSessionEvent((event) => {
+      if (
+        event.type === "turn_started"
+        || event.type === "message_delta"
+        || event.type === "turn_completed"
+      ) {
+        events.push({ type: event.type, turnId: event.turnId });
+      }
+    });
+
+    const handle = (adapter as unknown as {
+      handleNotification: (method: string, params: unknown) => void;
+    }).handleNotification.bind(adapter);
+
+    handle("turn/started", { threadId: "sess-1", turn: { id: "turn-7" } });
+    handle("item/agentMessage/delta", {
+      threadId: "sess-1",
+      turnId: "turn-7",
+      delta: "hi",
+    });
+    handle("turn/completed", {
+      threadId: "sess-1",
+      turn: { id: "turn-7", status: "completed" },
+    });
+
+    const turnIds = events.map((e) => e.turnId);
+    expect(new Set(turnIds).size).toBe(1);
+    expect(turnIds[0]).toBe("turn-7");
+  });
+});
