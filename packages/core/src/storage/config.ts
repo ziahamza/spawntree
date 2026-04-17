@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { DEFAULT_STORAGE_CONFIG, StorageConfig } from "./types.ts";
 
@@ -20,5 +20,15 @@ export function loadStorageConfig(path: string): StorageConfig {
 export function saveStorageConfig(path: string, config: StorageConfig): void {
   mkdirSync(dirname(path), { recursive: true });
   const encoded = Schema.encodeUnknownSync(StorageConfig)(config);
-  writeFileSync(path, JSON.stringify(encoded, null, 2) + "\n", "utf-8");
+  writeFileSync(path, JSON.stringify(encoded, null, 2) + "\n", {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+  // writeFileSync's `mode` only applies on file creation. Re-chmod on every
+  // save so rotating the config doesn't drift to world-readable.
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    // On non-POSIX filesystems chmod is a no-op; ignore.
+  }
 }

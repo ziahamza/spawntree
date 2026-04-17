@@ -1,113 +1,170 @@
 # Storage Providers — Handoff Notes
 
-This PR scaffolds the storage provider system for the spawntree daemon.
-It establishes the architecture, ships three working providers (`local`,
-`turso-embedded`, `s3-snapshot`), and exposes runtime admin routes at
-`/api/v1/storage/*`. The DaemonService's existing `CatalogDatabase` is
-**not** migrated to the new layer in this PR — that's a follow-up so the
-two concerns land separately.
+This PR lands the storage provider system for the spawntree daemon. It
+establishes the architecture, ships three working providers (`local`,
+`turso-embedded`, `s3-snapshot`), exposes runtime admin routes at
+`/api/v1/storage/*` with probe and hot-swap support, and is covered by
+unit + integration tests (15 StorageManager tests, 4 MinIO integration
+tests gated on a running backend).
+
+The daemon's existing `CatalogDatabase` still talks to its own
+`better-sqlite3` handle — that migration is deliberately deferred to a
+dedicated follow-up PR (see the issue linked at the bottom).
 
 ## What's shipped
 
 - `spawntree-core/storage`
-  - `types.ts` — `PrimaryStorageProvider`, `ReplicatorProvider`, `StorageRegistry`, `ProviderStatus`, config schema
-  - `registry.ts` — provider lookup/registration
-  - `providers/local.ts` — default, plain libSQL file (covered by tests)
-  - `providers/turso-embedded.ts` — libSQL embedded replica with `syncUrl`
-  - `providers/s3-snapshot.ts` — VACUUM INTO + tmp-key upload + atomic CopyObject
-  - `config.ts` — persisted config load/save with Effect Schema validation
+  - `types.ts` — `PrimaryStorageProvider`, `ReplicatorProvider`, `StorageRegistry`, `ProviderStatus`, config schema. `ReplicatorHandle` now has optional `pause()`/`resume()`.
+  - `registry.ts` — provider lookup/registration.
+  - `providers/local.ts` — default, plain libSQL file.
+  - `providers/turso-embedded.ts` — libSQL embedded replica with `syncUrl`.
+  - `providers/s3-snapshot.ts` — VACUUM INTO + atomic CopyObject upload. Now exposes
+    `lastOkBytes`, `lastEtag`, `paused`, `fatal` in status; classifies S3 errors;
+    pauses cleanly during primary hot-swap; never loads the snapshot file into
+    memory for cleanup (Devin-fixed).
+  - `config.ts` — persisted config load/save with Effect Schema validation.
+    Writes now chmod to `0600` so credentials aren't world-readable.
 - `spawntree-daemon`
-  - `storage/manager.ts` — orchestrates registry + persisted config + active connections
-  - `routes/storage.ts` — HTTP admin endpoints
-  - `server-main.ts` boots a `StorageManager` and shuts it down on SIGINT/SIGTERM
-  - `server.ts` mounts storage routes conditionally
-- `packages/core/tests/storage.test.ts` — registry + local provider + config persistence
+  - `storage/manager.ts` — orchestrates registry + persisted config + active
+    connections. Mutations are serialized via an internal lock. Hot-swap with
+    data migration (and rollback on failure). Exposes `probePrimary` /
+    `probeReplicator` for dry-run validation.
+  - `routes/storage.ts` — HTTP admin endpoints including new
+    `POST /primary/probe` and `POST /replicators/probe`. All mutations are gated
+    behind a localhost-origin check (opt out via `SPAWNTREE_STORAGE_TRUST_REMOTE=1`).
+  - `server-main.ts` boots a `StorageManager` and shuts it down on SIGINT/SIGTERM.
+  - `server.ts` mounts storage routes conditionally.
+- Tests
+  - `packages/core/tests/storage.test.ts` — registry + local provider + config
+    persistence (6 tests).
+  - `packages/daemon/tests/storage-manager.test.ts` — start/stop, config
+    persistence + perms, hot-swap migration (happy path, no-op, rollback on
+    failure), concurrency (overlapping swaps, migrating flag), probes,
+    replicator add/remove, redaction (15 tests).
+  - `packages/core/tests/s3-replicator-minio.test.ts` — integration against a
+    running MinIO (4 tests, skipped if `SPAWNTREE_S3_TEST_ENDPOINT` is unset).
+    Verifies the Devin CopySource regression is fixed, status info fields are
+    populated, bad credentials surface as `fatal`, and `pause()` truly drains.
 
 ## What's NOT done (follow-up work for the spawntree agent)
 
 ### 1. Migrate `CatalogDatabase` to use the StorageManager's libSQL client
 
-The daemon's existing catalog uses `better-sqlite3` directly at `packages/daemon/src/catalog/database.ts`. That code is untouched. To actually benefit from the storage providers (Turso sync, S3 snapshots), the catalog needs to read/write through `manager.client` instead of its own `better-sqlite3` handle.
+**Deferred to a dedicated PR — see tracking issue.**
 
-Steps:
-1. Introduce Drizzle schema in a new `packages/core/src/db/schema.ts` covering repos, clones, worktrees, registered paths, settings, plus the session tables from PR #14 once that merges.
-2. Replace `CatalogDatabase`'s raw SQL with Drizzle queries against the `StorageManager`'s client.
-3. Wire migration execution: on daemon boot, run `drizzle-kit migrate` (or equivalent programmatic migrator) against `manager.client` before any read/write.
-4. Remove `better-sqlite3` as a dep once `CatalogDatabase` no longer uses it.
+The daemon's existing catalog uses `better-sqlite3` synchronously at
+`packages/daemon/src/catalog/database.ts`. That code is untouched so the
+daemon's behavior doesn't regress while we land the provider infrastructure.
 
-### 2. Hot-swap primary with data migration
+The migration is larger than it first appears:
+- 31 direct `catalog.*` call sites in `packages/daemon/src/services/daemon-service.ts`.
+- 8+ helper functions that take `catalog` as a parameter and use it
+  synchronously (`syncCloneWorktreesSync`, `enrichRepo`, `listRepoEnvsForRepo`,
+  `repoSlugForRepoId`, `importGitRepoPathSync`, `buildGitPathInfoMap`,
+  `syncWatchedPath`, `listRepoEnvsForRepo`).
+- `CatalogDatabase` methods are all synchronous (`.prepare(...).get()`); libSQL
+  is async-only, so the entire surface becomes `Promise`-returning.
+- Every caller has to move from `Effect.sync` to `Effect.tryPromise`.
+- No tests exist for `daemon-service.ts` today, which makes the async conversion
+  risky without first adding regression coverage.
 
-`StorageManager.setPrimary()` currently shuts down the old primary and opens a new one **without copying data**. This is explicitly flagged in a `TODO` comment. Users who swap `local` → `turso-embedded` would lose everything.
+Recommended sequence for the follow-up PR:
+1. Introduce Drizzle schema in `packages/core/src/db/schema.ts` covering the
+   current catalog tables (repos, clones, worktrees, watched_paths,
+   registered_repos) plus any session tables once PR #14 merges.
+2. Add a programmatic migrator (e.g. Drizzle's `migrate` helper) run at
+   `StorageManager.start()` time. Pick either runtime or `drizzle-kit migrate`
+   as a daemon boot step — be consistent.
+3. Rewrite `CatalogDatabase` internals in terms of Drizzle queries against
+   `manager.client`. Keep the external method surface stable (just async).
+4. Update `daemon-service.ts` call sites and helper signatures to await.
+5. Remove `better-sqlite3` + `@types/better-sqlite3` from the daemon's
+   `package.json`.
+6. Add smoke-level tests for the daemon service that exercise the catalog
+   code paths — the lack of coverage is the main reason this was deferred.
 
-Design:
-- On swap, open the new primary WITHOUT closing the old one.
-- Run the canonical schema migrations on the new primary.
-- Copy all rows from old → new (table-by-table; both are libSQL so batched `INSERT`s are fine).
-- Swap the active reference.
-- Close the old primary.
-- Persist config.
+### 2. Admin auth: device credential layer
 
-If any step fails, close the new primary and keep the old one active. Return a descriptive 500 from the API.
+Currently the storage admin routes are gated by a loopback origin check (new
+in this PR) plus the opt-out env var. That stops drive-by CSRF but doesn't
+stop a local attacker who can reach 127.0.0.1 (e.g. another user on the same
+machine). Before spawntree 1.0 we want:
+- Device credential: shared secret at `~/.spawntree/daemon.key`, checked as a
+  `Bearer` header on mutations.
+- Configurable via the daemon config model (on by default in production
+  builds, opt-out for dev).
 
-Writes during migration: block them at the manager level with a short "migrating" flag; the daemon's catalog operations should get a `STORAGE_MIGRATING` error. Alternatively, drain in-flight requests first.
+### 3. Credential encryption at rest
 
-### 3. Provider validation & probe endpoint
+`storage.json` now has `0600` perms, which matches `.env` conventions and is
+acceptable for v1. For defence-in-depth we should encrypt the secret fields
+(`authToken`, `secretAccessKey`, `accessKeyId`, `password`) with a
+system-keychain-backed key (macOS Keychain / libsecret on Linux / DPAPI on
+Windows). This is a post-1.0 item.
 
-Right now, `PUT /api/v1/storage/primary` with an invalid config either throws on `create()` (bubbles up as a 500) or succeeds with a half-working primary. We should add:
+### 4. Additional providers
 
-- `POST /api/v1/storage/primary/probe` — validate config + attempt a test connection WITHOUT committing. Returns `{ ok: true }` or `{ ok: false, error }`.
-- Same for replicators: `POST /api/v1/storage/replicators/probe`.
+The `ReplicatorProvider` interface is finalized enough that third parties can
+register their own. Natural next-steps to ship in-tree:
+- **Litestream-style WAL streaming** primary/replicator. The current
+  `s3-snapshot` is the dumb full-file approach — continuous WAL replication
+  is materially better for large DBs.
+- **Postgres read-replica** replicator: mirror rows into a PG schema so
+  read-only consumers can query catalog/session state from elsewhere.
+- **Turso read-replica** replicator: complement the embedded primary with a
+  push-only read replica for multi-host setups.
 
-This is what UIs will call to show "Test connection" before saving.
+### 5. Auto-load providers from env vars at boot
 
-### 4. Concurrency-safe S3 replicator
+Today the user has to `POST /api/v1/storage/replicators` after boot to
+activate backup. For the "zero config → R2 backup in 5 minutes" flow we
+want:
+- `SPAWNTREE_STORAGE_PRIMARY=turso-embedded` + related env vars to pre-seed
+  the primary.
+- `SPAWNTREE_STORAGE_REPLICATORS=s3-prod` + per-replicator env groups to
+  pre-seed replicators.
+- Boot-time reconciliation with whatever's already in `storage.json`.
 
-The current s3-snapshot replicator:
-- Uses `VACUUM INTO` which locks the primary DB briefly (okay for SQLite).
-- Runs serially via `inFlight` guard — won't overlap with itself.
-- But doesn't coordinate with other replicators or with primary hot-swap.
+### 6. Streaming S3 upload
 
-Before calling this production-ready:
-- Ensure the replicator pauses (or yields) during primary swap.
-- Add a `lastOkBytes` / `objectEtag` to status.
-- Consider streaming the snapshot directly to S3 multipart upload without the intermediate temp file (for large DBs).
-- Error classification: transient (retry) vs fatal (surface to status).
-
-### 5. Tests
-
-- Integration test for `StorageManager` end-to-end: boot, register replicator via API, trigger, verify S3 object exists (use a local MinIO or aws-sdk mock).
-- Integration test for Turso: use `@libsql/embedded` in-memory mode or a local turbo test server.
-- Property test for config persistence with arbitrary provider configs.
-
-### 6. Security hardening
-
-The storage admin routes are currently unauthenticated — consistent with the rest of the daemon API, which assumes localhost-only. Before this ships in a deployed/remote context, the admin routes MUST be gated:
-
-- Device credential header check (per the "daemon uses local device credential" design in the integration discussion).
-- Origin restriction: only accept requests from `127.0.0.1` / `::1`.
-- Secret redaction is already in place for `GET /api/v1/storage`, but double-check: `authToken`, `secretAccessKey`, `accessKeyId`, `password`.
+The current `s3-snapshot` writes VACUUM output to a temp file then streams
+that file to S3. For large DBs it'd be better to pipe VACUUM output directly
+into a multipart upload. Requires libSQL to expose a streaming VACUUM INTO,
+which may need custom work.
 
 ## Why this is net-positive for spawntree
 
-Beyond the gitenv integration story:
+Beyond any specific downstream integration:
 
-1. **Disaster recovery.** Every spawntree user now has a trivial path to backing up their session history and repo catalog. Set `SPAWNTREE_STORAGE_REPLICATOR=s3-snapshot` with creds, done.
-2. **Multi-machine workflows.** Teams can point multiple daemons at the same Turso DB (one primary + read replicas) and get shared session visibility.
-3. **Self-hosted friendly.** `s3-snapshot` works against MinIO, Garage, Ceph, any S3-compatible store. No forced cloud dependency.
-4. **Clean extension point.** Third-party providers (dropbox sync, Hetzner Storage Box over SFTP, Postgres replica, whatever) drop in by calling `registry.registerReplicator(...)`. No spawntree core changes needed.
-5. **Clear separation of concerns.** Primary vs replicator isolates "where does my data live" from "who else has a copy."
+1. **Disaster recovery.** Any spawntree user with an S3-compatible backend
+   can set up off-host backup with one `POST /api/v1/storage/replicators`.
+2. **Multi-machine workflows.** Teams can point multiple daemons at the same
+   Turso DB (one primary + read replicas) and get shared visibility.
+3. **Self-hosted friendly.** The default `forcePathStyle: true` + `region: "auto"`
+   shape works against MinIO, Garage, Ceph, Backblaze B2, R2. Verified end-to-end
+   against a live MinIO container.
+4. **Clean extension point.** Third parties drop in primaries/replicators via
+   `registry.registerPrimary/Replicator` with no spawntree core changes.
+5. **Separation of concerns.** Primary vs replicator isolates "where does my
+   data live" from "who else has a copy."
 
 ## API surface summary
 
 ```
 GET    /api/v1/storage
-       → { primary: {id, config, status}, replicators: [...], availableProviders: {...} }
+       → { primary: {id, config, status}, replicators: [...], availableProviders, migrating }
 
-PUT    /api/v1/storage/primary          body: { id, config }
-       → { primary, replicators, availableProviders }
+PUT    /api/v1/storage/primary                       body: { id, config }
+       → { primary, replicators, availableProviders, migrating } — migrates data on swap
 
-POST   /api/v1/storage/replicators      body: { rid, id, config }
-       → 201 { primary, replicators, availableProviders }
+POST   /api/v1/storage/primary/probe                 body: { id, config }
+       → { ok: true, info } | { ok: false, error }
+
+POST   /api/v1/storage/replicators                   body: { rid, id, config }
+       → 201 { primary, replicators, availableProviders, migrating }
+
+POST   /api/v1/storage/replicators/probe             body: { id, config }
+       → { ok: true, info } | { ok: false, error }
 
 POST   /api/v1/storage/replicators/:rid/trigger
        → { status: ProviderStatus }
@@ -116,9 +173,13 @@ DELETE /api/v1/storage/replicators/:rid
        → { ok: true }
 ```
 
+All mutations reject non-loopback origins with `403 STORAGE_REMOTE_DENIED`
+unless `SPAWNTREE_STORAGE_TRUST_REMOTE=1` is set.
+
 ## Config file
 
-Lives at `~/.spawntree/storage.json`. Auto-created on first mutation. Schema:
+Lives at `~/.spawntree/storage.json` with `0600` perms. Auto-created on first
+mutation. Schema:
 
 ```json
 {
@@ -140,8 +201,19 @@ Lives at `~/.spawntree/storage.json`. Auto-created on first mutation. Schema:
 }
 ```
 
-## Open design questions
+## Running the MinIO integration tests locally
 
-- Should `PUT /api/v1/storage/primary` require a `confirm: "yes-really-swap"` body field until migration is implemented? (Current PR does not.)
-- Config file stored in plaintext includes credentials. Should we encrypt with a local machine key? System keychain (macOS Keychain / libsecret)? Leaving as plaintext for v1 with 0600 perms feels acceptable, matching `.env` conventions. Flag if you disagree.
-- `s3-snapshot` uses `VACUUM INTO` which briefly write-locks the DB. Fine for small catalogs, potentially disruptive for large session histories. An incremental alternative is worth prototyping after v1.
+```sh
+docker run -d --rm --name mio -p 9100:9000 \
+  -e MINIO_ROOT_USER=testkey -e MINIO_ROOT_PASSWORD=testsecret \
+  minio/minio server /data
+docker run --rm --network host --entrypoint sh minio/mc -c \
+  "mc alias set local http://127.0.0.1:9100 testkey testsecret && \
+   mc mb --ignore-existing local/spawntree-test"
+
+SPAWNTREE_S3_TEST_ENDPOINT=http://127.0.0.1:9100 \
+SPAWNTREE_S3_TEST_BUCKET=spawntree-test \
+SPAWNTREE_S3_TEST_ACCESS_KEY=testkey \
+SPAWNTREE_S3_TEST_SECRET_KEY=testsecret \
+  pnpm --filter spawntree-core test
+```

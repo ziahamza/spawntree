@@ -1,7 +1,7 @@
 import { createClient, type Client } from "@libsql/client";
 import { Schema } from "effect";
 import { resolve } from "node:path";
-import type { PrimaryStorageHandle, PrimaryStorageProvider, ProviderStatus, StorageContext } from "../types.ts";
+import type { PrimaryStorageHandle, PrimaryStorageProvider, ProviderStatus } from "../types.ts";
 
 /**
  * Turso-backed primary. Uses `@libsql/client` in embedded-replica + offline

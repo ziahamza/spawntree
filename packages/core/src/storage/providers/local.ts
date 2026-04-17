@@ -1,7 +1,7 @@
 import { createClient, type Client } from "@libsql/client";
 import { Schema } from "effect";
 import { resolve } from "node:path";
-import type { PrimaryStorageHandle, PrimaryStorageProvider, ProviderStatus, StorageContext } from "../types.ts";
+import type { PrimaryStorageHandle, PrimaryStorageProvider, ProviderStatus } from "../types.ts";
 
 /**
  * The default primary provider. Opens a plain local SQLite file via libSQL.

@@ -76,6 +76,17 @@ export interface ReplicatorHandle {
   status(): Promise<ProviderStatus>;
   /** Run one replication pass immediately. Resolves when done (success or failure). */
   trigger(): Promise<ProviderStatus>;
+  /**
+   * Temporarily suspend the background loop and wait for any in-flight run
+   * to drain. Safe to call repeatedly. Optional — providers that don't have
+   * a background loop (pure on-demand replicators) can omit it.
+   *
+   * Used by `StorageManager` to quiesce replicators while a primary swap
+   * is in progress so the replicator doesn't VACUUM the old DB mid-migration.
+   */
+  pause?(): Promise<void>;
+  /** Resume the background loop after a pause. Optional; pairs with `pause`. */
+  resume?(): Promise<void>;
   /** Stop the background loop and release resources. */
   stop(): Promise<void>;
 }
