@@ -1,6 +1,7 @@
 ---
 "spawntree-core": minor
 "spawntree-daemon": minor
+"spawntree-host-server": minor
 "spawntree": patch
 ---
 
@@ -28,4 +29,12 @@ first-class sessions.
   servers would reject). `SessionManager.createSession` now subscribes to
   adapter events BEFORE calling `adapter.createSession` so events emitted during
   startup aren't dropped. `listSessions` also subscribes to each adapter it
-  successfully queries.
+  successfully queries. `decodeBody` moved inside try/catch so invalid POST
+  bodies map to HTTP 400. `registerAdapter` unsubscribes + shuts down the old
+  instance when replacing. Adapter `start()` uses a `startPromise` mutex so
+  concurrent callers don't race the `initialize()` handshake. Host-server
+  escapes HTML on its landing page and preserves full query strings on
+  proxied URLs.
+- New installable package `spawntree-host-server` (at `packages/host-server/`)
+  exposes a `bin` so teams can `npm i -g` or `npx spawntree-host-server` to
+  run the federation server without copying source.

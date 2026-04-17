@@ -51,16 +51,6 @@ importers:
         specifier: ^3.1.0
         version: 3.2.4(@types/node@25.5.0)(jiti@2.6.1)(jsdom@29.0.1)(lightningcss@1.32.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.3)
 
-  examples/host-server:
-    dependencies:
-      better-sqlite3:
-        specifier: ^12.4.1
-        version: 12.8.0
-    devDependencies:
-      '@types/better-sqlite3':
-        specifier: ^7.6.12
-        version: 7.6.13
-
   packages/cli:
     dependencies:
       commander:
@@ -132,6 +122,22 @@ importers:
       '@types/dockerode':
         specifier: ^3.3.39
         version: 3.3.47
+
+  packages/host-server:
+    dependencies:
+      better-sqlite3:
+        specifier: ^12.4.1
+        version: 12.8.0
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
+      '@types/node':
+        specifier: ^25.5.0
+        version: 25.5.0
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
 
   packages/web:
     dependencies:

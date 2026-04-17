@@ -9,7 +9,7 @@ import { setApiBaseUrl } from "./api";
  *   1. The same-origin local daemon (the default — it's what's serving
  *      this bundle). `activeHost === null`.
  *   2. A remote spawntree daemon, proxied through a federation host
- *      server (see `examples/host-server`). `activeHost === <name>`,
+ *      server (see `spawntree-host-server` package). `activeHost === <name>`,
  *      API calls go to `<registryUrl>/h/<name>/...`.
  *
  * Users point at a host-server registry by entering its URL in the

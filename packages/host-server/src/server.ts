@@ -1,11 +1,20 @@
+#!/usr/bin/env node
 /**
- * Spawntree federation host — example.
+ * Spawntree federation host server.
  *
  * Aggregates multiple spawntree daemons behind a single HTTP surface.
  * Stores the registry in a local SQLite file so restarts preserve the
- * host list. See ../README.md for the what and why.
+ * host list. See ./README.md for usage.
  *
- * Pure Node.js. No framework, no deps beyond `better-sqlite3`. ~300 lines.
+ * Pure Node.js. No framework, no deps beyond `better-sqlite3`.
+ *
+ * Run directly:
+ *   pnpm --filter spawntree-host-server start
+ *   HOST_SERVER_PORT=7777 npx spawntree-host-server
+ *
+ * Or install + invoke the bin:
+ *   npm i -g spawntree-host-server
+ *   spawntree-host-server
  */
 
 import { createServer } from "node:http";
@@ -311,7 +320,10 @@ async function proxyToHost(
       headers: forwardedHeaders,
       body: body && body.length > 0 ? body : undefined,
       signal: controller.signal,
-      // @ts-expect-error — Node's fetch supports `duplex` but it's not in the lib types we're using
+      // `duplex` is a Node-specific fetch extension. Older lib.dom.d.ts
+      // didn't know about it, but current TS + Node types do. If this
+      // starts failing on your Node version, cast to `RequestInit &
+      // { duplex: string }`.
       duplex: "half",
     });
   } catch (err) {
@@ -445,7 +457,11 @@ const server = createServer(async (req, res) => {
   if (proxyMatch) {
     const name = decodeURIComponent(proxyMatch[1]!);
     const rest = proxyMatch[2] ?? "/";
-    const upstreamPath = rest + (req.url!.includes("?") ? "?" + req.url!.split("?")[1] : "");
+    // Preserve the full query string. RFC 3986 permits `?` inside
+    // query values, so `split("?")` would truncate everything after a
+    // second `?`. `slice(indexOf("?"))` keeps the tail intact.
+    const qIdx = req.url!.indexOf("?");
+    const upstreamPath = rest + (qIdx === -1 ? "" : req.url!.slice(qIdx));
     return proxyToHost(req, res, name, upstreamPath);
   }
 
