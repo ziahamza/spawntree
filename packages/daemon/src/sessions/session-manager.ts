@@ -486,7 +486,7 @@ export class SessionManager {
       // to external Drizzle clients. Chain per-session so events land in
       // emission order; errors are logged but don't break the chain so
       // one bad write can't wedge the queue.
-      this.enqueuePersist(event.sessionId, () =>
+      void this.enqueuePersist(event.sessionId, () =>
         persistSessionEvent(this.catalog!, event).catch((err) => {
           process.stderr.write(
             `[spawntree-daemon] session persist failed on ${event.type}: ${String(err)}\n`,
