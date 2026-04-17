@@ -4,6 +4,7 @@ export { loadEnv } from "./config/env-loader.ts";
 export { parseConfig, type ServiceConfig, type SpawntreeConfig } from "./config/parser.ts";
 export { validateConfig } from "./config/schema.ts";
 export { substituteVars } from "./config/substitution.ts";
+export * from "./db/index.ts";
 export { WorktreeManager } from "./env/worktree.ts";
 export { type Service, type ServiceStatus } from "./services/interface.ts";
 export * from "./storage/index.ts";

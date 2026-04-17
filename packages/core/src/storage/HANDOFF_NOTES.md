@@ -36,11 +36,12 @@ daemon no longer depends on `better-sqlite3`.
     behind a localhost-origin check (opt out via `SPAWNTREE_STORAGE_TRUST_REMOTE=1`).
   - `server-main.ts` boots a `StorageManager` and shuts it down on SIGINT/SIGTERM.
   - `server.ts` mounts storage routes conditionally.
-- `CatalogDatabase` (async, libSQL-backed)
+- `CatalogDatabase` (async, Drizzle-backed)
   - `packages/daemon/src/catalog/database.ts` — opened against
     `StorageManager.client` during `DaemonService` layer construction.
-    Schema applied idempotently via `CREATE TABLE IF NOT EXISTS`. All
-    methods return `Promise<T>`.
+    Every read and write goes through Drizzle's query builder typed with
+    the schema from `spawntree-core/db` — no raw SQL, no
+    `row["name"] as string` casts. All methods return `Promise<T>`.
   - `DaemonService.makeLayer(storage)` factory replaces the old static
     `layer` — the service can't be instantiated without a live storage
     manager, which guarantees the catalog's client is always the same
@@ -53,6 +54,19 @@ daemon no longer depends on `better-sqlite3`.
   - `better-sqlite3` + `@types/better-sqlite3` removed from
     `packages/daemon/package.json`. Daemon's only SQL client is now the
     StorageManager's libSQL connection.
+- Typed catalog schema + external client (`spawntree-core/db`)
+  - `packages/core/src/db/schema.ts` — Drizzle schema for all 5 catalog
+    tables. Single source of truth for column names, types, indexes, and
+    foreign keys. Row types are inferred via `$inferSelect` / `$inferInsert`.
+  - `packages/core/src/db/client.ts` — `createCatalogClient(options)` and
+    `createCatalogClientAsync(options)` return a typed handle that external
+    tools use to query a spawntree catalog directly over libSQL. No HTTP
+    round-trip, no reimplementation of read endpoints.
+  - `packages/core/drizzle.config.ts` + `packages/core/src/db/migrations/`
+    — `drizzle-kit generate` wired up for future schema changes. The
+    baseline DDL is applied idempotently in `CatalogDatabase.open()` today;
+    incremental migrations land via `drizzle-orm/libsql/migrator` once
+    schema changes start shipping.
 - Tests (79 passing + 4 MinIO-gated)
   - `packages/core/tests/storage.test.ts` — registry + local provider + config
     persistence (6 tests).
@@ -66,6 +80,12 @@ daemon no longer depends on `better-sqlite3`.
     delete), worktrees (replace/list + FK cascade), watched paths,
     registered repos, and a dedicated test that verifies VACUUM INTO
     snapshots actually contain catalog rows (24 tests).
+  - `packages/core/tests/catalog-client.test.ts` — external
+    `createCatalogClient` coverage: schema bootstrap, typed inserts +
+    selects, filtered queries (`eq` + `and`), joins across `repos` +
+    `clones`, relational query API (`db.query.repos.findFirst(...)`),
+    FK cascade on `DELETE FROM repos`, sync vs async factory semantics
+    (10 tests).
   - `packages/core/tests/s3-replicator-minio.test.ts` — integration against a
     running MinIO (4 tests, skipped if `SPAWNTREE_S3_TEST_ENDPOINT` is unset).
     Verifies the Devin CopySource regression is fixed, status info fields are
