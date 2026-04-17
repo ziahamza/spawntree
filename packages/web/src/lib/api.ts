@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import {
   type AddFolderResponse,
   type ConfigPreviewResponse,
@@ -9,14 +10,42 @@ import {
   type ConfigTestResponse,
   type ConfigTestServiceResult,
   createApiClient,
+  type CreateSessionRequest,
   type EnvInfo,
   type GitPathInfo,
   type InfraStatusResponse,
+  type ListSessionsResponse,
+  type SendSessionMessageRequest,
+  type SessionDetail,
+  type SessionEventPayload,
+  type SessionInfo,
+  type SessionToolCallData,
+  type SessionTurnData,
   type ServiceInfo,
   type WebRepo,
 } from "spawntree-core/browser";
 
-const api = createApiClient();
+/**
+ * The `api` reference is a `let` binding (not `const`) so the host
+ * switcher can point the dashboard at a different spawntree daemon
+ * without reloading the page. Every call site reads the current binding
+ * at call time, so reassigning the client picks up on the next refetch.
+ *
+ * `setApiBaseUrl("")` or `setApiBaseUrl(undefined)` reverts to same-origin
+ * (the default for the local daemon serving this bundle).
+ */
+let api = createApiClient();
+let currentBaseUrl: string = "";
+
+export function setApiBaseUrl(baseUrl: string | undefined | null): void {
+  const normalized = baseUrl ?? "";
+  currentBaseUrl = normalized;
+  api = createApiClient({ baseUrl: normalized || undefined });
+}
+
+export function getApiBaseUrl(): string {
+  return currentBaseUrl;
+}
 
 export type DaemonInfo = Awaited<ReturnType<typeof api.getDaemonInfo>>;
 export type Service = ServiceInfo;
@@ -117,7 +146,8 @@ export function useWebRepoDetail(slug: string, enabled = true) {
     refetchInterval: 60_000,
     queryFn: async () => {
       const response = await api.getWebRepoDetail(slug);
-      const activityScore = (path: string) => Date.parse(response.gitPaths[path]?.activityAt ?? "") || 0;
+      const activityScore = (path: string) =>
+        Date.parse(response.gitPaths[path]?.activityAt ?? "") || 0;
       const clones: Array<Clone> = response.clones
         .map((clone) => ({
           id: clone.id,
@@ -181,7 +211,7 @@ export function useWebRepoTree(slug: string, enabled = true) {
 export function useCreateEnv() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (body: { repoPath: string; configFile?: string; envId?: string; }) =>
+    mutationFn: async (body: { repoPath: string; configFile?: string; envId?: string }) =>
       (await api.createEnv(body)).env,
     onSuccess: () => {
       invalidateAppQueries(queryClient);
@@ -192,7 +222,7 @@ export function useCreateEnv() {
 export function useStopEnv() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { repoID: string; envID: string; repoPath?: string; }) =>
+    mutationFn: (input: { repoID: string; envID: string; repoPath?: string }) =>
       api.downEnv(input.repoID, input.envID, input.repoPath),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
@@ -203,7 +233,7 @@ export function useStopEnv() {
 export function useDeleteEnv() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { repoID: string; envID: string; repoPath?: string; }) =>
+    mutationFn: (input: { repoID: string; envID: string; repoPath?: string }) =>
       api.deleteEnv(input.repoID, input.envID, input.repoPath),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
@@ -225,7 +255,8 @@ export type AddFolderResult = AddFolderResponse;
 export function useAddFolder() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: { path: string; remoteName?: string; scanChildren?: boolean; }) => api.addFolder(body),
+    mutationFn: (body: { path: string; remoteName?: string; scanChildren?: boolean }) =>
+      api.addFolder(body),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
     },
@@ -234,14 +265,14 @@ export function useAddFolder() {
 
 export function useProbeAddPath() {
   return useMutation({
-    mutationFn: (body: { path: string; }) => api.probeAddPath(body),
+    mutationFn: (body: { path: string }) => api.probeAddPath(body),
   });
 }
 
 export function useRelinkClone() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { repoSlug: string; cloneID: string; newPath: string; }) =>
+    mutationFn: (input: { repoSlug: string; cloneID: string; newPath: string }) =>
       api.relinkClone(input.repoSlug, input.cloneID, { path: input.newPath }),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
@@ -252,7 +283,8 @@ export function useRelinkClone() {
 export function useDeleteClone() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { repoSlug: string; cloneID: string; }) => api.deleteClone(input.repoSlug, input.cloneID),
+    mutationFn: (input: { repoSlug: string; cloneID: string }) =>
+      api.deleteClone(input.repoSlug, input.cloneID),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
     },
@@ -262,7 +294,7 @@ export function useDeleteClone() {
 export function useArchiveWorktree() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { repoSlug: string; path: string; }) =>
+    mutationFn: (input: { repoSlug: string; path: string }) =>
       api.archiveWorktree(input.repoSlug, { path: input.path }),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
@@ -272,32 +304,34 @@ export function useArchiveWorktree() {
 
 export function useTestConfig() {
   return useMutation({
-    mutationFn: (body: { repoPath: string; content: string; }) => api.testConfig(body),
+    mutationFn: (body: { repoPath: string; content: string }) => api.testConfig(body),
   });
 }
 
 export function useSuggestConfig() {
   return useMutation({
-    mutationFn: (body: { repoPath: string; }) => api.suggestConfig(body),
+    mutationFn: (body: { repoPath: string }) => api.suggestConfig(body),
   });
 }
 
 export function useStartConfigPreview() {
   return useMutation({
-    mutationFn: (body: { repoPath: string; content: string; serviceName?: string; }) => api.startConfigPreview(body),
+    mutationFn: (body: { repoPath: string; content: string; serviceName?: string }) =>
+      api.startConfigPreview(body),
   });
 }
 
 export function useStopConfigPreview() {
   return useMutation({
-    mutationFn: (body: { previewId: string; }) => api.stopConfigPreview(body),
+    mutationFn: (body: { previewId: string }) => api.stopConfigPreview(body),
   });
 }
 
 export function useSaveConfig() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: { repoPath: string; content: string; saveMode: "repo" | "global"; }) => api.saveConfig(body),
+    mutationFn: (body: { repoPath: string; content: string; saveMode: "repo" | "global" }) =>
+      api.saveConfig(body),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
     },
@@ -308,16 +342,22 @@ export function createApiEventSource(since?: number) {
   return new EventSource(api.getEventsUrl(since));
 }
 
-export function createLogEventSource(repoID: string, envID: string, options: {
-  repoPath?: string;
-  service?: string | null;
-  lines?: number;
-} = {}) {
-  return new EventSource(api.getLogStreamUrl(repoID, envID, {
-    repoPath: options.repoPath,
-    service: options.service ?? undefined,
-    lines: options.lines,
-  }));
+export function createLogEventSource(
+  repoID: string,
+  envID: string,
+  options: {
+    repoPath?: string;
+    service?: string | null;
+    lines?: number;
+  } = {},
+) {
+  return new EventSource(
+    api.getLogStreamUrl(repoID, envID, {
+      repoPath: options.repoPath,
+      service: options.service ?? undefined,
+      lines: options.lines,
+    }),
+  );
 }
 
 function invalidateAppQueries(queryClient: ReturnType<typeof useQueryClient>) {
@@ -325,4 +365,123 @@ function invalidateAppQueries(queryClient: ReturnType<typeof useQueryClient>) {
   void queryClient.invalidateQueries({ queryKey: ["envs"] });
   void queryClient.invalidateQueries({ queryKey: ["infra"] });
   void queryClient.invalidateQueries({ queryKey: ["web", "repos"] });
+}
+
+// ─── Sessions ───────────────────────────────────────────────────────────────
+
+export type Session = SessionInfo;
+export type SessionTurn = SessionTurnData;
+export type SessionToolCall = SessionToolCallData;
+export type SessionEvent = SessionEventPayload;
+export type SessionDetailResponse = SessionDetail;
+
+export function useSessions() {
+  return useQuery<ListSessionsResponse>({
+    queryKey: ["sessions"],
+    queryFn: () => api.listSessions(),
+    refetchInterval: 15_000,
+  });
+}
+
+export function useSession(sessionId: string | undefined) {
+  return useQuery<SessionDetail>({
+    queryKey: ["sessions", sessionId],
+    queryFn: () => api.getSession(sessionId!),
+    enabled: !!sessionId,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useCreateSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateSessionRequest) => api.createSession(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+}
+
+export function useSendSessionMessage(sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SendSessionMessageRequest) => api.sendSessionMessage(sessionId, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["sessions", sessionId] });
+    },
+  });
+}
+
+export function useInterruptSession(sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.interruptSession(sessionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["sessions", sessionId] });
+    },
+  });
+}
+
+export function useDeleteSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) => api.deleteSession(sessionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+}
+
+/**
+ * Live stream of session events via SSE. Events are buffered into a
+ * FIFO array and rendered as they arrive. Reconnects on host switch
+ * (because `sessionId` stays the same but `api` rebinds underneath).
+ *
+ * Returns:
+ *   - events: chronological array of delivered payloads
+ *   - connected: true while an active reader holds the stream open
+ *   - error: any fatal error from the SSE reader
+ *
+ * The hook owns its own AbortController; unmount cleanly aborts.
+ */
+export function useSessionEventStream(sessionId: string | undefined) {
+  const [events, setEvents] = useState<SessionEventPayload[]>([]);
+  const [connected, setConnected] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  // Reset whenever the session id changes.
+  const sessionRef = useRef(sessionId);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    if (sessionRef.current !== sessionId) {
+      sessionRef.current = sessionId;
+      setEvents([]);
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+    setConnected(true);
+    setError(null);
+
+    (async () => {
+      try {
+        for await (const event of api.streamSessionEvents(sessionId, controller.signal)) {
+          if (cancelled) break;
+          setEvents((prev) => [...prev, event]);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err : new Error(String(err)));
+      } finally {
+        if (!cancelled) setConnected(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [sessionId]);
+
+  return { events, connected, error };
 }

@@ -15,7 +15,13 @@ export type RepoSlug = Schema.Schema.Type<typeof RepoSlug>;
 export const ServiceStatus = Schema.Literals(["starting", "running", "failed", "stopped"]);
 export type ServiceStatus = Schema.Schema.Type<typeof ServiceStatus>;
 
-export const ServiceType = Schema.Literals(["process", "container", "postgres", "redis", "external"]);
+export const ServiceType = Schema.Literals([
+  "process",
+  "container",
+  "postgres",
+  "redis",
+  "external",
+]);
 export type ServiceType = Schema.Schema.Type<typeof ServiceType>;
 
 export const InfraStatus = Schema.Literals(["running", "stopped", "starting", "error"]);
@@ -420,3 +426,171 @@ export const DomainEvent = Schema.Struct({
   detail: Schema.optional(Schema.String),
 });
 export type DomainEvent = Schema.Schema.Type<typeof DomainEvent>;
+
+// ─── Session API types ──────────────────────────────────────────────────────
+
+/**
+ * Session provider identifier. Two built-in providers (`claude-code`,
+ * `codex`) are always recognized; custom providers registered via
+ * `SessionManager.registerAdapter` are also accepted, so this is a
+ * `Schema.String` rather than a closed `Schema.Literals`. Unknown
+ * providers are rejected by the SessionManager at dispatch time with a
+ * clear error, not at schema decode.
+ */
+export const SessionProvider = Schema.String;
+export type SessionProvider = Schema.Schema.Type<typeof SessionProvider>;
+
+/**
+ * The two built-in providers. Kept separate for UI enumeration.
+ *
+ * Explicitly type-annotated as a `readonly` tuple literal rather than
+ * using `as const` — the project's biome linteffect rule rejects `as`
+ * assertions on model-flow values. The annotation gives us the same
+ * narrowed types without an assertion.
+ */
+export type BuiltinSessionProvider = "claude-code" | "codex";
+export const BUILTIN_SESSION_PROVIDERS: readonly BuiltinSessionProvider[] = [
+  "claude-code",
+  "codex",
+];
+
+export const SessionStatus = Schema.Literals([
+  "idle",
+  "streaming",
+  "waiting",
+  "completed",
+  "error",
+]);
+export type SessionStatus = Schema.Schema.Type<typeof SessionStatus>;
+
+export const SessionInfo = Schema.Struct({
+  sessionId: Schema.String,
+  provider: SessionProvider,
+  status: SessionStatus,
+  title: Schema.NullOr(Schema.String),
+  workingDirectory: Schema.String,
+  gitBranch: Schema.NullOr(Schema.String),
+  gitHeadCommit: Schema.NullOr(Schema.String),
+  gitRemoteUrl: Schema.NullOr(Schema.String),
+  totalTurns: Schema.Number,
+  startedAt: Schema.NullOr(Schema.String),
+  updatedAt: Schema.String,
+});
+export type SessionInfo = Schema.Schema.Type<typeof SessionInfo>;
+
+export const ListSessionsResponse = Schema.Struct({
+  sessions: Schema.Array(SessionInfo),
+});
+export type ListSessionsResponse = Schema.Schema.Type<typeof ListSessionsResponse>;
+
+export const CreateSessionRequest = Schema.Struct({
+  provider: SessionProvider,
+  cwd: Schema.String,
+  mcpServers: Schema.optional(Schema.Array(Schema.Unknown)),
+});
+export type CreateSessionRequest = Schema.Schema.Type<typeof CreateSessionRequest>;
+
+export const CreateSessionResponse = Schema.Struct({
+  sessionId: Schema.String,
+  provider: SessionProvider,
+});
+export type CreateSessionResponse = Schema.Schema.Type<typeof CreateSessionResponse>;
+
+export const SendSessionMessageRequest = Schema.Struct({
+  content: Schema.String,
+});
+export type SendSessionMessageRequest = Schema.Schema.Type<typeof SendSessionMessageRequest>;
+
+export const ContentBlock = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("text"), text: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("image"), data: Schema.String, mimeType: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literal("diff"),
+    path: Schema.String,
+    oldText: Schema.optional(Schema.String),
+    newText: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("terminal"),
+    command: Schema.String,
+    output: Schema.String,
+    exitCode: Schema.NullOr(Schema.Number),
+    durationMs: Schema.NullOr(Schema.Number),
+  }),
+]);
+export type ContentBlock = Schema.Schema.Type<typeof ContentBlock>;
+
+export const SessionTurnData = Schema.Struct({
+  id: Schema.String,
+  turnIndex: Schema.Number,
+  role: Schema.Literals(["user", "assistant"]),
+  content: Schema.Array(ContentBlock),
+  modelId: Schema.NullOr(Schema.String),
+  durationMs: Schema.NullOr(Schema.Number),
+  stopReason: Schema.NullOr(Schema.String),
+  status: Schema.Literals(["streaming", "completed", "error", "cancelled"]),
+  errorMessage: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+});
+export type SessionTurnData = Schema.Schema.Type<typeof SessionTurnData>;
+
+export const SessionToolCallData = Schema.Struct({
+  id: Schema.String,
+  turnId: Schema.NullOr(Schema.String),
+  toolName: Schema.String,
+  toolKind: Schema.Literals(["terminal", "file_edit", "mcp", "other"]),
+  status: Schema.Literals(["pending", "in_progress", "completed", "error"]),
+  arguments: Schema.Unknown,
+  result: Schema.Unknown,
+  durationMs: Schema.NullOr(Schema.Number),
+  createdAt: Schema.String,
+});
+export type SessionToolCallData = Schema.Schema.Type<typeof SessionToolCallData>;
+
+export const SessionDetail = Schema.Struct({
+  session: SessionInfo,
+  turns: Schema.Array(SessionTurnData),
+  toolCalls: Schema.Array(SessionToolCallData),
+});
+export type SessionDetail = Schema.Schema.Type<typeof SessionDetail>;
+
+/**
+ * Session event encoded as a DomainEvent `detail` payload.
+ * Sent over the existing `/api/v1/events` SSE stream (type = "session_event")
+ * and over the per-session `/api/v1/sessions/:id/events` SSE stream.
+ */
+export const SessionEventPayload = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("turn_started"),
+    sessionId: Schema.String,
+    turnId: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("message_delta"),
+    sessionId: Schema.String,
+    turnId: Schema.String,
+    text: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("tool_call_started"),
+    sessionId: Schema.String,
+    toolCall: SessionToolCallData,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("tool_call_completed"),
+    sessionId: Schema.String,
+    toolCall: SessionToolCallData,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("turn_completed"),
+    sessionId: Schema.String,
+    turnId: Schema.String,
+    status: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("session_status_changed"),
+    sessionId: Schema.String,
+    status: SessionStatus,
+  }),
+]);
+export type SessionEventPayload = Schema.Schema.Type<typeof SessionEventPayload>;

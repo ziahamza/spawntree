@@ -3,9 +3,11 @@ import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { Menu, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AddFolderDialog } from "../components/AddFolderDialog";
+import { HostSwitcher } from "../components/HostSwitcher";
 import { RepoTree } from "../components/RepoTree";
 import { debugLog } from "../lib/debug";
 import { createApiEventSource, useDaemonInfo } from "../lib/api";
+import { useHostState } from "../lib/hosts";
 import "../styles.css";
 
 const queryClient = new QueryClient({
@@ -28,10 +30,13 @@ export const Route = createRootRoute({
 
 function LiveUpdates() {
   const queryClient = useQueryClient();
+  // Re-subscribe whenever the user switches hosts so SSE follows the
+  // active daemon rather than staying pinned to the original origin.
+  const { activeHost, registryUrl } = useHostState();
 
   useEffect(() => {
     const eventSource = createApiEventSource();
-    debugLog("events", "connect");
+    debugLog("events", "connect", { activeHost, registryUrl });
 
     eventSource.onmessage = (event) => {
       let parsed: { type?: string; repoSlug?: string; repoId?: string } | null = null;
@@ -77,28 +82,33 @@ function LiveUpdates() {
       debugLog("events", "close");
       eventSource.close();
     };
-  }, [queryClient]);
+  }, [queryClient, activeHost, registryUrl]);
 
   return null;
 }
 
-function SidebarContent({ onNavigate }: { onNavigate?: () => void; }) {
+function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const [addOpen, setAddOpen] = useState(false);
   const { data: daemon } = useDaemonInfo();
 
   return (
     <>
-      <div className="p-4 border-b border-border flex items-center justify-between flex-shrink-0">
-        <div>
-          <h1 className="text-sm font-semibold font-display text-foreground">spawntree</h1>
-          <span className="text-xs text-muted">{daemon?.version ?? "…"}</span>
+      <div className="p-4 border-b border-border flex flex-col gap-2 flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-sm font-semibold font-display text-foreground">spawntree</h1>
+            <span className="text-xs text-muted">{daemon?.version ?? "…"}</span>
+          </div>
+          <button
+            onClick={() => setAddOpen(true)}
+            className="px-2.5 py-1 text-xs rounded-md border border-border bg-surface text-muted hover:text-foreground hover:border-foreground/30 transition-colors min-h-[30px]"
+          >
+            + Add
+          </button>
         </div>
-        <button
-          onClick={() => setAddOpen(true)}
-          className="px-2.5 py-1 text-xs rounded-md border border-border bg-surface text-muted hover:text-foreground hover:border-foreground/30 transition-colors min-h-[30px]"
-        >
-          + Add
-        </button>
+        {/* Host-switcher: lets one dashboard talk to multiple spawntree
+            daemons via a federation host-server. See examples/host-server. */}
+        <HostSwitcher />
       </div>
       <div className="flex-1 overflow-y-auto">
         <RepoTree onNavigate={onNavigate} />

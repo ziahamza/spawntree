@@ -32,10 +32,12 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.670.0",
     "@libsql/client": "^0.15.4",
+    "@zed-industries/agent-client-protocol": "^0.4.5",
     "dotenv": "^16.5.0",
     "dotenv-expand": "^12.0.0",
     "drizzle-orm": "^0.45.2",
     "effect": "4.0.0-beta.43",
+    "uuidv7": "^1.2.1",
     "yaml": "^2.7.0"
   },
   "devDependencies": {

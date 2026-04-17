@@ -10,6 +10,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "bundle-web": "node scripts/bundle-web.mjs",
+    "verify-bundle": "node scripts/verify-bundle.mjs",
     "test": "vitest run",
     "dev": "tsc -p tsconfig.json --watch"
   },

@@ -5,6 +5,7 @@ import { Layer, ManagedRuntime, Match } from "effect";
 import { createServer } from "node:http";
 import { createApp, hasBundledWebApp } from "./server.ts";
 import { DaemonService } from "./services/daemon-service.ts";
+import { SessionManager } from "./sessions/session-manager.ts";
 import { ensureDir, saveDaemonPid, saveRuntimeMetadata, spawntreeHome } from "./state/global-state.ts";
 import { StorageManager } from "./storage/manager.ts";
 
@@ -26,7 +27,17 @@ async function main() {
     memoMap: Layer.makeMemoMapUnsafe(),
   });
 
-  const app = createApp(runtime, { storage });
+  // Build the DomainEvents instance from the runtime so SessionManager can
+  // publish into the same bus the existing /api/v1/events SSE stream uses.
+  // SessionManager also persists session metadata through the same
+  // StorageManager client so sessions land in the replicated catalog DB.
+  const domainEvents = await runtime.runPromise(
+    DaemonService.use((service) => service.domainEvents),
+  );
+  const sessionManager = new SessionManager(domainEvents, { storage });
+  await sessionManager.start();
+
+  const app = createApp(runtime, { storage, sessionManager });
   const listener = getRequestListener(app.fetch);
   const server = createServer(listener);
 
@@ -58,6 +69,9 @@ async function main() {
       Match.orElse(async () => {
         shuttingDown = true;
         process.stderr.write(`[spawntree-daemon] Received ${signal}, shutting down...\n`);
+        // Tear down the session manager first so ACP adapter subprocesses
+        // release before the runtime disposes the services they might use.
+        await sessionManager.shutdown().catch(() => undefined);
         await runtime
           .runPromise(DaemonService.use((service) => service.shutdown))
           .catch(() => undefined);

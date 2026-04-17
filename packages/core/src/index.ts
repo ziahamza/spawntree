@@ -1,3 +1,4 @@
+export * from "./acp/index.ts";
 export { ApiClient, ApiClientError, createApiClient } from "./api/client.ts";
 export * from "./api/types.ts";
 export { loadEnv } from "./config/env-loader.ts";

@@ -49,9 +49,12 @@ daemon no longer depends on `better-sqlite3`.
     `ON CONFLICT` patterns). Everything else is one-line Drizzle inline.
   - `better-sqlite3` + `@types/better-sqlite3` removed from daemon deps.
 - Typed catalog schema + two external-client surfaces (`spawntree-core/db`)
-  - `schema.ts` — Drizzle schema for all 5 catalog tables. Single source
-    of truth for column names, types, indexes, and foreign keys. Row
-    types inferred via `$inferSelect` / `$inferInsert`.
+  - `schema.ts` — Drizzle schema for all 8 catalog tables (5 original +
+    3 for ACP sessions: `sessions`, `session_turns`, `session_tool_calls`).
+    Single source of truth for column names, types, indexes, foreign keys.
+    Row types inferred via `$inferSelect` / `$inferInsert`. JSON columns
+    (turn `content`, tool-call `arguments`/`result`) use Drizzle's
+    `{ mode: "json" }` with `$type<...>()` hints so reads are typed.
   - `client.ts` — `createCatalogClient(options)` and
     `createCatalogClientAsync(options)` for direct-libSQL consumers
     (local file, Turso replica).
@@ -78,6 +81,21 @@ daemon no longer depends on `better-sqlite3`.
     Drizzle's sqlite-proxy protocol. Gated by the same loopback-origin
     check as the storage admin routes (override via
     `SPAWNTREE_CATALOG_TRUST_REMOTE=1`).
+- ACP session persistence (fits on top of the Drizzle stack)
+  - `SessionManager` now takes a `StorageManager` and mirrors every
+    ACP adapter event into the catalog DB via Drizzle. `createSession`
+    upserts a row in `sessions`; `turn_started`/`turn_completed` hit
+    `session_turns`; `tool_call_started`/`tool_call_completed` hit
+    `session_tool_calls`. `message_delta` is intentionally skipped
+    (would write-amplify per token).
+  - Writes are queued per-session so events land in the order they were
+    emitted — prevents `turn_completed`'s UPDATE from racing
+    `turn_started`'s INSERT. `flushPersist()` is available for tests and
+    shutdown.
+  - Sessions survive daemon restart; the s3-snapshot replicator captures
+    them (they're in the same DB file as the rest of the catalog);
+    external Drizzle clients read them with the same `schema` + typed
+    `db.select()/query` patterns, no per-table re-implementation.
 - Tests (79 passing + 4 MinIO-gated)
   - `packages/core/tests/storage.test.ts` — registry + local provider + config
     persistence (6 tests).

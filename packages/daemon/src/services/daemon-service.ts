@@ -115,6 +115,8 @@ interface PreviewSession {
 export class DaemonService extends ServiceMap.Service<DaemonService, {
   readonly shutdown: Effect.Effect<void, DaemonError>;
   readonly daemonInfo: Effect.Effect<DaemonInfo, DaemonError>;
+  /** Expose the raw DomainEvents bus for direct publication (e.g. SessionManager). */
+  readonly domainEvents: Effect.Effect<DomainEvents>;
   listEnvs(repoId?: string): Effect.Effect<ListEnvsResponse, DaemonError>;
   createEnv(request: CreateEnvRequest): Effect.Effect<CreateEnvResponse, DaemonError>;
   getEnv(repoRef: string, envId: string, repoPath?: string): Effect.Effect<GetEnvResponse, DaemonError>;
@@ -296,7 +298,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         return logStreamer.subscribe(resolved.repoId, resolved.env.envId, options);
       });
 
-      const domainEvents = Effect.fn("DaemonService.events")(function*(since?: number) {
+      const eventsStream = Effect.fn("DaemonService.events")(function*(since?: number) {
         return yield* Effect.succeed(sseStream((signal) => events.subscribe(since ?? 0, signal)));
       });
 
@@ -784,13 +786,14 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       return DaemonService.of({
         shutdown,
         daemonInfo,
+        domainEvents: Effect.succeed(events),
         listEnvs,
         createEnv,
         getEnv,
         downEnv,
         deleteEnv,
         logs,
-        events: domainEvents,
+        events: eventsStream,
         registerRepo,
         infraStatus,
         stopInfra,
