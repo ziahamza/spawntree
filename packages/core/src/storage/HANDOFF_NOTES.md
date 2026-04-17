@@ -36,37 +36,48 @@ daemon no longer depends on `better-sqlite3`.
     behind a localhost-origin check (opt out via `SPAWNTREE_STORAGE_TRUST_REMOTE=1`).
   - `server-main.ts` boots a `StorageManager` and shuts it down on SIGINT/SIGTERM.
   - `server.ts` mounts storage routes conditionally.
-- `CatalogDatabase` (async, Drizzle-backed)
-  - `packages/daemon/src/catalog/database.ts` — opened against
-    `StorageManager.client` during `DaemonService` layer construction.
-    Every read and write goes through Drizzle's query builder typed with
-    the schema from `spawntree-core/db` — no raw SQL, no
-    `row["name"] as string` casts. All methods return `Promise<T>`.
-  - `DaemonService.makeLayer(storage)` factory replaces the old static
-    `layer` — the service can't be instantiated without a live storage
-    manager, which guarantees the catalog's client is always the same
-    one the replicators read.
-  - `daemon-service.ts` call sites converted wholesale: every catalog
-    method is awaited via `Effect.tryPromise`, helper functions
-    (`enrichRepo`, `listRepoEnvsForRepo`, `repoSlugForRepoId`,
-    `syncCloneWorktreesAsync`, `importGitRepoPathAsync`, `resolveRepoEnv`,
-    `getRepoBySlug`, `getClone`) are async and return promises.
-  - `better-sqlite3` + `@types/better-sqlite3` removed from
-    `packages/daemon/package.json`. Daemon's only SQL client is now the
-    StorageManager's libSQL connection.
-- Typed catalog schema + external client (`spawntree-core/db`)
-  - `packages/core/src/db/schema.ts` — Drizzle schema for all 5 catalog
-    tables. Single source of truth for column names, types, indexes, and
-    foreign keys. Row types are inferred via `$inferSelect` / `$inferInsert`.
-  - `packages/core/src/db/client.ts` — `createCatalogClient(options)` and
-    `createCatalogClientAsync(options)` return a typed handle that external
-    tools use to query a spawntree catalog directly over libSQL. No HTTP
-    round-trip, no reimplementation of read endpoints.
-  - `packages/core/drizzle.config.ts` + `packages/core/src/db/migrations/`
-    — `drizzle-kit generate` wired up for future schema changes. The
-    baseline DDL is applied idempotently in `CatalogDatabase.open()` today;
-    incremental migrations land via `drizzle-orm/libsql/migrator` once
-    schema changes start shipping.
+- Daemon catalog (Drizzle, no wrapper)
+  - `DaemonService.makeLayer(storage)` opens `drizzle(storage.client, { schema })`
+    directly in the layer init. No `CatalogDatabase` class, no domain-type
+    mapper functions — Drizzle's `$inferSelect` row types ARE the domain
+    types. Every read and write inside `daemon-service.ts` is a plain
+    Drizzle call like `catalog.select().from(reposTable)...`.
+  - `packages/daemon/src/catalog/queries.ts` keeps the 5 multi-step
+    helpers that carry real business logic (`upsertRepo`/`upsertClone`
+    evict stale unique-key collisions, `replaceWorktrees` is atomic
+    delete-then-insert, `upsertWatchedPath` + `registerRepo` handle
+    `ON CONFLICT` patterns). Everything else is one-line Drizzle inline.
+  - `better-sqlite3` + `@types/better-sqlite3` removed from daemon deps.
+- Typed catalog schema + two external-client surfaces (`spawntree-core/db`)
+  - `schema.ts` — Drizzle schema for all 5 catalog tables. Single source
+    of truth for column names, types, indexes, and foreign keys. Row
+    types inferred via `$inferSelect` / `$inferInsert`.
+  - `client.ts` — `createCatalogClient(options)` and
+    `createCatalogClientAsync(options)` for direct-libSQL consumers
+    (local file, Turso replica).
+  - `http-client.ts` — `createCatalogHttpDb({ url })` and
+    `catalogHttpProxy({ url })` for consumers that talk to a running
+    daemon over HTTP. Backed by `drizzle-orm/sqlite-proxy`. Users
+    import Drizzle natively:
+    ```ts
+    import { createCatalogHttpDb, schema } from "spawntree-core";
+    import { eq } from "drizzle-orm";
+    const db = createCatalogHttpDb({ url: "http://127.0.0.1:2222" });
+    const repos = await db.select().from(schema.repos).where(
+      eq(schema.repos.provider, "github"),
+    );
+    ```
+    No read endpoints to reimplement, no protocol to learn.
+  - `drizzle.config.ts` + `migrations/` — `drizzle-kit generate` wired
+    up for future schema changes. Baseline DDL is applied idempotently
+    in `applyCatalogSchema()` at daemon boot; incremental migrations
+    land via `drizzle-orm/libsql/migrator` once schema changes start shipping.
+- Daemon catalog query endpoint
+  - `packages/daemon/src/routes/catalog.ts` — `POST /api/v1/catalog/query`
+    and `POST /api/v1/catalog/batch` implement the server side of
+    Drizzle's sqlite-proxy protocol. Gated by the same loopback-origin
+    check as the storage admin routes (override via
+    `SPAWNTREE_CATALOG_TRUST_REMOTE=1`).
 - Tests (79 passing + 4 MinIO-gated)
   - `packages/core/tests/storage.test.ts` — registry + local provider + config
     persistence (6 tests).
@@ -74,12 +85,18 @@ daemon no longer depends on `better-sqlite3`.
     persistence + perms, hot-swap migration (happy path, no-op, rollback on
     failure), concurrency (overlapping swaps, migrating flag), probes,
     replicator add/remove, redaction (15 tests).
-  - `packages/daemon/tests/catalog-database.test.ts` — full async
-    CatalogDatabase coverage: schema bootstrap + idempotency, repos
-    (upsert/get/list/count), clones (upsert/update-path/update-status/
-    delete), worktrees (replace/list + FK cascade), watched paths,
-    registered repos, and a dedicated test that verifies VACUUM INTO
-    snapshots actually contain catalog rows (24 tests).
+  - `packages/daemon/tests/catalog-queries.test.ts` — the 5 multi-step
+    helpers (`upsertRepo`/`upsertClone` with stale-row eviction,
+    `replaceWorktrees` atomic bulk-replace, `upsertWatchedPath` +
+    `registerRepo` conflict handling). Simple inline Drizzle queries
+    inside daemon-service aren't dedicated-tested because they're
+    already proven by `catalog-client.test.ts` and `catalog-http.test.ts`
+    (9 tests).
+  - `packages/daemon/tests/catalog-http.test.ts` — end-to-end: boot a
+    StorageManager, mount the catalog HTTP routes, have an external
+    Drizzle client (`createCatalogHttpDb` AND raw `catalogHttpProxy` +
+    `drizzle(...)`) run selects, wheres, joins, and the relational
+    query API over HTTP against the live daemon (7 tests).
   - `packages/core/tests/catalog-client.test.ts` — external
     `createCatalogClient` coverage: schema bootstrap, typed inserts +
     selects, filtered queries (`eq` + `and`), joins across `repos` +

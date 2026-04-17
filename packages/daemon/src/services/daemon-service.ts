@@ -53,8 +53,26 @@ import {
   type WebRepoTreeResponse,
   type Worktree,
 } from "spawntree-core";
+import {
+  clones as clonesTable,
+  registeredRepos as registeredReposTable,
+  repos as reposTable,
+  schema as catalogSchema,
+  watchedPaths as watchedPathsTable,
+  worktrees as worktreesTable,
+  type CatalogDb,
+} from "spawntree-core";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/libsql";
 import { parse as parseYaml } from "yaml";
-import { CatalogDatabase } from "../catalog/database.ts";
+import {
+  applyCatalogSchema,
+  registerRepo as registerRepoRow,
+  replaceWorktrees as replaceWorktreesRows,
+  upsertClone as upsertCloneRow,
+  upsertRepo as upsertRepoRow,
+  upsertWatchedPath as upsertWatchedPathRow,
+} from "../catalog/queries.ts";
 import {
   canonicalRepoId,
   deriveCloneId,
@@ -144,7 +162,11 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       const infraManager = new InfraManager();
       const proxyManager = new ProxyManager();
       const envManager = new EnvManager(portRegistry, logStreamer, infraManager, proxyManager);
-      const catalog = yield* Effect.promise(() => CatalogDatabase.open(storage.client));
+      // Catalog talks to the active storage primary via Drizzle directly —
+      // no wrapper class, no domain-type mappers. Drizzle's $inferSelect
+      // row types match the Effect Schema domain types structurally.
+      yield* Effect.promise(() => applyCatalogSchema(storage.client));
+      const catalog: CatalogDb = drizzle(storage.client, { schema: catalogSchema });
       const events = new DomainEvents();
       const previewSessions = new Map<string, PreviewSession>();
 
@@ -175,19 +197,21 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           catch: (error) => new InternalError({ code: "PROXY_STOP_FAILED", message: toMessage(error) }),
         }).pipe(Effect.catchTag("InternalError", () => Effect.void));
 
-        yield* Effect.promise(() => catalog.close());
+        // libSQL client is owned by the StorageManager; nothing to close here.
       });
 
       const daemonInfo = Effect.gen(function*() {
-        const repos = yield* Effect.tryPromise({
-          try: () => catalog.repoCount(),
+        const [row] = yield* Effect.tryPromise({
+          try: () => catalog
+            .select({ count: sql<number>`count(*)`.as("count") })
+            .from(reposTable),
           catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
         });
         return {
           version: VERSION,
           pid: process.pid,
           uptime: Math.floor((Date.now() - startedAt) / 1000),
-          repos,
+          repos: Number(row?.count ?? 0),
           activeEnvs: envManager.listEnvs().length,
         };
       });
@@ -287,7 +311,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           lastSeenAt: new Date().toISOString(),
         };
         yield* Effect.tryPromise({
-          try: () => catalog.registerRepo(repo),
+          try: () => registerRepoRow(catalog, repo),
           catch: (error) => mapInternalError("CATALOG_WRITE_FAILED", error),
         });
         publish({ type: "repo.updated", repoId });
@@ -362,7 +386,10 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
       const listWebRepos = Effect.gen(function*() {
         const listStartedAt = Date.now();
         const repos = yield* Effect.tryPromise({
-          try: () => catalog.listRepos(),
+          try: () => catalog
+            .select()
+            .from(reposTable)
+            .orderBy(desc(reposTable.updatedAt), asc(reposTable.name)),
           catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
         });
         const enriched: Array<WebRepo> = [];
@@ -385,7 +412,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         const treeStartedAt = Date.now();
         const repo = yield* getRepoBySlug(catalog, repoSlugValue);
         const clones = yield* Effect.tryPromise({
-          try: () => catalog.listClones(repo.id),
+          try: () => catalog.select().from(clonesTable).where(eq(clonesTable.repoId, repo.id)).orderBy(asc(clonesTable.registeredAt)),
           catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
         });
         const worktreesByClone: Record<string, Array<Worktree>> = {};
@@ -393,13 +420,13 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         for (const clone of clones) {
           yield* syncCloneWorktrees(catalog, clone);
           worktreesByClone[clone.id] = yield* Effect.tryPromise({
-            try: () => catalog.listWorktrees(clone.id),
+            try: () => catalog.select().from(worktreesTable).where(eq(worktreesTable.cloneId, clone.id)).orderBy(asc(worktreesTable.path)),
             catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
           });
         }
 
         const refreshedClones = yield* Effect.tryPromise({
-          try: () => catalog.listClones(repo.id),
+          try: () => catalog.select().from(clonesTable).where(eq(clonesTable.repoId, repo.id)).orderBy(asc(clonesTable.registeredAt)),
           catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
         });
         const envs = yield* Effect.tryPromise({
@@ -426,7 +453,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         const detailStartedAt = Date.now();
         const repo = yield* getRepoBySlug(catalog, repoSlugValue);
         const clones = yield* Effect.tryPromise({
-          try: () => catalog.listClones(repo.id),
+          try: () => catalog.select().from(clonesTable).where(eq(clonesTable.repoId, repo.id)).orderBy(asc(clonesTable.registeredAt)),
           catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
         });
         const worktreesByClone: Record<string, Array<Worktree>> = {};
@@ -434,13 +461,13 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         for (const clone of clones) {
           yield* syncCloneWorktrees(catalog, clone);
           worktreesByClone[clone.id] = yield* Effect.tryPromise({
-            try: () => catalog.listWorktrees(clone.id),
+            try: () => catalog.select().from(worktreesTable).where(eq(worktreesTable.cloneId, clone.id)).orderBy(asc(worktreesTable.path)),
             catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
           });
         }
 
         const refreshedClones = yield* Effect.tryPromise({
-          try: () => catalog.listClones(repo.id),
+          try: () => catalog.select().from(clonesTable).where(eq(clonesTable.repoId, repo.id)).orderBy(asc(clonesTable.registeredAt)),
           catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
         });
         const envs = yield* Effect.tryPromise({
@@ -503,7 +530,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         };
 
         yield* Effect.tryPromise({
-          try: () => catalog.upsertWatchedPath(watchedPath),
+          try: () => upsertWatchedPathRow(catalog, watchedPath),
           catch: (error) => mapInternalError("CATALOG_WRITE_FAILED", error),
         });
 
@@ -534,7 +561,10 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
           yield* Effect.tryPromise({
             try: async () => {
               validateGitRepo(gitRoot);
-              await catalog.updateClonePath(clone.id, gitRoot);
+              await catalog
+                .update(clonesTable)
+                .set({ path: gitRoot, status: "active", lastSeenAt: new Date().toISOString() })
+                .where(eq(clonesTable.id, clone.id));
               await syncCloneWorktreesAsync(catalog, { ...clone, path: gitRoot });
             },
             catch: (error) => new BadRequestError({ code: "RELINK_FAILED", message: toMessage(error) }),
@@ -547,7 +577,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         const repo = yield* getRepoBySlug(catalog, repoSlugValue);
         const clone = yield* getClone(catalog, cloneId);
         const worktrees = yield* Effect.tryPromise({
-          try: () => catalog.listWorktrees(clone.id),
+          try: () => catalog.select().from(worktreesTable).where(eq(worktreesTable.cloneId, clone.id)).orderBy(asc(worktreesTable.path)),
           catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
         });
         const activePaths = new Set<string>([clone.path, ...worktrees.map((worktree) => worktree.path)]);
@@ -571,7 +601,7 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         }
 
         yield* Effect.tryPromise({
-          try: () => catalog.deleteClone(cloneId),
+          try: () => catalog.delete(clonesTable).where(eq(clonesTable.id, cloneId)),
           catch: (error) => mapInternalError("CATALOG_WRITE_FAILED", error),
         });
         publish({ type: "repo.updated", repoSlug: repoSlugValue });
@@ -581,14 +611,14 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         function*(repoSlugValue: string, request: ArchiveWorktreeRequest) {
           const repo = yield* getRepoBySlug(catalog, repoSlugValue);
           const clones = yield* Effect.tryPromise({
-            try: () => catalog.listClones(repo.id),
+            try: () => catalog.select().from(clonesTable).where(eq(clonesTable.repoId, repo.id)).orderBy(asc(clonesTable.registeredAt)),
             catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
           });
 
           let ownerClone: Clone | undefined;
           for (const clone of clones) {
             const wts = yield* Effect.tryPromise({
-              try: () => catalog.listWorktrees(clone.id),
+              try: () => catalog.select().from(worktreesTable).where(eq(worktreesTable.cloneId, clone.id)).orderBy(asc(worktreesTable.path)),
               catch: (error) => mapInternalError("CATALOG_READ_FAILED", error),
             });
             if (wts.some((worktree) => worktree.path === request.path)) {
@@ -740,8 +770,8 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
         mkdirSync(resolve(configPath, ".."), { recursive: true });
         writeFileSync(configPath, request.content, "utf8");
         yield* Effect.tryPromise({
-          try: () => catalog.registerRepo({
-            repoId: deriveRepoId(gitRoot),
+          try: () => registerRepoRow(catalog, {
+            repoId: deriveRepoId(gitRoot) as RegisteredRepo["repoId"],
             repoPath: gitRoot,
             configPath,
             lastSeenAt: new Date().toISOString(),
@@ -786,15 +816,15 @@ export class DaemonService extends ServiceMap.Service<DaemonService, {
 }
 
 async function listRepoEnvsForRepo(
-  catalog: CatalogDatabase,
+  catalog: CatalogDb,
   envManager: EnvManager,
   repo: Repo,
 ): Promise<Array<EnvInfo>> {
-  const clones = await catalog.listClones(repo.id);
+  const clones = await catalog.select().from(clonesTable).where(eq(clonesTable.repoId, repo.id)).orderBy(asc(clonesTable.registeredAt));
   const paths = new Set<string>();
   for (const clone of clones) {
     paths.add(clone.path);
-    const worktrees = await catalog.listWorktrees(clone.id);
+    const worktrees = await catalog.select().from(worktreesTable).where(eq(worktreesTable.cloneId, clone.id)).orderBy(asc(worktreesTable.path));
     for (const worktree of worktrees) {
       paths.add(worktree.path);
     }
@@ -838,8 +868,8 @@ function buildGitPathInfoMap(
   return gitPaths;
 }
 
-async function enrichRepo(repo: Repo, catalog: CatalogDatabase, envManager: EnvManager): Promise<WebRepo> {
-  const clones = await catalog.listClones(repo.id);
+async function enrichRepo(repo: Repo, catalog: CatalogDb, envManager: EnvManager): Promise<WebRepo> {
+  const clones = await catalog.select().from(clonesTable).where(eq(clonesTable.repoId, repo.id)).orderBy(asc(clonesTable.registeredAt));
   const envs = await listRepoEnvsForRepo(catalog, envManager, repo);
   let overallStatus: WebRepo["overallStatus"] = "offline";
   let activeEnvCount = 0;
@@ -875,8 +905,13 @@ async function enrichRepo(repo: Repo, catalog: CatalogDatabase, envManager: EnvM
   };
 }
 
-async function repoSlugForRepoId(catalog: CatalogDatabase, repoId: string): Promise<string | undefined> {
-  return (await catalog.getRepo(repoId))?.slug;
+async function repoSlugForRepoId(catalog: CatalogDb, repoId: string): Promise<string | undefined> {
+  const [row] = await catalog
+    .select({ slug: reposTable.slug })
+    .from(reposTable)
+    .where(eq(reposTable.id, repoId))
+    .limit(1);
+  return row?.slug;
 }
 
 function mapCreateEnvError(error: unknown) {
@@ -957,24 +992,31 @@ function sseStream(events: (signal: AbortSignal) => AsyncIterable<DomainEvent>) 
   });
 }
 
-async function syncCloneWorktreesAsync(catalog: CatalogDatabase, clone: Clone): Promise<void> {
+async function syncCloneWorktreesAsync(catalog: CatalogDb, clone: Clone): Promise<void> {
+  const now = new Date().toISOString();
   if (!existsSync(clone.path)) {
-    await catalog.updateCloneStatus(clone.id, "missing");
-    await catalog.replaceWorktrees(clone.id, []);
+    await catalog
+      .update(clonesTable)
+      .set({ status: "missing", lastSeenAt: now })
+      .where(eq(clonesTable.id, clone.id));
+    await replaceWorktreesRows(catalog, clone.id, []);
     return;
   }
-  await catalog.updateCloneStatus(clone.id, "active");
-  await catalog.replaceWorktrees(clone.id, discoverWorktrees(clone.path, clone.id));
+  await catalog
+    .update(clonesTable)
+    .set({ status: "active", lastSeenAt: now })
+    .where(eq(clonesTable.id, clone.id));
+  await replaceWorktreesRows(catalog, clone.id, discoverWorktrees(clone.path, clone.id));
 }
 
-function syncCloneWorktrees(catalog: CatalogDatabase, clone: Clone) {
+function syncCloneWorktrees(catalog: CatalogDb, clone: Clone) {
   return Effect.tryPromise({
     try: () => syncCloneWorktreesAsync(catalog, clone),
     catch: (error) => mapInternalError("CATALOG_WRITE_FAILED", error),
   });
 }
 
-function syncWatchedPath(catalog: CatalogDatabase, watchedPath: WatchedPath) {
+function syncWatchedPath(catalog: CatalogDb, watchedPath: WatchedPath) {
   return Effect.tryPromise({
     try: async () => {
       const probe = probePath(watchedPath.path);
@@ -993,7 +1035,10 @@ function syncWatchedPath(catalog: CatalogDatabase, watchedPath: WatchedPath) {
           imported += 1;
         }
       }
-      await catalog.updateWatchedPathScan(watchedPath.path, new Date().toISOString(), "");
+      await catalog
+        .update(watchedPathsTable)
+        .set({ lastScannedAt: new Date().toISOString(), lastScanError: "" })
+        .where(eq(watchedPathsTable.path, watchedPath.path));
       return imported;
     },
     catch: (error) => mapInternalError("WATCHED_PATH_SYNC_FAILED", error),
@@ -1001,7 +1046,7 @@ function syncWatchedPath(catalog: CatalogDatabase, watchedPath: WatchedPath) {
 }
 
 function importGitRepoPath(
-  catalog: CatalogDatabase,
+  catalog: CatalogDb,
   gitRoot: string,
   remoteName: string | undefined,
   requireRemotePick: boolean,
@@ -1013,7 +1058,7 @@ function importGitRepoPath(
 }
 
 async function importGitRepoPathAsync(
-  catalog: CatalogDatabase,
+  catalog: CatalogDb,
   gitRoot: string,
   remoteName: string | undefined,
   requireRemotePick: boolean,
@@ -1059,7 +1104,7 @@ async function importGitRepoPathAsync(
     };
   }
 
-  await catalog.upsertRepo(repo);
+  await upsertRepoRow(catalog, repo);
   const clone: Clone = {
     id: deriveCloneId(gitRoot),
     repoId: repo.id,
@@ -1068,14 +1113,14 @@ async function importGitRepoPathAsync(
     lastSeenAt: "",
     registeredAt: "",
   };
-  await catalog.upsertClone(clone);
+  await upsertCloneRow(catalog, clone);
   await syncCloneWorktreesAsync(catalog, clone);
 
   return { repo, clone };
 }
 
 function resolveRepoEnv(
-  catalog: CatalogDatabase,
+  catalog: CatalogDb,
   envManager: EnvManager,
   previewSessions: Map<string, PreviewSession>,
   repoRef: string,
@@ -1093,7 +1138,17 @@ function resolveRepoEnv(
         // fall through
       }
 
-      const repo = (await catalog.getRepoBySlug(repoRef)) ?? (await catalog.getRepo(repoRef));
+      const [bySlug] = await catalog
+        .select()
+        .from(reposTable)
+        .where(eq(reposTable.slug, repoRef))
+        .limit(1);
+      const [byId] = bySlug ? [bySlug] : await catalog
+        .select()
+        .from(reposTable)
+        .where(eq(reposTable.id, repoRef))
+        .limit(1);
+      const repo = bySlug ?? byId;
       if (repo) {
         const envs = await listRepoEnvsForRepo(catalog, envManager, repo);
         const found = envs.find((env) => env.envId === envId && (!repoPath || env.repoPath === repoPath));
@@ -1114,10 +1169,14 @@ function resolveRepoEnv(
   });
 }
 
-function getRepoBySlug(catalog: CatalogDatabase, slug: string) {
+function getRepoBySlug(catalog: CatalogDb, slug: string) {
   return Effect.tryPromise({
     try: async () => {
-      const repo = await catalog.getRepoBySlug(slug);
+      const [repo] = await catalog
+        .select()
+        .from(reposTable)
+        .where(eq(reposTable.slug, slug))
+        .limit(1);
       if (!repo) {
         throw new NotFoundError({ code: "REPO_NOT_FOUND", message: `Repo "${slug}" not found` });
       }
@@ -1127,10 +1186,14 @@ function getRepoBySlug(catalog: CatalogDatabase, slug: string) {
   });
 }
 
-function getClone(catalog: CatalogDatabase, cloneId: string) {
+function getClone(catalog: CatalogDb, cloneId: string) {
   return Effect.tryPromise({
     try: async () => {
-      const clone = await catalog.getClone(cloneId);
+      const [clone] = await catalog
+        .select()
+        .from(clonesTable)
+        .where(eq(clonesTable.id, cloneId))
+        .limit(1);
       if (!clone) {
         throw new NotFoundError({ code: "CLONE_NOT_FOUND", message: `Clone "${cloneId}" not found` });
       }

@@ -19,6 +19,7 @@ import {
   StopInfraRequest,
 } from "spawntree-core";
 import { BadRequestError } from "./errors.ts";
+import { createCatalogRoutes } from "./routes/catalog.ts";
 import { createStorageRoutes } from "./routes/storage.ts";
 import { DaemonService } from "./services/daemon-service.ts";
 import type { StorageManager } from "./storage/manager.ts";
@@ -46,6 +47,7 @@ export function createApp(
   // Storage provider management routes.
   if (options.storage) {
     app.route("/api/v1/storage", createStorageRoutes(options.storage));
+    app.route("/api/v1/catalog", createCatalogRoutes(options.storage));
   }
 
   app.get("/api/v1/daemon", (context) => runJson(runtime, context, DaemonService.use((service) => service.daemonInfo)));
