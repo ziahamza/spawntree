@@ -61,7 +61,7 @@ import {
   worktrees as worktreesTable,
   type CatalogDb,
 } from "spawntree-core";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { parse as parseYaml } from "yaml";
 import {
