@@ -24,10 +24,12 @@
     "effect": "4.0.0-beta.43",
     "hono": "^4.7.11",
     "spawntree-core": "workspace:*",
+    "ws": "^8.20.0",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
-    "@types/dockerode": "^3.3.39"
+    "@types/dockerode": "^3.3.39",
+    "@types/ws": "^8.18.1"
   },
   "license": "MIT",
   "repository": {

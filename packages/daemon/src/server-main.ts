@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { createApp, hasBundledWebApp } from "./server.ts";
 import { DaemonService } from "./services/daemon-service.ts";
 import { SessionManager } from "./sessions/session-manager.ts";
+import { attachSessionWebSocket } from "./sessions/sessions-ws.ts";
 import { ensureDir, saveDaemonPid, saveRuntimeMetadata, spawntreeHome } from "./state/global-state.ts";
 import { StorageManager } from "./storage/manager.ts";
 
@@ -41,6 +42,11 @@ async function main() {
   const listener = getRequestListener(app.fetch);
   const server = createServer(listener);
 
+  // Hono handles HTTP; the WebSocket upgrade path attaches directly to
+  // the Node server so we can support both without bridging transports.
+  // Returns a teardown function used during shutdown.
+  const detachWs = attachSessionWebSocket(server, sessionManager);
+
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", () => resolve());
@@ -53,7 +59,9 @@ async function main() {
   });
 
   const origin = `http://127.0.0.1:${port}`;
+  const wsOrigin = `ws://127.0.0.1:${port}`;
   process.stderr.write(`[spawntree-daemon] API: ${origin}/api/v1/daemon\n`);
+  process.stderr.write(`[spawntree-daemon] WS:  ${wsOrigin}/api/v1/sessions/ws\n`);
   if (hasBundledWebApp()) {
     process.stderr.write(`[spawntree-daemon] Web: ${origin}/\n`);
   } else {
@@ -69,7 +77,11 @@ async function main() {
       Match.orElse(async () => {
         shuttingDown = true;
         process.stderr.write(`[spawntree-daemon] Received ${signal}, shutting down...\n`);
-        // Tear down the session manager first so ACP adapter subprocesses
+        // Tear down the WebSocket server first so in-flight subscriptions
+        // drain before we yank the SessionManager out from under them.
+        // `detachWs` only touches listeners + wss.close(), neither throws.
+        detachWs();
+        // Tear down the session manager next so ACP adapter subprocesses
         // release before the runtime disposes the services they might use.
         await sessionManager.shutdown().catch(() => undefined);
         await runtime
