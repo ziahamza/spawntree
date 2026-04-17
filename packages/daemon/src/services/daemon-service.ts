@@ -55,7 +55,6 @@ import {
 } from "spawntree-core";
 import {
   clones as clonesTable,
-  registeredRepos as registeredReposTable,
   repos as reposTable,
   schema as catalogSchema,
   watchedPaths as watchedPathsTable,
