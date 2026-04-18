@@ -26,6 +26,29 @@ import type { SessionManager } from "../sessions/session-manager.ts";
 export function createSessionRoutes(manager: SessionManager) {
   const app = new Hono();
 
+  app.use("*", async (c, next) => {
+    const origin = c.req.header("origin");
+
+    if (c.req.method === "OPTIONS") {
+      if (!origin || !isAllowedBrowserOrigin(origin)) {
+        return c.text("Not Found", 404);
+      }
+
+      return new Response(null, {
+        status: 204,
+        headers: buildCorsHeaders(origin),
+      });
+    }
+
+    await next();
+
+    if (origin && isAllowedBrowserOrigin(origin)) {
+      for (const [name, value] of corsHeaderEntries(origin)) {
+        c.header(name, value);
+      }
+    }
+  });
+
   // List all sessions across all providers.
   app.get("/", async (c) => {
     try {
@@ -274,4 +297,37 @@ function isTagged<T extends string>(
     "_tag" in error &&
     (error as { _tag?: string })._tag === tag
   );
+}
+
+function isAllowedBrowserOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return (
+      url.hostname === "127.0.0.1"
+      || url.hostname === "localhost"
+      || url.hostname === "::1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function buildCorsHeaders(origin: string): Headers {
+  return new Headers({
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  });
+}
+
+function corsHeaderEntries(origin: string): Array<[string, string]> {
+  return [
+    ["Access-Control-Allow-Origin", origin],
+    ["Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS"],
+    ["Access-Control-Allow-Headers", "Content-Type, Authorization"],
+    ["Access-Control-Max-Age", "86400"],
+    ["Vary", "Origin"],
+  ];
 }
