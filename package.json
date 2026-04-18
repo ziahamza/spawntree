@@ -7,7 +7,7 @@
     "dev:daemon:src": "node packages/daemon/src/server-main.ts",
     "dev:web": "pnpm --filter spawntree-web exec vite dev",
     "dev:web:qa": "cd packages/web && pnpm exec vite dev --host 127.0.0.1 --port 4217 --strictPort",
-    "build": "pnpm --filter spawntree-core run build && pnpm --filter spawntree-daemon run build && pnpm --filter spawntree-host-server run build && pnpm --filter spawntree run build && pnpm --filter spawntree-web run build:only && pnpm --filter spawntree-daemon run bundle-web",
+    "build": "pnpm --filter spawntree-core run build && pnpm --filter spawntree-daemon run build && pnpm --filter spawntree-host run build && pnpm --filter spawntree run build && pnpm --filter spawntree-web run build:only && pnpm --filter spawntree-daemon run bundle-web",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "pnpm lint:ox && pnpm lint:type-aware && pnpm lint:effect",

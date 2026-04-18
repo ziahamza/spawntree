@@ -1,4 +1,4 @@
-# spawntree-host-server
+# spawntree-host
 
 A tiny HTTP server that aggregates multiple spawntree daemons — running on your
 laptop, your team's workstation, a remote dev box — behind a single API and
@@ -21,20 +21,20 @@ TLS. Harden for your deployment before running it exposed to the internet.
 ## Install
 
 ```bash
-npm i -g spawntree-host-server
-spawntree-host-server                # listens on http://127.0.0.1:7777
+npm i -g spawntree-host
+spawntree-host                # listens on http://127.0.0.1:7777
 ```
 
 Or run without installing:
 
 ```bash
-npx spawntree-host-server
+npx spawntree-host
 ```
 
 From inside this monorepo:
 
 ```bash
-pnpm --filter spawntree-host-server start
+pnpm --filter spawntree-host start
 ```
 
 Environment variables:

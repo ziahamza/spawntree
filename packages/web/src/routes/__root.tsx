@@ -107,7 +107,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </button>
         </div>
         {/* Host-switcher: lets one dashboard talk to multiple spawntree
-            daemons via a federation host-server. See examples/host-server. */}
+            daemons via a federation host (`spawntree-host` package). */}
         <HostSwitcher />
       </div>
       <div className="flex-1 overflow-y-auto">

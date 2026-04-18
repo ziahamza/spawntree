@@ -9,12 +9,12 @@
  * Pure Node.js. No framework, no deps beyond `better-sqlite3`.
  *
  * Run directly:
- *   pnpm --filter spawntree-host-server start
- *   HOST_SERVER_PORT=7777 npx spawntree-host-server
+ *   pnpm --filter spawntree-host start
+ *   HOST_SERVER_PORT=7777 npx spawntree-host
  *
  * Or install + invoke the bin:
- *   npm i -g spawntree-host-server
- *   spawntree-host-server
+ *   npm i -g spawntree-host
+ *   spawntree-host
  */
 
 import { createServer } from "node:http";
@@ -329,7 +329,7 @@ async function proxyToHost(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(
-      `[host-server] upstream fail: ${message} (${method} ${target.pathname})\n`,
+      `[spawntree-host] upstream fail: ${message} (${method} ${target.pathname})\n`,
     );
     if (!res.headersSent) {
       json(res, 502, {
@@ -469,14 +469,14 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  process.stderr.write(`[host-server] listening on http://${HOST}:${PORT} (db: ${DB_PATH})\n`);
+  process.stderr.write(`[spawntree-host] listening on http://${HOST}:${PORT} (db: ${DB_PATH})\n`);
 });
 
 let shuttingDown = false;
 async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
-  process.stderr.write(`[host-server] received ${signal}, shutting down\n`);
+  process.stderr.write(`[spawntree-host] received ${signal}, shutting down\n`);
   await new Promise<void>((resolve) => server.close(() => resolve()));
   process.exit(0);
 }
