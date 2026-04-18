@@ -18,15 +18,15 @@
   "dependencies": {
     "@effect/platform-node": "4.0.0-beta.43",
     "@hono/node-server": "^1.13.8",
-    "better-sqlite3": "^12.4.1",
+    "@libsql/client": "^0.15.4",
     "dockerode": "^4.0.7",
+    "drizzle-orm": "^0.45.2",
     "effect": "4.0.0-beta.43",
     "hono": "^4.7.11",
     "spawntree-core": "workspace:*",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "@types/dockerode": "^3.3.39"
   },
   "license": "MIT",

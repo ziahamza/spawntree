@@ -19,9 +19,12 @@ import {
   StopInfraRequest,
 } from "spawntree-core";
 import { BadRequestError } from "./errors.ts";
+import { createCatalogRoutes } from "./routes/catalog.ts";
 import { createSessionRoutes } from "./routes/sessions.ts";
+import { createStorageRoutes } from "./routes/storage.ts";
 import { DaemonService } from "./services/daemon-service.ts";
-import { SessionManager } from "./sessions/session-manager.ts";
+import type { SessionManager } from "./sessions/session-manager.ts";
+import type { StorageManager } from "./storage/manager.ts";
 
 /**
  * Where the SPA bundle lives at runtime. Two layouts supported:
@@ -47,7 +50,7 @@ const webIndexPath = resolve(webDistDir, "index.html");
 
 export function createApp(
   runtime: ManagedRuntime.ManagedRuntime<DaemonService, never>,
-  sessionManager?: SessionManager,
+  options: { storage?: StorageManager; sessionManager?: SessionManager } = {},
 ) {
   const app = new Hono();
 
@@ -62,9 +65,15 @@ export function createApp(
 
   app.get("/health", (context) => context.text("ok"));
 
+  // Storage provider management + catalog query routes.
+  if (options.storage) {
+    app.route("/api/v1/storage", createStorageRoutes(options.storage));
+    app.route("/api/v1/catalog", createCatalogRoutes(options.storage));
+  }
+
   // Session manager routes (ACP agent sessions).
-  if (sessionManager) {
-    app.route("/api/v1/sessions", createSessionRoutes(sessionManager));
+  if (options.sessionManager) {
+    app.route("/api/v1/sessions", createSessionRoutes(options.sessionManager));
   }
 
   app.get("/api/v1/daemon", (context) => runJson(runtime, context, DaemonService.use((service) => service.daemonInfo)));

@@ -1,12 +1,30 @@
-import type { ACPAdapter, ACPSessionDetail, DiscoveredSession, SessionEvent } from "spawntree-core";
+import type {
+  ACPAdapter,
+  ACPSessionDetail,
+  CatalogDb,
+  DiscoveredSession,
+  SessionEvent,
+  SessionInfo,
+} from "spawntree-core";
 import {
   ClaudeCodeAdapter,
   CodexACPAdapter,
   ProviderCapabilityError,
+  schema as catalogSchema,
   SessionDeleteUnsupportedError,
   UnknownProviderError,
 } from "spawntree-core";
+import { drizzle } from "drizzle-orm/libsql";
 import type { DomainEvents } from "../events/domain-events.ts";
+import { applyCatalogSchema } from "../catalog/queries.ts";
+import type { StorageManager } from "../storage/manager.ts";
+import {
+  deletePersistedSession,
+  getPersistedSession,
+  listPersistedSessions,
+  persistSessionEvent,
+  upsertSession,
+} from "./persistence.ts";
 
 /**
  * Manages the lifecycle of ACP adapters and routes session operations to
@@ -34,13 +52,47 @@ export class SessionManager {
   private readonly sessionIndex = new Map<string, string>();
   private readonly subscribedProviders = new Set<string>();
 
-  constructor(events: DomainEvents) {
+  /**
+   * When present, session events are mirrored into the catalog DB so
+   * sessions survive daemon restart, ride along with the s3-snapshot
+   * replicator, and are queryable by external Drizzle clients.
+   *
+   * Null when the manager is built without a StorageManager (older test
+   * code paths) — in that case sessions are in-memory only.
+   */
+  private readonly catalog: CatalogDb | null;
+  private readonly storage: StorageManager | null;
+  /**
+   * Per-session promise chain so adapter events land in the catalog in
+   * the order they were emitted. Without this, `turn_completed` may
+   * race the `turn_started` INSERT and run its UPDATE against 0 rows.
+   */
+  private readonly persistQueues = new Map<string, Promise<unknown>>();
+
+  constructor(events: DomainEvents, options: { storage?: StorageManager } = {}) {
     this.events = events;
+    this.storage = options.storage ?? null;
+    this.catalog = options.storage
+      ? drizzle(options.storage.client, { schema: catalogSchema })
+      : null;
 
     // Register built-in adapters. Additional adapters can be added via
     // `registerAdapter()` before the manager is used.
     this.adapters.set("claude-code", new ClaudeCodeAdapter());
     this.adapters.set("codex", new CodexACPAdapter());
+  }
+
+  /**
+   * Bootstrap the catalog schema for the session tables. Called once at
+   * daemon boot from `server-main.ts` after the StorageManager has opened
+   * its primary. Safe to skip (and is in tests) if the manager was built
+   * without a StorageManager — `applyCatalogSchema` is idempotent so
+   * double-bootstrap from the DaemonService layer is a no-op.
+   */
+  async start(): Promise<void> {
+    if (this.storage) {
+      await applyCatalogSchema(this.storage.client);
+    }
   }
 
   /**
@@ -167,6 +219,23 @@ export class SessionManager {
     // Index so subsequent operations route directly without iterating
     // every adapter's discoverSessions() (which would spawn subprocesses).
     this.sessionIndex.set(result.sessionId, provider);
+
+    // Mirror the session row into the catalog so list/get can come from
+    // Drizzle without bouncing through the adapter subprocess, and so the
+    // s3-snapshot replicator captures session metadata.
+    if (this.catalog) {
+      await upsertSession(this.catalog, {
+        sessionId: result.sessionId,
+        provider,
+        status: "idle",
+        workingDirectory: params.cwd,
+      }).catch((err) => {
+        // Non-fatal: in-memory routing still works; surface on next write.
+        process.stderr.write(
+          `[spawntree-daemon] session persist failed on create: ${String(err)}\n`,
+        );
+      });
+    }
     return result;
   }
 
@@ -228,6 +297,28 @@ export class SessionManager {
     }
     await adapter.deleteSession(sessionId);
     this.sessionIndex.delete(sessionId);
+    if (this.catalog) {
+      await deletePersistedSession(this.catalog, sessionId).catch(() => undefined);
+    }
+  }
+
+  /**
+   * List sessions from the catalog DB. Fast path that doesn't spawn any
+   * adapter subprocesses. External Drizzle clients querying the same
+   * tables see identical data.
+   *
+   * Returns an empty array when no StorageManager is wired up (tests,
+   * legacy paths). Callers that need live discovery hit `listSessions()`.
+   */
+  async listPersistedSessions(): Promise<Array<SessionInfo>> {
+    if (!this.catalog) return [];
+    return listPersistedSessions(this.catalog);
+  }
+
+  /** Same shape as `listPersistedSessions` but for a single session. */
+  async getPersistedSession(sessionId: string): Promise<SessionInfo | undefined> {
+    if (!this.catalog) return undefined;
+    return getPersistedSession(this.catalog, sessionId);
   }
 
   /**
@@ -354,6 +445,35 @@ export class SessionManager {
    * provider name lets `registerAdapter` tear it down cleanly when the
    * adapter is replaced.
    */
+  /**
+   * Chain a persistence write after any previous write for the same
+   * session so adapter events land in order (turn_started → turn_completed
+   * must run its UPDATE after the INSERT has landed, not concurrent with it).
+   *
+   * Returns a promise the caller can await (tests use `flushPersist()`
+   * which awaits all active queues). If the catalog isn't wired up, this
+   * is a no-op — callers get back a resolved promise.
+   */
+  private enqueuePersist(sessionId: string, op: () => Promise<void>): Promise<void> {
+    if (!this.catalog) return Promise.resolve();
+    const prev = this.persistQueues.get(sessionId) ?? Promise.resolve();
+    const next = prev.then(op);
+    // Swallow rejections in the stored reference so one failure doesn't
+    // permanently break the chain. `op` itself already logs errors.
+    this.persistQueues.set(sessionId, next.catch(() => undefined));
+    return next;
+  }
+
+  /**
+   * Wait for all queued persistence writes to drain. Tests call this
+   * after emitting events to make their assertions deterministic. The
+   * shutdown path also awaits it to avoid truncating in-flight writes.
+   */
+  async flushPersist(): Promise<void> {
+    const queues = [...this.persistQueues.values()];
+    await Promise.all(queues.map((q) => q.catch(() => undefined)));
+  }
+
   private subscribeToAdapter(provider: string, adapter: ACPAdapter): void {
     if (this.subscribedProviders.has(provider)) return;
     this.subscribedProviders.add(provider);
@@ -361,6 +481,18 @@ export class SessionManager {
     const unsub = adapter.onSessionEvent((event) => {
       // Publish to domain events bus — SSE subscribers will receive it.
       this.events.publishSessionEvent(event, provider);
+
+      // Mirror into the catalog so sessions survive restart + are visible
+      // to external Drizzle clients. Chain per-session so events land in
+      // emission order; errors are logged but don't break the chain so
+      // one bad write can't wedge the queue.
+      void this.enqueuePersist(event.sessionId, () =>
+        persistSessionEvent(this.catalog!, event).catch((err) => {
+          process.stderr.write(
+            `[spawntree-daemon] session persist failed on ${event.type}: ${String(err)}\n`,
+          );
+        }),
+      );
     });
     this.unsubscribers.set(provider, unsub);
   }
