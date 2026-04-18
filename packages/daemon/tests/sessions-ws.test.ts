@@ -207,6 +207,67 @@ describe("sessions WebSocket (requires prior `pnpm build`)", () => {
     ws.close();
   });
 
+  it("handles rapid unsubscribe \u2192 resubscribe without orphaning (Devin #1 regression)", async () => {
+    // Regression guard: the old code's async-generator `finally` block
+    // unconditionally ran `state.subscriptions.delete(sessionId)` when
+    // a subscription was aborted. If a client sent
+    // `unsubscribe(X)` immediately followed by `subscribe(X)` on the
+    // same tick, both sync handlers would run before the old
+    // generator's microtask reached `finally`, and the finally would
+    // wipe the NEW subscription's entry. The new subscription became
+    // orphaned: later `unsubscribe(X)` calls found nothing to abort,
+    // and the DomainEvents handler leaked.
+    //
+    // Fixed by guarding the delete with an identity check against the
+    // unsub function stored in the map.
+    //
+    // This test can't directly inspect the server's internal
+    // `state.subscriptions` map, but it can assert the observable
+    // symptom: after unsubscribe \u2192 resubscribe \u2192 unsubscribe, the
+    // final unsubscribe still acks promptly, which only works if the
+    // new subscription was properly tracked.
+    const ws = new WebSocket(`${wsOrigin}/api/v1/sessions/ws`);
+    await new Promise<void>((resolve, reject) => {
+      ws.once("open", () => resolve());
+      ws.once("error", reject);
+    });
+
+    const sessionId = "race-test-session";
+
+    // Collect acks in order as they arrive.
+    const acks: Array<{ op: string; sessionId: string }> = [];
+    ws.on("message", (raw: Buffer | string) => {
+      const text = typeof raw === "string" ? raw : raw.toString();
+      const msg = JSON.parse(text) as { type: string; op?: string; sessionId?: string };
+      if (msg.type === "ack" && msg.op && msg.sessionId) {
+        acks.push({ op: msg.op, sessionId: msg.sessionId });
+      }
+    });
+
+    // Fire all three synchronously so unsubscribe + resubscribe hit
+    // the server within the same event-loop tick.
+    ws.send(JSON.stringify({ type: "subscribe", sessionId }));
+    ws.send(JSON.stringify({ type: "unsubscribe", sessionId }));
+    ws.send(JSON.stringify({ type: "subscribe", sessionId }));
+    ws.send(JSON.stringify({ type: "unsubscribe", sessionId }));
+
+    // Wait for all four acks.
+    const deadline = Date.now() + 3000;
+    while (acks.length < 4 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+
+    expect(acks.length).toBeGreaterThanOrEqual(4);
+    expect(acks.map((a) => a.op)).toEqual([
+      "subscribe",
+      "unsubscribe",
+      "subscribe",
+      "unsubscribe",
+    ]);
+
+    ws.close();
+  });
+
   // NOTE: we intentionally don't test "upgrade is rejected on unrelated
   // paths". Our handler silently ignores non-matching paths so other
   // upgrade handlers (e.g. the future t3code adapter on a separate

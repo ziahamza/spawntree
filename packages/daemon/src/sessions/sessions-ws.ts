@@ -170,6 +170,15 @@ function handleSubscribe(
   // Drive the async iterable in a fire-and-forget loop. If the socket
   // closes or the subscription is torn down, the AbortController fires
   // which makes the iterator terminate.
+  //
+  // The `finally` block MUST check map identity before deleting. A
+  // rapid `unsubscribe(X)` → `subscribe(X)` sequence on the same tick
+  // runs both sync handlers before the old generator's microtask
+  // reaches `finally`. By then `state.subscriptions` holds the NEW
+  // subscription's unsub, and an unconditional `delete(sessionId)`
+  // would orphan it — no way to abort, no way to clean up the
+  // DomainEvents handler. Check that our own `unsub` is still the
+  // one in the map before removing.
   void (async () => {
     try {
       for await (const event of iterator) {
@@ -179,7 +188,9 @@ function handleSubscribe(
     } catch {
       // Silent — usually means the subscription was aborted normally.
     } finally {
-      state.subscriptions.delete(sessionId);
+      if (state.subscriptions.get(sessionId) === unsub) {
+        state.subscriptions.delete(sessionId);
+      }
     }
   })();
 
