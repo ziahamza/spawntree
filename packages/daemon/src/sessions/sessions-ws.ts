@@ -68,9 +68,19 @@ export function attachSessionWebSocket(
     socket: Parameters<NonNullable<Parameters<HttpServer["on"]>[1]>>[1],
     head: Buffer,
   ) => {
-    // Only handle our path. Other paths fall through to whatever else has
-    // attached an upgrade listener.
-    if (!req.url || !req.url.startsWith(WS_PATH)) return;
+    // Only handle OUR exact path. Other paths fall through to whatever
+    // else has attached an upgrade listener.
+    //
+    // Must be an exact match OR our path immediately followed by `?`
+    // for a query string. A naive `startsWith(WS_PATH)` would greedily
+    // capture unintended routes like `/api/v1/sessions/ws-admin`,
+    // `/api/v1/sessions/wss`, or `/api/v1/sessions/ws/anything` — every
+    // one of those would be hijacked into a WebSocket handshake against
+    // the sessions endpoint. Stricter matching keeps the upgrade
+    // namespace clean so future endpoints (a t3code adapter at
+    // `/api/v1/sessions/ws-t3code`, say) can coexist.
+    if (!req.url) return;
+    if (req.url !== WS_PATH && !req.url.startsWith(`${WS_PATH}?`)) return;
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit("connection", ws, req);
     });

@@ -268,6 +268,50 @@ describe("sessions WebSocket (requires prior `pnpm build`)", () => {
     ws.close();
   });
 
+  it("upgrades only the exact path — suffixes like /ws-admin do NOT match (Devin #2 regression)", async () => {
+    // Regression guard: the handler originally used
+    // `req.url.startsWith(WS_PATH)` which would have hijacked
+    // `/api/v1/sessions/ws-admin`, `/api/v1/sessions/wss`,
+    // `/api/v1/sessions/ws/anything`, etc. into our WebSocket
+    // handshake. The fix tightened it to exact match OR "?" suffix for
+    // query strings only.
+    //
+    // We assert the contract from the client side: a connection attempt
+    // to a suffixed path does NOT complete a handshake (our handler
+    // doesn't call wss.handleUpgrade, nobody else handles the path, so
+    // the client eventually times out or closes). We give it 1.5s,
+    // which is way more than enough on loopback — if the handshake had
+    // gone through, `open` would fire within ~20ms.
+    const ws = new WebSocket(`${wsOrigin}/api/v1/sessions/ws-admin`);
+    const outcome = await new Promise<"open" | "close-or-error">((resolve) => {
+      const timer = setTimeout(() => resolve("close-or-error"), 1500);
+      ws.once("open", () => {
+        clearTimeout(timer);
+        resolve("open");
+      });
+      ws.once("error", () => {
+        clearTimeout(timer);
+        resolve("close-or-error");
+      });
+      ws.once("close", () => {
+        clearTimeout(timer);
+        resolve("close-or-error");
+      });
+    });
+    expect(outcome).toBe("close-or-error");
+    ws.close();
+  });
+
+  it("upgrades exact path with a query string — /ws?token=abc DOES match", async () => {
+    const ws = new WebSocket(`${wsOrigin}/api/v1/sessions/ws?token=abc`);
+    await new Promise<void>((resolve, reject) => {
+      ws.once("open", () => resolve());
+      ws.once("error", reject);
+    });
+    expect(ws.readyState).toBe(ws.OPEN);
+    ws.close();
+  });
+
   // NOTE: we intentionally don't test "upgrade is rejected on unrelated
   // paths". Our handler silently ignores non-matching paths so other
   // upgrade handlers (e.g. the future t3code adapter on a separate
