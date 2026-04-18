@@ -1,6 +1,6 @@
 {
   "name": "spawntree-host-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Federation host server for spawntree — aggregates multiple daemons behind one API and dashboard",
   "type": "module",
   "main": "./dist/server.js",

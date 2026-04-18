@@ -1,5 +1,93 @@
 # spawntree-daemon
 
+## 0.3.0
+
+### Minor Changes
+
+- [#14](https://github.com/ziahamza/spawntree/pull/14) [`fb288c0`](https://github.com/ziahamza/spawntree/commit/fb288c0ebc077407d64efbce923b4cf42dc9ccb5) Thanks [@ziahamza](https://github.com/ziahamza)! - Add agent session API — drive Claude Code and Codex through the daemon as
+  first-class sessions.
+
+  - Normalized `ACPAdapter` layer in `spawntree-core` (Claude Code via native ACP,
+    Codex via JSON-RPC app-server facade). Third-party providers register via
+    `SessionManager.registerAdapter`.
+  - New HTTP API: `/api/v1/sessions` (list, create, detail, delete, send message,
+    interrupt, per-session SSE events). Session events also mirror onto the main
+    `/api/v1/events` stream as `type: "session_event"`.
+  - Typed SDK methods on `ApiClient`: `listSessions`, `createSession`,
+    `getSession`, `deleteSession`, `sendSessionMessage`, `interruptSession`,
+    `streamSessionEvents`.
+  - Typed errors with HTTP status translations: `SessionBusyError` → 409,
+    `SessionDeleteUnsupportedError` → 501, `UnknownProviderError` /
+    `ProviderCapabilityError` → 400.
+  - Fixes: permission policy fails closed on reject\_\*, concurrent sendMessage
+    rejected with 409, deleteSession actually works (or returns 501), findSession
+    cached to avoid spawning unrelated adapter subprocesses, totalTurns normalized
+    across providers, per-session event history replay filtered by sessionId.
+  - Devin review fixes: JSON-RPC transport now emits `jsonrpc: "2.0"` on every
+    request and notification (spec-required; Codex is permissive today but strict
+    servers would reject). `SessionManager.createSession` now subscribes to
+    adapter events BEFORE calling `adapter.createSession` so events emitted during
+    startup aren't dropped. `listSessions` also subscribes to each adapter it
+    successfully queries. `decodeBody` moved inside try/catch so invalid POST
+    bodies map to HTTP 400. `registerAdapter` unsubscribes + shuts down the old
+    instance when replacing. Adapter `start()` uses a `startPromise` mutex so
+    concurrent callers don't race the `initialize()` handshake. Host-server
+    escapes HTML on its landing page and preserves full query strings on
+    proxied URLs.
+  - New installable package `spawntree-host-server` (at `packages/host-server/`)
+    exposes a `bin` so teams can `npm i -g` or `npx spawntree-host-server` to
+    run the federation server without copying source.
+
+- [#25](https://github.com/ziahamza/spawntree/pull/25) [`72a43f6`](https://github.com/ziahamza/spawntree/commit/72a43f6b110ae2f98e541a42f4434afc2cddeffc) Thanks [@ziahamza](https://github.com/ziahamza)! - Pluggable storage providers, typed catalog via Drizzle, and ACP session persistence.
+
+  ### Storage providers (`spawntree-core/storage`, `spawntree-daemon/storage`)
+
+  - `PrimaryStorageProvider` + `ReplicatorProvider` contracts, registry, and three
+    built-in providers: `local` (plain libSQL file), `turso-embedded` (libSQL
+    embedded replica with `syncUrl`), `s3-snapshot` (VACUUM INTO + atomic
+    CopyObject upload).
+  - `StorageManager` orchestrates the active primary + replicators, serializes
+    mutations via an internal lock, and supports hot-swapping the primary with
+    transactional data migration (rollback on failure keeps the old primary
+    active).
+  - HTTP admin surface at `/api/v1/storage/*` with probe endpoints, loopback
+    origin gating (opt out with `SPAWNTREE_STORAGE_TRUST_REMOTE=1`), and
+    `0600` file perms on `~/.spawntree/storage.json`.
+
+  ### Typed catalog via Drizzle (`spawntree-core/db`)
+
+  - Drizzle schema for all 8 catalog tables (`repos`, `clones`, `worktrees`,
+    `watched_paths`, `registered_repos`, `sessions`, `session_turns`,
+    `session_tool_calls`) is the single source of truth for shape, indexes, and
+    foreign keys. Row types exported via `$inferSelect` / `$inferInsert`.
+  - `drizzle-kit` wired up for future schema changes; baseline migration checked
+    in at `packages/core/src/db/migrations/`.
+  - External consumers get two client surfaces:
+    - `createCatalogClient({ url })` / `createCatalogClientAsync({ url })` for
+      direct libSQL access (local file or Turso replica).
+    - `createCatalogHttpDb({ url })` / `catalogHttpProxy({ url })` for daemon-side
+      HTTP access, backed by Drizzle's `sqlite-proxy` driver. Consumers write
+      standard `db.select()` / `db.query.*` / joins against a shared schema —
+      no read endpoints to re-implement.
+  - Daemon-side `CatalogDatabase` wrapper replaced with direct Drizzle queries.
+    `better-sqlite3` removed from daemon deps.
+  - `POST /api/v1/catalog/query` + `POST /api/v1/catalog/batch` implement the
+    server side of the sqlite-proxy protocol. Loopback-gated by default.
+
+  ### ACP session persistence
+
+  - `SessionManager` now takes a `StorageManager` and mirrors every ACP adapter
+    event into the catalog DB so sessions survive daemon restart, ride along
+    with the s3-snapshot replicator, and are queryable by external Drizzle
+    clients.
+  - Per-session write queue serializes events so `turn_completed` can't race
+    `turn_started`. `flushPersist()` exposed for tests and shutdown.
+
+### Patch Changes
+
+- Updated dependencies [[`fb288c0`](https://github.com/ziahamza/spawntree/commit/fb288c0ebc077407d64efbce923b4cf42dc9ccb5), [`72a43f6`](https://github.com/ziahamza/spawntree/commit/72a43f6b110ae2f98e541a42f4434afc2cddeffc)]:
+  - spawntree-core@0.4.0
+
 ## 0.2.1
 
 ### Patch Changes
