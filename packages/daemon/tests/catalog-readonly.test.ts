@@ -74,6 +74,61 @@ describe("classifyReadOnlySql", () => {
     const v = classifyReadOnlySql('SELECT "col;name" FROM repos');
     expect(v.ok).toBe(true);
   });
+
+  // Regression tests for bypasses flagged in Devin's review of PR #25.
+  describe("string-literal / comment bypass protection", () => {
+    it("rejects SELECT '--' || id followed by a real DELETE", () => {
+      // The old regex stripper would match `--'` as a line comment
+      // starting inside the string literal, eat through end-of-line
+      // (including the `;` and DELETE), and let the classifier see a
+      // benign-looking `SELECT '`.
+      const v = classifyReadOnlySql("SELECT '--' || id FROM repos; DELETE FROM repos");
+      expect(v.ok).toBe(false);
+    });
+
+    it("rejects SELECT '/*' ... DELETE '... --*/' block-comment smuggle", () => {
+      // The old stripper would match from `/*` inside the string to
+      // `*/` at the very end, eating the whole DELETE statement.
+      const v = classifyReadOnlySql("SELECT '/*' FROM repos; DELETE FROM repos --*/");
+      expect(v.ok).toBe(false);
+    });
+
+    it("still accepts a legitimate SELECT that happens to contain '--' in a literal", () => {
+      const v = classifyReadOnlySql("SELECT '--safe' AS marker");
+      expect(v.ok).toBe(true);
+    });
+
+    it("still accepts a legitimate SELECT that happens to contain '/*' in a literal", () => {
+      const v = classifyReadOnlySql("SELECT '/*safe*/' AS marker");
+      expect(v.ok).toBe(true);
+    });
+
+    it("accepts double-quoted identifiers with embedded comment markers", () => {
+      const v = classifyReadOnlySql('SELECT "weird--col", "/*col*/" FROM repos');
+      expect(v.ok).toBe(true);
+    });
+  });
+
+  describe("schema-qualified PRAGMA protection", () => {
+    it.each([
+      "PRAGMA main.journal_mode = DELETE",
+      "PRAGMA temp.foreign_keys = OFF",
+      "PRAGMA MAIN.synchronous = 0",
+      "  PRAGMA main.wal_checkpoint",
+    ])("rejects schema-qualified write pragma: %s", (sql) => {
+      const v = classifyReadOnlySql(sql);
+      expect(v.ok).toBe(false);
+    });
+
+    it.each([
+      "PRAGMA main.table_info(repos)",
+      "PRAGMA main.cache_size",
+      "PRAGMA main.index_list(repos)",
+    ])("accepts schema-qualified read pragma: %s", (sql) => {
+      const v = classifyReadOnlySql(sql);
+      expect(v.ok).toBe(true);
+    });
+  });
 });
 
 describe("POST /api/v1/catalog/query-readonly", () => {
