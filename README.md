@@ -141,8 +141,8 @@ spawntree db restore mydata
 - [CLI Reference](./docs/cli-reference.md)
 - [Agent Sessions](./docs/sessions.md) — driving Claude Code / Codex through the
   daemon
-- [Federation host server](./packages/host-server/README.md) — published as
-  `spawntree-host-server`, lets one dashboard drive multiple daemons
+- [Federation host](./packages/host/README.md) — published as
+  `spawntree-host`, lets one dashboard drive multiple daemons
 - [Examples](./examples/)
 - [Roadmap](./ROADMAP.md)
 

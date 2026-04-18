@@ -65,7 +65,7 @@ First-class AI coding agent orchestration.
       400 `UNKNOWN_PROVIDER` / `PROVIDER_CAPABILITY_MISSING`
 - [x] **Custom providers**: `SessionManager.registerAdapter()` takes any
       `ACPAdapter` implementation — HTTP schema accepts arbitrary names
-- [x] **`spawntree-host-server` package**: `packages/host-server/` aggregates multiple
+- [x] **`spawntree-host` package**: `packages/host/` aggregates multiple
       spawntree daemons behind one dashboard
 - [ ] **Sessions attached to envs**: `createSession({ envId })` auto-injects
       `DATABASE_URL`/`REDIS_URL`/per-service vars into the agent subprocess

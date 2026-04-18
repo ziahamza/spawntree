@@ -24,8 +24,8 @@ All notable changes to spawntree will be documented in this file.
   `getSession`, `deleteSession`, `sendSessionMessage`, `interruptSession`, and
   `streamSessionEvents` (async generator over SSE). All responses go through
   Effect Schema validation.
-- **`spawntree-host-server`** — new installable package at
-  `packages/host-server/` with a `bin` (`spawntree-host-server`). A SQLite-backed registry
+- **`spawntree-host`** — new installable package at
+  `packages/host/` with a `bin` (`spawntree-host`). A SQLite-backed registry
   that lets one web dashboard switch between multiple spawntree daemons running
   on different machines.
 

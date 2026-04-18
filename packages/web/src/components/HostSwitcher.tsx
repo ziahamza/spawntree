@@ -7,8 +7,8 @@ import { setRegistryUrl, useHostState, useRegisteredHosts, useSwitchHost } from 
  *
  * Two modes:
  *   - Local (always available) — same-origin, the daemon serving this bundle.
- *   - Remote — any host registered in a federation host-server registry
- *     (see `spawntree-host-server` package). User enters the registry URL once and
+ *   - Remote — any host registered in a federation host registry
+ *     (see `spawntree-host` package). User enters the registry URL once and
  *     it's persisted to localStorage.
  */
 export function HostSwitcher() {
@@ -173,7 +173,7 @@ export function HostSwitcher() {
                 </div>
                 <div className="text-[10px] text-muted leading-relaxed">
                   Run the federation server from{" "}
-                  <code className="text-foreground/70">spawntree-host-server</code> and register
+                  <code className="text-foreground/70">spawntree-host</code> and register
                   daemons. Stored in this browser only.
                 </div>
               </div>

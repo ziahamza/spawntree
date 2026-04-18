@@ -136,7 +136,7 @@ importers:
         specifier: ^3.3.39
         version: 3.3.47
 
-  packages/host-server:
+  packages/host:
     dependencies:
       better-sqlite3:
         specifier: ^12.4.1

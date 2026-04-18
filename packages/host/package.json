@@ -1,12 +1,12 @@
 {
-  "name": "spawntree-host-server",
+  "name": "spawntree-host",
   "version": "0.2.0",
-  "description": "Federation host server for spawntree — aggregates multiple daemons behind one API and dashboard",
+  "description": "Federation host for spawntree — aggregates multiple daemons behind one API and dashboard",
   "type": "module",
   "main": "./dist/server.js",
   "types": "./dist/server.d.ts",
   "bin": {
-    "spawntree-host-server": "./dist/server.js"
+    "spawntree-host": "./dist/server.js"
   },
   "files": [
     "dist",
@@ -30,7 +30,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/ziahamza/spawntree.git",
-    "directory": "packages/host-server"
+    "directory": "packages/host"
   },
   "dependencies": {
     "better-sqlite3": "^12.4.1"
