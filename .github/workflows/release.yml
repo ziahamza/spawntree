@@ -12,6 +12,13 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # Enables npm OIDC trusted publishing: `id-token: write` lets the job
+      # mint a short-lived GitHub-issued token that npm verifies against the
+      # package's trusted-publisher config. Publishing with `--provenance`
+      # embeds attestations so consumers can verify the package came from
+      # this repo / workflow. See docs/RELEASE.md for the per-package npm
+      # setup (required only once per package).
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -38,6 +45,36 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # Fail early with an actionable message if any public package hasn't
+      # been published yet. Automation tokens can't create new packages —
+      # the workflow needs the package to exist on npm (one-time manual
+      # publish) OR the NPM_TOKEN secret must be a Granular Access Token
+      # with `Read and write` on `All packages`. OIDC trusted publishing
+      # doesn't help for brand-new names because the per-package trusted
+      # publisher config doesn't exist yet.
+      - name: Check for unpublished packages
+        run: |
+          set -e
+          missing=()
+          for pkg_json in packages/*/package.json; do
+            name=$(node -pe "require('./$pkg_json').name || ''")
+            private=$(node -pe "require('./$pkg_json').private || false")
+            if [ -z "$name" ] || [ "$private" = "true" ]; then
+              continue
+            fi
+            if ! npm view "$name" version --silent >/dev/null 2>&1; then
+              echo "::warning title=Unpublished package::\"$name\" has never been published on npm. The workflow will attempt first-publish via OIDC + NPM_TOKEN; see docs/RELEASE.md if it fails."
+              missing+=("$name")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            {
+              echo "NEW_PACKAGES<<EOF"
+              printf '%s\n' "${missing[@]}"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+          fi
+
       - name: Create Release PR or Publish
         id: changesets
         uses: changesets/action@v1
@@ -47,5 +84,41 @@ jobs:
           commit: "chore: version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }} # Expires Jul 2, 2026 — rotate before then
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }} # Granular access token, expires Jul 2, 2026
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Embed build provenance on every publish so consumers can verify
+          # the package was built by this repo + workflow. Requires
+          # `id-token: write` on the job (see permissions above).
+          NPM_CONFIG_PROVENANCE: "true"
+
+      # On a partial publish failure, surface what landed and what didn't
+      # so the PR author can take corrective action (usually: publish the
+      # new package once from a workstation with interactive 2FA, then
+      # re-run the workflow). Non-fatal — the previous step already set
+      # the run's conclusion.
+      - name: Summarise publish outcome
+        if: always()
+        env:
+          NEW_PACKAGES: ${{ env.NEW_PACKAGES }}
+        run: |
+          if [ -n "${NEW_PACKAGES:-}" ]; then
+            {
+              echo "## First-publish may have required elevated credentials"
+              echo ""
+              echo "The following packages had no prior npm presence when this run started:"
+              echo ""
+              echo '```'
+              printf '%s\n' "$NEW_PACKAGES"
+              echo '```'
+              echo ""
+              echo "If any of them failed with \`403 Forbidden\`, do a one-time manual publish from a workstation with interactive 2FA:"
+              echo ""
+              echo '```sh'
+              echo 'git pull'
+              echo 'cd packages/<name>'
+              echo 'npm publish --access public --provenance'
+              echo '```'
+              echo ""
+              echo "Future bumps go through this workflow automatically once the package exists on npm. See \`docs/RELEASE.md\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
