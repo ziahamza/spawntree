@@ -72,6 +72,43 @@ export function createCatalogRoutes(
     }
   });
 
+  /**
+   * Read-only variant. Rejects anything that mutates the catalog — makes
+   * this endpoint safe to open up to browsers and third-party consumers
+   * in a future release that pairs it with per-client auth tokens. The
+   * daemon's own writes continue to flow through `/query`, which stays
+   * loopback-gated.
+   *
+   * Validation is prefix-based: after stripping comments and leading
+   * whitespace, the statement must start with `SELECT`, `WITH` (CTEs),
+   * `EXPLAIN`, or `PRAGMA` (read-only pragmas only — write pragmas are
+   * rejected by value). We also reject multi-statement bodies so an
+   * attacker can't sneak a trailing `DELETE` after a benign SELECT.
+   */
+  app.post("/query-readonly", requireLocalOrigin, async (c) => {
+    const body = await parseBody<QueryBody>(c);
+    const sql = typeof body?.sql === "string" ? body.sql : undefined;
+    if (!sql) {
+      return c.json({ error: "sql is required", code: "INVALID_BODY" }, 400);
+    }
+    const verdict = classifyReadOnlySql(sql);
+    if (!verdict.ok) {
+      return c.json(
+        { error: verdict.reason, code: "READONLY_QUERY_REJECTED" },
+        400,
+      );
+    }
+    const params = Array.isArray(body?.params) ? (body.params as Array<unknown>) : [];
+    const method = normalizeMethod(body?.method);
+
+    try {
+      const rows = await runOne(storage, sql, params, method);
+      return c.json({ rows });
+    } catch (err) {
+      return errorResponse(c, 400, "CATALOG_QUERY_FAILED", err);
+    }
+  });
+
   app.post("/batch", requireLocalOrigin, async (c) => {
     const body = await parseBody<BatchBody>(c);
     if (!Array.isArray(body?.queries)) {
@@ -103,6 +140,191 @@ export function createCatalogRoutes(
   });
 
   return app;
+}
+
+/**
+ * Permissive-but-strict SQL classifier for the read-only endpoint.
+ *
+ * Exported so tests can exercise the edge cases directly. Not a
+ * bulletproof SQL parser, but a single-pass scanner that treats comments
+ * and string literals as opaque so tricks like
+ * `SELECT '--' || id FROM x; DELETE FROM x` can't hide a semicolon from
+ * the multi-statement check — which was possible with the earlier
+ * regex-strip approach (flagged by Devin review of #25).
+ *
+ * The classifier operates on the ORIGINAL SQL, because that's what the
+ * daemon is about to execute. It cannot afford to look at a sanitized
+ * version that disagrees with what `runOne` will see.
+ */
+export function classifyReadOnlySql(raw: string): { ok: true } | { ok: false; reason: string } {
+  const firstKeyword = findFirstKeyword(raw);
+  if (!firstKeyword) {
+    return { ok: false, reason: "empty statement" };
+  }
+  if (hasMultipleStatements(raw)) {
+    return { ok: false, reason: "multiple statements are not allowed on the read-only endpoint" };
+  }
+  const upper = firstKeyword.toUpperCase();
+  if (upper === "SELECT" || upper === "WITH" || upper === "EXPLAIN") {
+    return { ok: true };
+  }
+  if (upper === "PRAGMA") {
+    return classifyPragma(raw);
+  }
+  return {
+    ok: false,
+    reason: "only SELECT, WITH, EXPLAIN, and read-only PRAGMA statements are allowed",
+  };
+}
+
+/**
+ * The catalog-relevant subset of SQLite pragmas that mutate state.
+ * Schema-qualified forms (`main.journal_mode`, `temp.foreign_keys`)
+ * normalize to the unqualified name before the lookup.
+ */
+const WRITE_PRAGMAS = new Set([
+  "foreign_keys",
+  "journal_mode",
+  "synchronous",
+  "user_version",
+  "application_id",
+  "schema_version",
+  "wal_checkpoint",
+  "optimize",
+  "shrink_memory",
+  "vacuum",
+]);
+
+function classifyPragma(raw: string): { ok: true } | { ok: false; reason: string } {
+  let i = skipTrivia(raw, 0);
+  // We already know the first keyword is PRAGMA; advance past it.
+  i += "PRAGMA".length;
+  i = skipTrivia(raw, i);
+  // The pragma name can include a schema qualifier (`main.journal_mode`).
+  const start = i;
+  while (i < raw.length && /[a-zA-Z0-9_.]/.test(raw[i]!)) i++;
+  const fullName = raw.slice(start, i).toLowerCase();
+  if (!fullName) {
+    return { ok: false, reason: "PRAGMA name missing" };
+  }
+  // `main.journal_mode` → `journal_mode`. Anything before the last dot is
+  // a schema identifier and doesn't change the pragma's effect.
+  const baseName = fullName.includes(".")
+    ? fullName.split(".").pop()!
+    : fullName;
+  if (WRITE_PRAGMAS.has(baseName)) {
+    return {
+      ok: false,
+      reason: `PRAGMA ${fullName} is not allowed on the read-only endpoint`,
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * Return the first identifier token (letters + underscores) after
+ * skipping leading whitespace and comments. Null if the statement is
+ * empty or begins with something that isn't a keyword (a number, a
+ * punctuation mark, a string literal).
+ */
+function findFirstKeyword(raw: string): string | null {
+  const start = skipTrivia(raw, 0);
+  let i = start;
+  while (i < raw.length && /[a-zA-Z_]/.test(raw[i]!)) i++;
+  return i > start ? raw.slice(start, i) : null;
+}
+
+/**
+ * Walk the raw SQL exactly once and return true if we find any
+ * non-whitespace / non-comment token AFTER an unquoted semicolon. This
+ * is what makes the classifier immune to the `SELECT '--'; DELETE …`
+ * family of bypasses — the semicolon inside the string literal is
+ * skipped, but the real one between the two statements is caught.
+ */
+function hasMultipleStatements(raw: string): boolean {
+  let i = 0;
+  let sawSemi = false;
+  while (i < raw.length) {
+    const ch = raw[i]!;
+    // Line comment.
+    if (ch === "-" && raw[i + 1] === "-") {
+      while (i < raw.length && raw[i] !== "\n") i++;
+      continue;
+    }
+    // Block comment.
+    if (ch === "/" && raw[i + 1] === "*") {
+      i += 2;
+      while (i < raw.length && !(raw[i] === "*" && raw[i + 1] === "/")) i++;
+      if (i < raw.length) i += 2;
+      continue;
+    }
+    // Single-quoted string literal; SQLite escapes `'` by doubling it.
+    if (ch === "'") {
+      i++;
+      while (i < raw.length) {
+        if (raw[i] === "'" && raw[i + 1] === "'") { i += 2; continue; }
+        if (raw[i] === "'") { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    // Double-quoted identifier; `""` escapes a quote inside.
+    if (ch === '"') {
+      i++;
+      while (i < raw.length) {
+        if (raw[i] === '"' && raw[i + 1] === '"') { i += 2; continue; }
+        if (raw[i] === '"') { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    // Backtick-quoted identifier (MySQL-style, tolerated by SQLite).
+    if (ch === "`") {
+      i++;
+      while (i < raw.length && raw[i] !== "`") i++;
+      if (i < raw.length) i++;
+      continue;
+    }
+    if (ch === ";") {
+      sawSemi = true;
+      i++;
+      continue;
+    }
+    // Whitespace after a semicolon is fine (trailing `;  `), but
+    // anything else means a second statement.
+    if (sawSemi && !/\s/.test(ch)) {
+      return true;
+    }
+    i++;
+  }
+  return false;
+}
+
+/**
+ * Skip whitespace and comments starting at `pos`. Used for both the
+ * first-keyword lookup and the PRAGMA-name extraction.
+ */
+function skipTrivia(raw: string, pos: number): number {
+  let i = pos;
+  while (i < raw.length) {
+    const ch = raw[i]!;
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") {
+      i++;
+      continue;
+    }
+    if (ch === "-" && raw[i + 1] === "-") {
+      while (i < raw.length && raw[i] !== "\n") i++;
+      continue;
+    }
+    if (ch === "/" && raw[i + 1] === "*") {
+      i += 2;
+      while (i < raw.length && !(raw[i] === "*" && raw[i + 1] === "/")) i++;
+      if (i < raw.length) i += 2;
+      continue;
+    }
+    break;
+  }
+  return i;
 }
 
 async function runOne(

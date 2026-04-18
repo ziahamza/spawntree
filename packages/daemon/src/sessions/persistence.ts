@@ -291,6 +291,40 @@ export async function deletePersistedSession(
   await db.delete(sessions).where(eq(sessions.sessionId, sessionId));
 }
 
+/**
+ * Backfill a turn's final content + metadata from an adapter's session
+ * detail. Called by `SessionManager` after `turn_completed` lands: by
+ * then the adapter's `getSessionDetail` returns the fully-assembled
+ * `ContentBlock[]`, stop reason, and duration, which `persistSessionEvent`
+ * couldn't know (it deliberately skips `message_delta` chunks to avoid
+ * write amplification).
+ *
+ * Idempotent: the UPDATE touches whatever turn row is present. If the
+ * turn hasn't been inserted yet (rare — would mean `turn_completed` fired
+ * before `turn_started` landed in the queue), the UPDATE affects 0 rows
+ * and that's fine.
+ */
+export async function hydrateTurnContent(
+  db: CatalogDb,
+  turn: SessionTurnData,
+): Promise<void> {
+  await db
+    .update(sessionTurns)
+    .set({
+      turnIndex: turn.turnIndex,
+      role: turn.role,
+      // Drizzle's JSON column type expects mutable; the SessionTurnData
+      // schema marks content readonly. Spread to satisfy both.
+      content: [...turn.content],
+      modelId: turn.modelId ?? null,
+      durationMs: turn.durationMs ?? null,
+      stopReason: turn.stopReason ?? null,
+      status: turn.status,
+      errorMessage: turn.errorMessage ?? null,
+    })
+    .where(eq(sessionTurns.id, turn.id));
+}
+
 function rowToSessionInfo(row: typeof sessions.$inferSelect): SessionInfo {
   return {
     sessionId: row.sessionId,

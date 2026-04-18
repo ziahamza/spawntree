@@ -41,6 +41,14 @@ export interface CreateCatalogHttpDbOptions {
   fetch?: typeof fetch;
   /** Path to mount the endpoint at. Defaults to `/api/v1/catalog`. */
   basePath?: string;
+  /**
+   * Route queries through `/query-readonly` instead of `/query`. The daemon
+   * rejects anything that isn't a SELECT / WITH / EXPLAIN / read-only
+   * PRAGMA, so the client can't accidentally (or maliciously) mutate the
+   * catalog. Use this for browser-facing dashboards, public read mirrors,
+   * or any consumer that shouldn't need write access.
+   */
+  readOnly?: boolean;
 }
 
 export type CatalogHttpDb = SqliteRemoteDatabase<Schema>;
@@ -67,10 +75,11 @@ export function catalogHttpProxy(
 ): CatalogHttpProxy {
   const base = options.url.replace(/\/+$/, "");
   const basePath = (options.basePath ?? "/api/v1/catalog").replace(/\/+$/, "");
+  const endpoint = options.readOnly ? "/query-readonly" : "/query";
   const doFetch: typeof fetch = options.fetch ?? fetch;
 
   return async (sql, params, method) => {
-    const res = await doFetch(`${base}${basePath}/query`, {
+    const res = await doFetch(`${base}${basePath}${endpoint}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
