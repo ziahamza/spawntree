@@ -72,6 +72,43 @@ export function createCatalogRoutes(
     }
   });
 
+  /**
+   * Read-only variant. Rejects anything that mutates the catalog — makes
+   * this endpoint safe to open up to browsers and third-party consumers
+   * in a future release that pairs it with per-client auth tokens. The
+   * daemon's own writes continue to flow through `/query`, which stays
+   * loopback-gated.
+   *
+   * Validation is prefix-based: after stripping comments and leading
+   * whitespace, the statement must start with `SELECT`, `WITH` (CTEs),
+   * `EXPLAIN`, or `PRAGMA` (read-only pragmas only — write pragmas are
+   * rejected by value). We also reject multi-statement bodies so an
+   * attacker can't sneak a trailing `DELETE` after a benign SELECT.
+   */
+  app.post("/query-readonly", requireLocalOrigin, async (c) => {
+    const body = await parseBody<QueryBody>(c);
+    const sql = typeof body?.sql === "string" ? body.sql : undefined;
+    if (!sql) {
+      return c.json({ error: "sql is required", code: "INVALID_BODY" }, 400);
+    }
+    const verdict = classifyReadOnlySql(sql);
+    if (!verdict.ok) {
+      return c.json(
+        { error: verdict.reason, code: "READONLY_QUERY_REJECTED" },
+        400,
+      );
+    }
+    const params = Array.isArray(body?.params) ? (body.params as Array<unknown>) : [];
+    const method = normalizeMethod(body?.method);
+
+    try {
+      const rows = await runOne(storage, sql, params, method);
+      return c.json({ rows });
+    } catch (err) {
+      return errorResponse(c, 400, "CATALOG_QUERY_FAILED", err);
+    }
+  });
+
   app.post("/batch", requireLocalOrigin, async (c) => {
     const body = await parseBody<BatchBody>(c);
     if (!Array.isArray(body?.queries)) {
@@ -103,6 +140,92 @@ export function createCatalogRoutes(
   });
 
   return app;
+}
+
+/**
+ * Permissive-but-strict SQL classifier for the read-only endpoint.
+ *
+ * Exported so tests can exercise the edge cases directly. Not a
+ * bulletproof SQL parser — attackers shouldn't be able to reach this
+ * endpoint anyway (loopback gate + future auth), but belt-and-suspenders:
+ *
+ *   - strips `-- line` and `/* block *\/` comments before inspecting
+ *   - requires the remaining statement to START with SELECT / WITH /
+ *     EXPLAIN / PRAGMA (case-insensitive)
+ *   - rejects multi-statement bodies by flagging any semicolon that
+ *     isn't trailing or inside a string literal
+ *   - rejects write pragmas by name (catalog-relevant subset)
+ */
+export function classifyReadOnlySql(raw: string): { ok: true } | { ok: false; reason: string } {
+  const stripped = stripSqlComments(raw).trim();
+  if (!stripped) {
+    return { ok: false, reason: "empty statement" };
+  }
+  if (containsStatementSeparator(stripped)) {
+    return { ok: false, reason: "multiple statements are not allowed on the read-only endpoint" };
+  }
+  const upper = stripped.toUpperCase();
+  if (upper.startsWith("SELECT") || upper.startsWith("WITH") || upper.startsWith("EXPLAIN")) {
+    return { ok: true };
+  }
+  if (upper.startsWith("PRAGMA")) {
+    const tail = stripped.slice("PRAGMA".length).trim().toLowerCase();
+    const name = tail.replace(/\s*[=(].*$/, "").trim();
+    const writePragmas = new Set([
+      "foreign_keys",
+      "journal_mode",
+      "synchronous",
+      "user_version",
+      "application_id",
+      "schema_version",
+      "wal_checkpoint",
+      "optimize",
+      "shrink_memory",
+      "vacuum",
+    ]);
+    if (writePragmas.has(name)) {
+      return { ok: false, reason: `PRAGMA ${name} is not allowed on the read-only endpoint` };
+    }
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    reason: "only SELECT, WITH, EXPLAIN, and read-only PRAGMA statements are allowed",
+  };
+}
+
+function stripSqlComments(sql: string): string {
+  // Two-pass: block comments, then line comments. Order matters — stripping
+  // line comments first could trim inside a `/* -- */` block.
+  const withoutBlock = sql.replace(/\/\*[\s\S]*?\*\//g, " ");
+  return withoutBlock.replace(/--[^\r\n]*/g, " ");
+}
+
+function containsStatementSeparator(sql: string): boolean {
+  // Trailing semicolon is fine. Anything else indicates a second statement.
+  const trimmed = sql.replace(/;+\s*$/g, "");
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (!inDouble && ch === "'") {
+      // SQLite escapes single quote by doubling: `'' `.
+      if (inSingle && trimmed[i + 1] === "'") {
+        i += 1;
+        continue;
+      }
+      inSingle = !inSingle;
+      continue;
+    }
+    if (!inSingle && ch === '"') {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (!inSingle && !inDouble && ch === ";") {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function runOne(

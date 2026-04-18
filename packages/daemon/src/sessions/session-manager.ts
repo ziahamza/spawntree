@@ -21,6 +21,7 @@ import type { StorageManager } from "../storage/manager.ts";
 import {
   deletePersistedSession,
   getPersistedSession,
+  hydrateTurnContent,
   listPersistedSessions,
   persistSessionEvent,
   upsertSession,
@@ -493,7 +494,48 @@ export class SessionManager {
           );
         }),
       );
+
+      // On turn_completed, backfill the turn's final content (+ stop reason,
+      // duration, modelId) by asking the adapter once. We deliberately skip
+      // persisting `message_delta` frames to avoid write amplification;
+      // hydration on completion is the catch-up mechanism so external
+      // Drizzle readers see fully-assembled turn content without having
+      // to call the adapter subprocess themselves.
+      if (event.type === "turn_completed") {
+        void this.enqueuePersist(event.sessionId, async () => {
+          await this.hydrateTurnAfterCompletion(adapter, event.sessionId, event.turnId);
+        });
+      }
     });
     this.unsubscribers.set(provider, unsub);
+  }
+
+  /**
+   * Fetch session detail from the adapter and backfill the matching turn
+   * row's content + metadata. Best-effort: any failure (adapter subprocess
+   * crashed, session vanished, network blip) is logged and swallowed so
+   * one bad hydration doesn't wedge the persistence queue.
+   *
+   * Small by design: exactly one `getSessionDetail` call per completed
+   * turn. If the adapter responds cheaply from its own cache, this is a
+   * constant-time backfill.
+   */
+  private async hydrateTurnAfterCompletion(
+    adapter: ACPAdapter,
+    sessionId: string,
+    turnId: string,
+  ): Promise<void> {
+    if (!this.catalog) return;
+    try {
+      const detail = await adapter.getSessionDetail(sessionId);
+      const turn = detail.turns.find((t) => t.id === turnId);
+      if (turn) {
+        await hydrateTurnContent(this.catalog, turn);
+      }
+    } catch (err) {
+      process.stderr.write(
+        `[spawntree-daemon] turn hydration failed for ${sessionId}/${turnId}: ${String(err)}\n`,
+      );
+    }
   }
 }
