@@ -1,7 +1,26 @@
 # t3code adapter — design & roadmap
 
-Status: **scaffold in progress**. The transport is landing in this PR; the
-full protocol translation is a sequence of follow-ups tracked below.
+Status: **milestone 0 (WebSocket transport) landed. Milestones 1-5 parked.**
+
+After shipping the transport we did a 30-minute smoke test — booted t3code's
+full stack locally, inspected its bootstrap sequence, probed the wire
+protocol. See [`t3code-smoke-findings.md`](./t3code-smoke-findings.md). Three
+hard blockers surfaced:
+
+1. All four `@t3tools/*` packages are `private: true` — nothing on npm.
+2. Auth is HTTP-upgrade-layer (401 on raw WS connect). We'd have to stand up
+   the full pairing flow to even get a handshake.
+3. The web client blocks on `orchestration.subscribeShell` returning a
+   snapshot before it'll render anything — every other stub we could fake
+   runs downstream of that gate.
+
+Net: ~4-5 weeks of focused work to get the t3code UI rendering against our
+daemon, for a consumer that doesn't exist yet. Park it until someone
+concrete asks.
+
+The transport endpoint (`/api/v1/sessions/ws`) stays live regardless — it's
+useful to our own dashboard and to any third-party SDK consumer. The rest
+of this doc stays as a reference for the future if the balance changes.
 
 ## What this is
 
@@ -102,6 +121,10 @@ This is deliberate: the transport and the protocol are separable. Ship the
 transport first (our own shape), layer t3code compatibility later.
 
 ## Roadmap
+
+> **Status update (2026-04-18):** Milestone 0 landed. Milestones 1-5 are
+> parked based on the smoke findings. Keeping them documented below as a
+> reference if someone does show up with a concrete need.
 
 ### Milestone 0 (this PR): WebSocket transport + live streaming
 
