@@ -343,4 +343,63 @@ describe("SessionManager", () => {
       expect(shutdownCalled).toBe(false);
     });
   });
+
+  describe("sessionEvents abort handling", () => {
+    it("terminates cleanly when the signal is already aborted before iteration starts (Devin pass-3 regression)", async () => {
+      // Regression guard: a pre-aborted AbortSignal used to make the
+      // generator hang forever. `addEventListener("abort", ...)` on an
+      // already-aborted signal is a no-op in Node, so the internal
+      // `done` flag never flipped and the `while (!done)` loop spun,
+      // leaking a DomainEvents subscription.
+      //
+      // Fixed by checking `signal.aborted` right after registering the
+      // listener. This test fires when subscribe + unsubscribe arrive
+      // in the same tick (synthetic: pre-abort the controller before
+      // calling into the generator at all).
+      const { manager, events } = makeManager({});
+
+      const controller = new AbortController();
+      controller.abort();
+
+      const iter = manager.sessionEvents("any-session", controller.signal);
+      const result = await iter.next();
+
+      // The iterator must announce completion on the first pull.
+      expect(result.done).toBe(true);
+
+      // Give any microtasks a chance to flush, then assert no
+      // DomainEvents handlers leaked. `sessionEventSubscribers` is a
+      // private Set — we reach into it via the documented internal
+      // shape rather than adding a public accessor just for testing.
+      await new Promise((r) => setImmediate(r));
+      const subs = (events as unknown as {
+        sessionEventSubscribers: Set<unknown>;
+      }).sessionEventSubscribers;
+      expect(subs.size).toBe(0);
+    });
+
+    it("terminates when the signal is aborted after subscription but before first event", async () => {
+      const { manager, events } = makeManager({});
+
+      const controller = new AbortController();
+      const iter = manager.sessionEvents("any-session", controller.signal);
+
+      // Start pulling on a background task so the generator body runs and
+      // wires up its listener.
+      const done = iter.next().then((r) => r.done);
+
+      // Give the generator one microtask tick to register the listener.
+      await new Promise((r) => setImmediate(r));
+
+      controller.abort();
+
+      expect(await done).toBe(true);
+
+      await new Promise((r) => setImmediate(r));
+      const subs = (events as unknown as {
+        sessionEventSubscribers: Set<unknown>;
+      }).sessionEventSubscribers;
+      expect(subs.size).toBe(0);
+    });
+  });
 });

@@ -328,6 +328,17 @@ export class SessionManager {
    * The sessionId filter is applied at the DomainEvents layer (including
    * during history replay) so a fresh subscriber doesn't receive a flood
    * of events from other sessions before it gets its own live stream.
+   *
+   * Resilient to pre-aborted signals: if `signal.aborted` is already true
+   * by the time the generator body starts (e.g. subscribe + unsubscribe
+   * arrived in the same TCP packet and both handlers ran before the
+   * async IIFE that drives the iterator), we observe that state directly
+   * rather than waiting for a listener callback that would never fire —
+   * `addEventListener("abort", ...)` on an already-aborted signal is a
+   * no-op in Node, so the naive version would loop forever and leak the
+   * DomainEvents subscription. Fixing this at the root also protects the
+   * SSE route at `routes/sessions.ts:/:id/events`, which calls us with
+   * the same signal pattern.
    */
   async *sessionEvents(sessionId: string, signal?: AbortSignal): AsyncIterable<SessionEvent> {
     const queue: SessionEvent[] = [];
@@ -345,6 +356,10 @@ export class SessionManager {
       done = true;
       wake?.();
     });
+    // Observe already-aborted signals directly. addEventListener doesn't
+    // fire retroactively for signals that were aborted before this line,
+    // so without this check the loop would spin forever.
+    if (signal?.aborted) done = true;
 
     try {
       while (!done) {
