@@ -1,5 +1,6 @@
 import { Effect, ManagedRuntime, Schema } from "effect";
 import { type Context, Hono } from "hono";
+import { cors } from "hono/cors";
 import { existsSync, readFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,6 +54,31 @@ export function createApp(
   options: { storage?: StorageManager; sessionManager?: SessionManager } = {},
 ) {
   const app = new Hono();
+
+  app.use(
+    "*",
+    cors({
+      origin: (origin) => {
+        if (!origin) return origin;
+        try {
+          const url = new URL(origin);
+          const host = url.hostname;
+          const isLoopback =
+            host === "localhost" ||
+            host === "127.0.0.1" ||
+            host === "::1" ||
+            host.endsWith(".localhost");
+          return isLoopback ? origin : null;
+        } catch {
+          return null;
+        }
+      },
+      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      allowHeaders: ["Content-Type", "Authorization", "X-Trace-Id"],
+      credentials: true,
+      maxAge: 600,
+    }),
+  );
 
   app.use(async (context, next) => {
     const startedAt = Date.now();
