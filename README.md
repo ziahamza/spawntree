@@ -27,6 +27,15 @@ spawntree down      # stop everything
 - **Drive AI coding agents** — first-class session API for Claude Code and Codex
   via a normalized ACP adapter layer. One SSE stream for turns, tool calls, and
   message deltas. ([docs](./docs/sessions.md))
+- **Pluggable storage + replication** — daemon catalog runs on libSQL with
+  swappable primaries (`local`, `turso-embedded`) and replicators (`s3-snapshot`
+  works against R2, B2, MinIO, plain S3). Configure once, your repo + session
+  history rides along. ([architecture](./packages/core/src/storage/README.md))
+- **Typed SQL access from any tool** — the catalog schema is exported via
+  Drizzle. External tools (CLIs, dashboards, backup verifiers) run typed
+  queries against a live daemon over HTTP without re-implementing read
+  endpoints — one `import` and you're querying. See
+  [Querying from your own tools](#querying-from-your-own-tools) below.
 - **Single Node daemon** — one background server manages orchestration, state,
   the web API, and real-time updates.
 - **Shared typed contract** — CLI and web talk through the same `spawntree-core`
@@ -35,11 +44,15 @@ spawntree down      # stop everything
 ## Architecture
 
 - `packages/daemon` runs the single Node.js control plane (envs, infra,
-  sessions, SSE event bus)
-- `packages/core` exposes the shared typed client, schemas, and the `ACPAdapter`
-  layer for driving coding agents
+  sessions, storage providers, SSE event bus)
+- `packages/core` exposes the shared typed client, the Drizzle catalog
+  schema (`spawntree-core/db`), the storage provider contracts
+  (`spawntree-core/storage`), and the `ACPAdapter` layer for driving
+  coding agents
 - `packages/cli` is a thin client that auto-starts the daemon
 - `packages/web` is the browser client and listens for daemon events over SSE
+- `packages/host` is an optional federation server (published as
+  `spawntree-host`) for switching between multiple daemons from one dashboard
 
 ## Install
 
@@ -127,6 +140,67 @@ spawntree db dump mydata   # snapshot current database
 spawntree db restore mydata
 ```
 
+## Querying from your own tools
+
+The daemon exposes its catalog (repos, clones, worktrees, ACP sessions,
+session turns, tool calls) as a typed Drizzle schema. Any tool can import
+the schema from `spawntree-core` and run typed SQL against a live daemon
+over HTTP — no per-table HTTP endpoints to chase, no protocol to learn.
+
+```ts
+import { createCatalogHttpDb, schema } from "spawntree-core";
+import { eq, desc } from "drizzle-orm";
+
+// `readOnly: true` routes through the safer /catalog/query-readonly endpoint
+// (SELECT / WITH / EXPLAIN / read-only PRAGMA only — server rejects writes).
+const db = createCatalogHttpDb({
+  url: "http://127.0.0.1:2222",
+  readOnly: true,
+});
+
+// Most recent ACP sessions with their tool calls — fully typed.
+const rows = await db
+  .select({
+    sessionId: schema.sessions.sessionId,
+    provider:  schema.sessions.provider,
+    toolName:  schema.sessionToolCalls.toolName,
+    toolStatus: schema.sessionToolCalls.status,
+  })
+  .from(schema.sessions)
+  .leftJoin(
+    schema.sessionToolCalls,
+    eq(schema.sessionToolCalls.sessionId, schema.sessions.sessionId),
+  )
+  .orderBy(desc(schema.sessions.updatedAt))
+  .limit(20);
+
+// Or the relational query API:
+const lastClaude = await db.query.sessions.findFirst({
+  where: eq(schema.sessions.provider, "claude-code"),
+});
+```
+
+If your tool already has direct file access (a backup verifier, a CLI on
+the same machine), skip HTTP entirely — `createCatalogClient({ url:
+"file:~/.spawntree/spawntree.db" })` returns the same typed Drizzle db
+against the SQLite file. And against a `turso-embedded` primary, point at
+the Turso replica URL — same schema, same types, fed by the daemon's
+ongoing writes.
+
+Useful patterns this unlocks:
+
+- **Cross-host dashboards** — point at one Turso replica for the whole
+  team's session history, query with Drizzle.
+- **Backup verifiers** — download the latest `s3-snapshot` snapshot, query
+  it locally to confirm rows are intact.
+- **CLIs that build on top of spawntree** — e.g. `spawntree-flame` for
+  session perf analysis. Just import schemas, write queries, never touch
+  HTTP serialisation.
+
+See [the storage architecture doc](./packages/core/src/storage/README.md) for
+the full schema, the replicator providers, and the `/api/v1/catalog/*`
+endpoint shape.
+
 ## Requirements
 
 - Node.js >= 20
@@ -141,6 +215,10 @@ spawntree db restore mydata
 - [CLI Reference](./docs/cli-reference.md)
 - [Agent Sessions](./docs/sessions.md) — driving Claude Code / Codex through the
   daemon
+- [Storage providers + typed catalog](./packages/core/src/storage/README.md) —
+  primary/replicator architecture, the Drizzle schema, and the `/api/v1/catalog/*`
+  HTTP endpoints
+- [Releasing](./docs/RELEASE.md) — how the changesets-driven release flow works
 - [Federation host](./packages/host/README.md) — published as
   `spawntree-host`, lets one dashboard drive multiple daemons
 - [Examples](./examples/)
