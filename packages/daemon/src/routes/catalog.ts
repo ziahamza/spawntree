@@ -43,6 +43,29 @@ export function createCatalogRoutes(
   const trustRemote = options.trustRemoteOrigin
     ?? process.env.SPAWNTREE_CATALOG_TRUST_REMOTE === "1";
 
+  app.use("*", async (c, next) => {
+    const origin = c.req.header("origin");
+
+    if (c.req.method === "OPTIONS") {
+      if (!origin || !isAllowedBrowserOrigin(origin, trustRemote)) {
+        return c.text("Not Found", 404);
+      }
+
+      return new Response(null, {
+        status: 204,
+        headers: buildCorsHeaders(origin),
+      });
+    }
+
+    await next();
+
+    if (origin && isAllowedBrowserOrigin(origin, trustRemote)) {
+      for (const [name, value] of corsHeaderEntries(origin)) {
+        c.header(name, value);
+      }
+    }
+  });
+
   const requireLocalOrigin = async (c: Context, next: () => Promise<void>) => {
     if (trustRemote) return next();
     if (isLoopbackRequest(c)) return next();
@@ -409,4 +432,41 @@ function isLoopbackRequest(c: Context): boolean {
     || addr === "::ffff:127.0.0.1"
     || addr.startsWith("127.")
   );
+}
+
+function isAllowedBrowserOrigin(origin: string, trustRemote: boolean): boolean {
+  if (trustRemote) {
+    return true;
+  }
+
+  try {
+    const url = new URL(origin);
+    return (
+      url.hostname === "127.0.0.1"
+      || url.hostname === "localhost"
+      || url.hostname === "::1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function buildCorsHeaders(origin: string): Headers {
+  return new Headers({
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  });
+}
+
+function corsHeaderEntries(origin: string): Array<[string, string]> {
+  return [
+    ["Access-Control-Allow-Origin", origin],
+    ["Access-Control-Allow-Methods", "GET,POST,OPTIONS"],
+    ["Access-Control-Allow-Headers", "Content-Type, Authorization"],
+    ["Access-Control-Max-Age", "86400"],
+    ["Vary", "Origin"],
+  ];
 }
