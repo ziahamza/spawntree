@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import type * as acp from "@zed-industries/agent-client-protocol";
+import { detectGitMetadata } from "../../lib/git.ts";
 import { ACPConnection } from "../client.ts";
 import { SessionBusyError } from "../adapter.ts";
 import type {
@@ -47,6 +48,9 @@ interface TrackedSession {
   activeTurnId: string | null;
   createdAt: string;
   updatedAt: string;
+  gitBranch: string | null;
+  gitHeadCommit: string | null;
+  gitRemoteUrl: string | null;
 }
 
 export class ClaudeCodeAdapter implements ACPAdapter {
@@ -154,6 +158,7 @@ export class ClaudeCodeAdapter implements ACPAdapter {
     });
 
     const now = new Date().toISOString();
+    const git = detectGitMetadata(params.cwd);
     this.sessions.set(response.sessionId, {
       sourceId: response.sessionId,
       cwd: params.cwd,
@@ -165,6 +170,9 @@ export class ClaudeCodeAdapter implements ACPAdapter {
       activeTurnId: null,
       createdAt: now,
       updatedAt: now,
+      gitBranch: git.branch,
+      gitHeadCommit: git.headCommit,
+      gitRemoteUrl: git.remoteUrl,
     });
 
     return { sessionId: response.sessionId };
@@ -179,9 +187,9 @@ export class ClaudeCodeAdapter implements ACPAdapter {
         status: s.status,
         title: s.title,
         workingDirectory: s.cwd,
-        gitBranch: null,
-        gitHeadCommit: null,
-        gitRemoteUrl: null,
+        gitBranch: s.gitBranch,
+        gitHeadCommit: s.gitHeadCommit,
+        gitRemoteUrl: s.gitRemoteUrl,
         // Normalize to "conversation turns" = number of user messages so the
         // value matches CodexACPAdapter. We store user and assistant records
         // as separate entries in `s.turns`, so counting user-role entries
@@ -256,6 +264,20 @@ export class ClaudeCodeAdapter implements ACPAdapter {
           agentTurn.status = "completed";
           agentTurn.stopReason = response.stopReason;
         }
+        // Claude Code's ACP wrapper does not always emit a final tool_call_update
+        // with a terminal status, so tools can linger in "pending"/"in_progress"
+        // after the turn finishes. Close them out here so spinners stop.
+        for (const tc of s.toolCalls) {
+          if (tc.turnId !== turnId) continue;
+          if (tc.status === "pending" || tc.status === "in_progress") {
+            tc.status = "completed";
+            this.emitEvent({
+              type: "tool_call_completed",
+              sessionId,
+              toolCall: tc,
+            });
+          }
+        }
         this.emitEvent({
           type: "turn_completed",
           sessionId,
@@ -276,6 +298,17 @@ export class ClaudeCodeAdapter implements ACPAdapter {
         if (agentTurn) {
           agentTurn.status = "error";
           agentTurn.errorMessage = message;
+        }
+        for (const tc of s.toolCalls) {
+          if (tc.turnId !== turnId) continue;
+          if (tc.status === "pending" || tc.status === "in_progress") {
+            tc.status = "error";
+            this.emitEvent({
+              type: "tool_call_completed",
+              sessionId,
+              toolCall: tc,
+            });
+          }
         }
         this.emitEvent({
           type: "turn_completed",
@@ -387,6 +420,26 @@ export class ClaudeCodeAdapter implements ACPAdapter {
         break;
       }
       case "tool_call": {
+        const existing = session.toolCalls.find((t) => t.id === update.toolCallId);
+        if (existing) {
+          // Claude Code sometimes emits two tool_call notifications with the
+          // same id — first with a generic title and empty args, then with the
+          // enriched title and real arguments. Merge the second into the first
+          // so we don't duplicate rows in memory.
+          if (update.status) existing.status = mapToolStatus(update.status);
+          if (update.kind) existing.toolKind = mapToolKind(update.kind);
+          if (update.title) existing.toolName = update.title;
+          if (update.rawInput !== undefined) existing.arguments = update.rawInput ?? null;
+          this.emitEvent({
+            type:
+              existing.status === "completed" || existing.status === "error"
+                ? "tool_call_completed"
+                : "tool_call_started",
+            sessionId: session.sourceId,
+            toolCall: existing,
+          });
+          break;
+        }
         const toolCall: SessionToolCallData = {
           id: update.toolCallId,
           turnId: activeTurnId,
