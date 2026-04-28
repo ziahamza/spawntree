@@ -209,12 +209,11 @@ function readFlag(argv: ReadonlyArray<string>, flag: string): string | null {
 }
 
 function isHttpUrl(value: string): boolean {
-  try {
-    const u = new URL(value);
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
+  // `URL.canParse` (Node 20+) avoids the try/catch the lint rule for this
+  // file forbids; we still need a protocol check after parsing.
+  if (!URL.canParse(value)) return false;
+  const u = new URL(value);
+  return u.protocol === "http:" || u.protocol === "https:";
 }
 
 function isHostKey(value: string): boolean {
