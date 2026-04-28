@@ -80,6 +80,14 @@ export class SessionManager {
   private discoveryCacheAt = 0;
   private discoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private discoveryStopped = false;
+  /**
+   * Set the moment `startDiscoveryLoop` is called, BEFORE the first
+   * `tick()` resolves. Without this flag, the idempotency guard would
+   * still let a second call slip through during the (potentially several
+   * seconds) window where `discoveryTimer` is still null because the
+   * setTimeout assignment only happens after `runDiscoveryPass` finishes.
+   */
+  private discoveryLoopStarted = false;
 
   constructor(events: DomainEvents, options: { storage?: StorageManager } = {}) {
     this.events = events;
@@ -263,10 +271,17 @@ export class SessionManager {
    * pick up new Codex CLI sessions promptly without burning subprocess
    * spawns. Idempotent: calling this twice is a no-op.
    *
+   * The idempotency guard is `discoveryLoopStarted`, set synchronously
+   * before the first `tick()` runs. Checking only `discoveryTimer` would
+   * race because that field stays null until the FIRST `runDiscoveryPass`
+   * resolves and the next setTimeout is scheduled — a window where a
+   * second call would spawn a parallel loop.
+   *
    * Stop via `stopDiscoveryLoop()` (called from daemon shutdown).
    */
   startDiscoveryLoop(intervalMs = 30_000): void {
-    if (this.discoveryTimer || this.discoveryStopped) return;
+    if (this.discoveryLoopStarted || this.discoveryStopped) return;
+    this.discoveryLoopStarted = true;
 
     const tick = async () => {
       try {
@@ -290,6 +305,7 @@ export class SessionManager {
 
   stopDiscoveryLoop(): void {
     this.discoveryStopped = true;
+    this.discoveryLoopStarted = false;
     if (this.discoveryTimer) {
       clearTimeout(this.discoveryTimer);
       this.discoveryTimer = null;

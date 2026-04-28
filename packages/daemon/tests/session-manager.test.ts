@@ -343,4 +343,79 @@ describe("SessionManager", () => {
       expect(shutdownCalled).toBe(false);
     });
   });
+
+  describe("startDiscoveryLoop idempotency", () => {
+    /**
+     * Regression test for Devin review of PR #33: the doc comment promises
+     * idempotent calls but the original implementation only checked
+     * `discoveryTimer`, which is null until AFTER the first runDiscoveryPass
+     * resolves. A second call during that async window would spawn a parallel
+     * loop and double up subprocess spawns.
+     *
+     * The fix sets `discoveryLoopStarted` synchronously, so we model that
+     * exact race here: hold up `discoverSessions` with a manual signal and
+     * call `startDiscoveryLoop` twice while the first tick is still suspended.
+     * Resolving the signal lets a single tick complete; we then assert the
+     * adapter was discovered exactly once for that tick.
+     */
+    it("a second call during the first async tick is a no-op", async () => {
+      let resolveFirstTick: () => void = () => {};
+      const firstTickStarted = new Promise<void>((res) => (resolveFirstTick = res));
+      let releaseFirstTick: () => void = () => {};
+      const firstTickRelease = new Promise<void>((res) => (releaseFirstTick = res));
+
+      const adapter = makeFakeAdapter("claude-code", [discovered("s1", "claude-code")]);
+      // Wrap discoverSessions so the FIRST call (and only the first) suspends
+      // until the test releases it. We delegate to the original — which is the
+      // implementation that actually increments `discoverSessionsCalls` — so
+      // we don't double-count.
+      const originalDiscover = adapter.discoverSessions.bind(adapter);
+      adapter.discoverSessions = async () => {
+        // Suspend the first call mid-flight. We compare against current count
+        // BEFORE delegating, so the gate triggers exactly once.
+        const isFirst = adapter.discoverSessionsCalls === 0;
+        if (isFirst) {
+          // Delegate first so the call is counted before we suspend; that
+          // way `firstTickStarted` only resolves after the manager has
+          // committed to discoverSessions.
+          const tickResult = originalDiscover();
+          resolveFirstTick();
+          await firstTickRelease;
+          return tickResult;
+        }
+        return originalDiscover();
+      };
+
+      const { manager } = makeManager({ "claude-code": adapter });
+
+      // Long interval — we're testing the *startup* race, not the periodic
+      // loop. After the first tick we'll stopDiscoveryLoop() so no further
+      // ticks run.
+      manager.startDiscoveryLoop(60_000);
+      await firstTickStarted;
+      manager.startDiscoveryLoop(60_000); // should be a no-op
+      releaseFirstTick();
+
+      // Drain microtasks so the first tick's setTimeout schedule lands.
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      manager.stopDiscoveryLoop();
+
+      // Exactly ONE discoverSessions call from the first (and only) tick.
+      expect(adapter.discoverSessionsCalls).toBe(1);
+    });
+
+    it("post-stop, a fresh start is rejected (avoids zombie loops after shutdown)", () => {
+      const adapter = makeFakeAdapter("claude-code");
+      const { manager } = makeManager({ "claude-code": adapter });
+      manager.startDiscoveryLoop(60_000);
+      manager.stopDiscoveryLoop();
+      manager.startDiscoveryLoop(60_000); // discoveryStopped guard kicks in
+      // No assertion needed — just verify the previous call doesn't throw
+      // and that the adapter wasn't asked to discover again post-stop.
+      // (`discoverSessionsCalls` from the first start is allowed; the post-stop
+      // start should NOT add to it.)
+      expect(adapter.discoverSessionsCalls).toBeLessThanOrEqual(1);
+    });
+  });
 });

@@ -77,12 +77,15 @@ export function createCatalogRoutes(
     }
   });
 
+  /**
+   * Loopback gate for the unrestricted write surfaces (`/query`, `/batch`).
+   * `/query-readonly` deliberately does NOT use this — public Studio (or
+   * any allow-listed browser origin) reaches it through the CORS allow-list
+   * above, with the SQL classifier providing the safety net.
+   */
   const requireLocalOrigin = async (c: Context, next: () => Promise<void>) => {
     if (policy.trustRemote) return next();
     if (isLoopbackRequest(c)) return next();
-    // The catalog write surface (`/query`) is loopback-only by default. The
-    // public-Studio fallback uses `/query-readonly` which is gated by the
-    // CORS allow-list above instead.
     return c.json(
       {
         error: "catalog query endpoint is restricted to loopback clients",
@@ -111,10 +114,9 @@ export function createCatalogRoutes(
 
   /**
    * Read-only variant. Rejects anything that mutates the catalog — makes
-   * this endpoint safe to open up to browsers and third-party consumers
-   * in a future release that pairs it with per-client auth tokens. The
-   * daemon's own writes continue to flow through `/query`, which stays
-   * loopback-gated.
+   * this endpoint safe to expose to browsers and third-party consumers
+   * via the CORS allow-list (no `requireLocalOrigin` gate). The daemon's
+   * own writes continue to flow through `/query`, which stays loopback-only.
    *
    * Validation is prefix-based: after stripping comments and leading
    * whitespace, the statement must start with `SELECT`, `WITH` (CTEs),
@@ -122,7 +124,7 @@ export function createCatalogRoutes(
    * rejected by value). We also reject multi-statement bodies so an
    * attacker can't sneak a trailing `DELETE` after a benign SELECT.
    */
-  app.post("/query-readonly", requireLocalOrigin, async (c) => {
+  app.post("/query-readonly", async (c) => {
     const body = await parseBody<QueryBody>(c);
     const sql = typeof body?.sql === "string" ? body.sql : undefined;
     if (!sql) {

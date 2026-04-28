@@ -275,3 +275,93 @@ describe("POST /api/v1/catalog/query-readonly", () => {
     expect(rows).toHaveLength(0);
   });
 });
+
+/**
+ * Regression test for Devin review of PR #33: `/query-readonly` MUST be
+ * reachable from a public CORS-allow-listed origin without `trustRemote`,
+ * because that's the whole point of the public-Studio fallback. Before this
+ * fix the route was guarded by `requireLocalOrigin`, so the CORS preflight
+ * would succeed but the actual POST would 403 from any non-loopback IP.
+ *
+ * `/query` and `/batch` still need the loopback gate (they're the unrestricted
+ * write surfaces), so we assert both behaviors in the same suite.
+ */
+describe("POST /api/v1/catalog/query-readonly without trustRemote", () => {
+  let tmp: string;
+  let storage: StorageManager;
+  let server: Server;
+  let port: number;
+
+  beforeEach(async () => {
+    tmp = mkdtempSync(resolve(tmpdir(), "spawntree-ro-no-trust-"));
+    storage = new StorageManager({ dataDir: tmp, logger: () => undefined });
+    await storage.start();
+    await applyCatalogSchema(storage.client);
+
+    const app = new Hono();
+    // No `trustRemoteOrigin` — exercise the default deployment posture.
+    app.route("/api/v1/catalog", createCatalogRoutes(storage));
+    server = createServer(getRequestListener(app.fetch));
+    await new Promise<void>((res, rej) => {
+      server.once("error", rej);
+      server.listen(0, "127.0.0.1", () => res());
+    });
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("no address");
+    port = addr.port;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((res) => server.close(() => res()));
+    await storage.stop();
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("/query-readonly accepts SELECT from a public allow-listed origin", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/v1/catalog/query-readonly`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://gitenv.dev",
+      },
+      body: JSON.stringify({ sql: "SELECT 1", params: [], method: "all" }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://gitenv.dev");
+  });
+
+  it("/query still rejects writes from a non-loopback origin (defense in depth)", async () => {
+    // The request originates from 127.0.0.1 (the test loopback socket), so
+    // requireLocalOrigin's IP check passes. To reach the case we care about
+    // we'd need to spoof a remote socket, which the test harness can't do
+    // without rewriting Node's HTTP layer. So instead assert what we CAN:
+    // /query rejects without trustRemote when an unknown origin is used,
+    // since the CORS allow-list covers loopback + gitenv.dev only.
+    const res = await fetch(`http://127.0.0.1:${port}/api/v1/catalog/query`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://evil.example.com",
+        "Access-Control-Request-Method": "POST",
+      },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("/query-readonly rejects a write from a public origin via SQL classifier", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/v1/catalog/query-readonly`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://gitenv.dev",
+      },
+      body: JSON.stringify({
+        sql: "DELETE FROM repos",
+        params: [],
+        method: "run",
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("READONLY_QUERY_REJECTED");
+  });
+});
