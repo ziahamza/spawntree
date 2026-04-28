@@ -70,6 +70,17 @@ export class SessionManager {
    */
   private readonly persistQueues = new Map<string, Promise<unknown>>();
 
+  /**
+   * In-memory snapshot of the most recent `discoverSessions()` pass, keyed
+   * by `${provider}:${sourceId}`. Populated by `runDiscoveryPass()` and
+   * served by `listSessions()` so the HTTP route doesn't spawn adapter
+   * subprocesses on every request (was a 2.5-3s tax per call before).
+   */
+  private discoveryCache: Array<DiscoveredSession & { provider: string }> = [];
+  private discoveryCacheAt = 0;
+  private discoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private discoveryStopped = false;
+
   constructor(events: DomainEvents, options: { storage?: StorageManager } = {}) {
     this.events = events;
     this.storage = options.storage ?? null;
@@ -161,14 +172,35 @@ export class SessionManager {
 
   /**
    * List all known sessions across all providers.
-   * Only adapters whose binary is available are queried; others return an
-   * empty list. Also populates the `sessionIndex` so subsequent operations
-   * can route without re-querying every adapter, and subscribes to each
-   * adapter we successfully queried so live events flow into the domain
-   * events bus — a dashboard that opens the session list should start
-   * receiving updates immediately.
+   *
+   * Serves from the discovery cache when fresh (default: ≤30s old). The
+   * cache is populated by the background discovery loop started in
+   * `startDiscoveryLoop()`. Falls through to a synchronous discovery pass
+   * when the cache is stale or empty so first-call latency is bounded.
+   *
+   * Also populates `sessionIndex` and subscribes to each successfully-
+   * queried adapter so live events flow into the domain events bus.
    */
   async listSessions(): Promise<Array<DiscoveredSession & { provider: string }>> {
+    const cacheAgeMs = Date.now() - this.discoveryCacheAt;
+    if (this.discoveryCacheAt > 0 && cacheAgeMs < 30_000) {
+      // Fresh cache — return as-is, no adapter subprocesses needed.
+      return [...this.discoveryCache];
+    }
+
+    // Stale or empty cache: do a live pass and seed the cache.
+    return this.runDiscoveryPass();
+  }
+
+  /**
+   * Force a fresh `discoverSessions()` call across every available adapter,
+   * mirror results into the catalog, and update the in-memory cache.
+   *
+   * This is also the body of the periodic discovery loop. Designed to be
+   * cheap-on-failure: a crashed adapter or a network blip skips that
+   * provider for this pass and tries again next tick.
+   */
+  async runDiscoveryPass(): Promise<Array<DiscoveredSession & { provider: string }>> {
     const all: Array<DiscoveredSession & { provider: string }> = [];
     for (const [provider, adapter] of this.adapters) {
       // Skip adapters whose binary is missing — otherwise discoverSessions
@@ -186,13 +218,82 @@ export class SessionManager {
           all.push({ ...s, provider });
           this.sessionIndex.set(s.sourceId, provider);
         }
+
+        // Mirror discovered sessions into the catalog so external Drizzle
+        // readers (Studio via the catalog HTTP endpoint, the s3-snapshot
+        // replicator's Turso target, third-party tools) see the same set
+        // of sessions the daemon sees over ACP. Without this hop, sessions
+        // started outside the daemon (e.g. `codex exec ...` from a terminal)
+        // are invisible to anything that queries `SELECT * FROM sessions`.
+        if (this.catalog) {
+          for (const s of sessions) {
+            await upsertSession(this.catalog, {
+              sessionId: s.sourceId,
+              provider,
+              status: s.status,
+              workingDirectory: s.workingDirectory,
+              title: s.title,
+              gitBranch: s.gitBranch,
+              gitHeadCommit: s.gitHeadCommit,
+              gitRemoteUrl: s.gitRemoteUrl,
+              totalTurns: s.totalTurns,
+              startedAt: s.startedAt,
+            }).catch((err) => {
+              process.stderr.write(
+                `[spawntree-daemon] discovery upsert failed for ${s.sourceId}: ${String(err)}\n`,
+              );
+            });
+          }
+        }
+
         // Idempotent — only wires up the handler once per provider.
         this.subscribeToAdapter(provider, adapter);
       } catch {
         // Provider unreachable (subprocess crashed, etc.) — skip silently.
       }
     }
+    this.discoveryCache = all;
+    this.discoveryCacheAt = Date.now();
     return all;
+  }
+
+  /**
+   * Start a background discovery loop. Each tick runs a full
+   * `runDiscoveryPass`. Default cadence is every 30 seconds — enough to
+   * pick up new Codex CLI sessions promptly without burning subprocess
+   * spawns. Idempotent: calling this twice is a no-op.
+   *
+   * Stop via `stopDiscoveryLoop()` (called from daemon shutdown).
+   */
+  startDiscoveryLoop(intervalMs = 30_000): void {
+    if (this.discoveryTimer || this.discoveryStopped) return;
+
+    const tick = async () => {
+      try {
+        await this.runDiscoveryPass();
+      } catch (err) {
+        process.stderr.write(
+          `[spawntree-daemon] discovery pass failed: ${String(err)}\n`,
+        );
+      }
+      // setTimeout chain (not setInterval) so we never overlap two passes
+      // when an adapter is slow.
+      if (!this.discoveryStopped) {
+        this.discoveryTimer = setTimeout(() => void tick(), intervalMs);
+      }
+    };
+
+    // Kick off the first pass immediately so the cache is warm before any
+    // HTTP request lands. Don't `await` — let the daemon finish booting.
+    void tick();
+  }
+
+  stopDiscoveryLoop(): void {
+    this.discoveryStopped = true;
+    if (this.discoveryTimer) {
+      clearTimeout(this.discoveryTimer);
+      this.discoveryTimer = null;
+    }
   }
 
   /**
@@ -366,6 +467,7 @@ export class SessionManager {
 
   /** Shut down all adapters. Called when the daemon process exits. */
   async shutdown(): Promise<void> {
+    this.stopDiscoveryLoop();
     for (const unsub of this.unsubscribers.values()) {
       try {
         unsub();

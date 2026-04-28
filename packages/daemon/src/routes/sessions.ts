@@ -9,6 +9,12 @@ import {
   UnknownProviderError,
 } from "spawntree-core";
 import { BadRequestError } from "../errors.ts";
+import {
+  buildCorsHeaders,
+  corsHeaderEntries,
+  corsPolicyFromEnv,
+  isAllowedBrowserOrigin,
+} from "../lib/cors.ts";
 import type { SessionManager } from "../sessions/session-manager.ts";
 
 /**
@@ -25,25 +31,27 @@ import type { SessionManager } from "../sessions/session-manager.ts";
  */
 export function createSessionRoutes(manager: SessionManager) {
   const app = new Hono();
+  const policy = corsPolicyFromEnv("SPAWNTREE_SESSIONS_TRUST_REMOTE");
 
   app.use("*", async (c, next) => {
     const origin = c.req.header("origin");
+    const pnaRequested = c.req.header("access-control-request-private-network") === "true";
 
     if (c.req.method === "OPTIONS") {
-      if (!origin || !isAllowedBrowserOrigin(origin)) {
+      if (!origin || !isAllowedBrowserOrigin(origin, policy)) {
         return c.text("Not Found", 404);
       }
 
       return new Response(null, {
         status: 204,
-        headers: buildCorsHeaders(origin),
+        headers: buildCorsHeaders(origin, { pnaRequested }),
       });
     }
 
     await next();
 
-    if (origin && isAllowedBrowserOrigin(origin)) {
-      for (const [name, value] of corsHeaderEntries(origin)) {
+    if (origin && isAllowedBrowserOrigin(origin, policy)) {
+      for (const [name, value] of corsHeaderEntries(origin, { pnaRequested })) {
         c.header(name, value);
       }
     }
@@ -299,35 +307,4 @@ function isTagged<T extends string>(
   );
 }
 
-function isAllowedBrowserOrigin(origin: string): boolean {
-  try {
-    const url = new URL(origin);
-    return (
-      url.hostname === "127.0.0.1"
-      || url.hostname === "localhost"
-      || url.hostname === "::1"
-    );
-  } catch {
-    return false;
-  }
-}
-
-function buildCorsHeaders(origin: string): Headers {
-  return new Headers({
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Max-Age": "86400",
-    Vary: "Origin",
-  });
-}
-
-function corsHeaderEntries(origin: string): Array<[string, string]> {
-  return [
-    ["Access-Control-Allow-Origin", origin],
-    ["Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS"],
-    ["Access-Control-Allow-Headers", "Content-Type, Authorization"],
-    ["Access-Control-Max-Age", "86400"],
-    ["Vary", "Origin"],
-  ];
-}
+// CORS / PNA helpers moved to packages/daemon/src/lib/cors.ts.

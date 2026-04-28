@@ -35,3 +35,6 @@ spawntreed
 cmd/spawntreed/web/
 packages/web/node_modules/
 packages/web/dist/
+
+# Claude Code local state
+.claude/worktrees/

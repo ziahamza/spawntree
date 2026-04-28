@@ -37,6 +37,20 @@ async function main() {
   const sessionManager = new SessionManager(domainEvents, { storage });
   await sessionManager.start();
 
+  // Background discovery: every N seconds, ask each adapter what sessions
+  // exist and mirror them into the catalog. Without this, sessions started
+  // outside the daemon (e.g. `codex exec ...` from a terminal) never make
+  // it into the `sessions` table that Studio + the s3-snapshot replicator
+  // read from. Cadence is configurable via SPAWNTREE_DISCOVERY_INTERVAL_MS;
+  // set to 0 to disable the loop entirely (useful for tests).
+  const discoveryIntervalMs = Number.parseInt(
+    process.env.SPAWNTREE_DISCOVERY_INTERVAL_MS ?? "30000",
+    10,
+  );
+  if (discoveryIntervalMs > 0) {
+    sessionManager.startDiscoveryLoop(discoveryIntervalMs);
+  }
+
   const app = createApp(runtime, { storage, sessionManager });
   const listener = getRequestListener(app.fetch);
   const server = createServer(listener);
