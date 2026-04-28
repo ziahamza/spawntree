@@ -6,12 +6,28 @@ import { createServer } from "node:http";
 import { createApp, hasBundledWebApp } from "./server.ts";
 import { DaemonService } from "./services/daemon-service.ts";
 import { SessionManager } from "./sessions/session-manager.ts";
-import { ensureDir, saveDaemonPid, saveRuntimeMetadata, spawntreeHome } from "./state/global-state.ts";
+import {
+  ensureDir,
+  type HostBinding,
+  hostBindingPath,
+  loadHostBinding,
+  saveDaemonPid,
+  saveHostBinding,
+  saveRuntimeMetadata,
+  spawntreeHome,
+} from "./state/global-state.ts";
+import { HostConfigSync } from "./storage/host-sync.ts";
 import { StorageManager } from "./storage/manager.ts";
 
 async function main() {
   ensureDir();
   saveDaemonPid(process.pid);
+
+  // Resolve the host binding before anything else: CLI args override the
+  // persisted file, and if either CLI arg is present we write the pair to
+  // disk so subsequent invocations pick it up automatically. To unbind a
+  // daemon: `rm ~/.spawntree/host.json`.
+  const hostBinding = resolveHostBinding(process.argv.slice(2));
 
   const port = Number.parseInt(process.env.SPAWNTREE_PORT ?? "2222", 10) || 2222;
 
@@ -51,6 +67,18 @@ async function main() {
     sessionManager.startDiscoveryLoop(discoveryIntervalMs);
   }
 
+  // If a host binding is in effect, kick off the background config sync.
+  // Daemon boot does NOT wait on the host being reachable — the loop
+  // retries with backoff and reconciles when the host comes online.
+  let hostSync: HostConfigSync | null = null;
+  if (hostBinding) {
+    hostSync = new HostConfigSync({ binding: hostBinding, manager: storage });
+    hostSync.start();
+    process.stderr.write(
+      `[spawntree-daemon] host: bound to ${hostBinding.url} (key dh_…${hostBinding.key.slice(-6)})\n`,
+    );
+  }
+
   const app = createApp(runtime, { storage, sessionManager });
   const listener = getRequestListener(app.fetch);
   const server = createServer(listener);
@@ -86,6 +114,7 @@ async function main() {
         // Tear down the session manager first so ACP adapter subprocesses
         // release before the runtime disposes the services they might use.
         await sessionManager.shutdown().catch(() => undefined);
+        await hostSync?.stop().catch(() => undefined);
         await runtime
           .runPromise(DaemonService.use((service) => service.shutdown))
           .catch(() => undefined);
@@ -110,4 +139,84 @@ function formatFatalError(error: unknown) {
     Match.when(Match.instanceOf(Error), (cause) => cause.stack ?? cause.message),
     Match.orElse((cause) => String(cause)),
   );
+}
+
+/**
+ * Resolve the host binding for this daemon invocation.
+ *
+ * Precedence:
+ *   1. `--host <url> --host-key <dh_…>` on the CLI. If either is passed,
+ *      both must be — and the pair is persisted to `~/.spawntree/host.json`
+ *      (0600) so subsequent invocations don't need the args.
+ *   2. `~/.spawntree/host.json` if it exists from a prior run.
+ *   3. Nothing — daemon runs in standalone mode (the long-standing default).
+ *
+ * To unbind a daemon: `rm ~/.spawntree/host.json` and restart.
+ */
+function resolveHostBinding(argv: ReadonlyArray<string>): HostBinding | null {
+  const cliHost = readFlag(argv, "--host");
+  const cliKey = readFlag(argv, "--host-key");
+
+  if (cliHost && cliKey) {
+    const url = cliHost.replace(/\/+$/, "");
+    if (!isHttpUrl(url)) {
+      process.stderr.write(
+        `[spawntree-daemon] --host must be an http(s) URL; got ${cliHost}\n`,
+      );
+      process.exit(2);
+    }
+    if (!isHostKey(cliKey)) {
+      process.stderr.write(
+        `[spawntree-daemon] --host-key must look like dh_<token>; got a malformed value\n`,
+      );
+      process.exit(2);
+    }
+    const binding: HostBinding = { url, key: cliKey };
+    saveHostBinding(binding);
+    process.stderr.write(
+      `[spawntree-daemon] host: persisted binding to ${hostBindingPath()}\n`,
+    );
+    return binding;
+  }
+
+  // One arg without the other → user error, fail loud rather than ignore.
+  if (cliHost && !cliKey) {
+    process.stderr.write(`[spawntree-daemon] --host requires --host-key\n`);
+    process.exit(2);
+  }
+  if (cliKey && !cliHost) {
+    process.stderr.write(`[spawntree-daemon] --host-key requires --host\n`);
+    process.exit(2);
+  }
+
+  // No CLI override — fall back to persisted file (or standalone).
+  return loadHostBinding();
+}
+
+/** Read a `--flag value` or `--flag=value` from `argv`. Returns null if absent. */
+function readFlag(argv: ReadonlyArray<string>, flag: string): string | null {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === flag) {
+      const next = argv[i + 1];
+      return next ?? null;
+    }
+    if (arg.startsWith(`${flag}=`)) {
+      return arg.slice(flag.length + 1);
+    }
+  }
+  return null;
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isHostKey(value: string): boolean {
+  return /^dh_[A-Za-z0-9_-]{40,}$/.test(value);
 }
