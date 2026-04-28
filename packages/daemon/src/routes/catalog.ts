@@ -1,4 +1,11 @@
 import { type Context, Hono } from "hono";
+import {
+  buildCorsHeaders,
+  corsHeaderEntries,
+  corsPolicyFromEnv,
+  isAllowedBrowserOrigin,
+  type CorsPolicy,
+} from "../lib/cors.ts";
 import type { StorageManager } from "../storage/manager.ts";
 
 /**
@@ -40,35 +47,42 @@ export function createCatalogRoutes(
   options: CatalogRoutesOptions = {},
 ) {
   const app = new Hono();
-  const trustRemote = options.trustRemoteOrigin
-    ?? process.env.SPAWNTREE_CATALOG_TRUST_REMOTE === "1";
+  const policy: CorsPolicy = {
+    ...corsPolicyFromEnv("SPAWNTREE_CATALOG_TRUST_REMOTE"),
+    trustRemote: options.trustRemoteOrigin
+      ?? process.env.SPAWNTREE_CATALOG_TRUST_REMOTE === "1",
+  };
 
   app.use("*", async (c, next) => {
     const origin = c.req.header("origin");
+    const pnaRequested = c.req.header("access-control-request-private-network") === "true";
 
     if (c.req.method === "OPTIONS") {
-      if (!origin || !isAllowedBrowserOrigin(origin, trustRemote)) {
+      if (!origin || !isAllowedBrowserOrigin(origin, policy)) {
         return c.text("Not Found", 404);
       }
 
       return new Response(null, {
         status: 204,
-        headers: buildCorsHeaders(origin),
+        headers: buildCorsHeaders(origin, { pnaRequested }),
       });
     }
 
     await next();
 
-    if (origin && isAllowedBrowserOrigin(origin, trustRemote)) {
-      for (const [name, value] of corsHeaderEntries(origin)) {
+    if (origin && isAllowedBrowserOrigin(origin, policy)) {
+      for (const [name, value] of corsHeaderEntries(origin, { pnaRequested })) {
         c.header(name, value);
       }
     }
   });
 
   const requireLocalOrigin = async (c: Context, next: () => Promise<void>) => {
-    if (trustRemote) return next();
+    if (policy.trustRemote) return next();
     if (isLoopbackRequest(c)) return next();
+    // The catalog write surface (`/query`) is loopback-only by default. The
+    // public-Studio fallback uses `/query-readonly` which is gated by the
+    // CORS allow-list above instead.
     return c.json(
       {
         error: "catalog query endpoint is restricted to loopback clients",
@@ -434,39 +448,6 @@ function isLoopbackRequest(c: Context): boolean {
   );
 }
 
-function isAllowedBrowserOrigin(origin: string, trustRemote: boolean): boolean {
-  if (trustRemote) {
-    return true;
-  }
-
-  try {
-    const url = new URL(origin);
-    return (
-      url.hostname === "127.0.0.1"
-      || url.hostname === "localhost"
-      || url.hostname === "::1"
-    );
-  } catch {
-    return false;
-  }
-}
-
-function buildCorsHeaders(origin: string): Headers {
-  return new Headers({
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Max-Age": "86400",
-    Vary: "Origin",
-  });
-}
-
-function corsHeaderEntries(origin: string): Array<[string, string]> {
-  return [
-    ["Access-Control-Allow-Origin", origin],
-    ["Access-Control-Allow-Methods", "GET,POST,OPTIONS"],
-    ["Access-Control-Allow-Headers", "Content-Type, Authorization"],
-    ["Access-Control-Max-Age", "86400"],
-    ["Vary", "Origin"],
-  ];
-}
+// CORS / PNA helpers moved to packages/daemon/src/lib/cors.ts so they're
+// shared between catalog and sessions routes (and any future browser-facing
+// surface).
