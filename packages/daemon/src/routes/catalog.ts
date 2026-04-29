@@ -204,7 +204,25 @@ export function classifyReadOnlySql(raw: string): { ok: true } | { ok: false; re
     return { ok: false, reason: "multiple statements are not allowed on the read-only endpoint" };
   }
   const upper = firstKeyword.toUpperCase();
-  if (upper === "SELECT" || upper === "WITH" || upper === "EXPLAIN") {
+  if (upper === "SELECT" || upper === "EXPLAIN") {
+    return { ok: true };
+  }
+  if (upper === "WITH") {
+    // SQLite supports writable CTEs:
+    //   WITH d AS (SELECT 1) INSERT INTO repos(id) VALUES('x')
+    // is a single valid statement that starts with `WITH` but performs a
+    // write. The multi-statement check can't catch it (no `;` between the
+    // CTE and the DML). With `/query-readonly` exposed to public origins
+    // (this is the whole point of dropping `requireLocalOrigin`), an
+    // attacker on an allow-listed origin could mutate the catalog this
+    // way. Scan the body for any DML keyword as a whole word outside
+    // strings/comments — if found, this is a write-via-CTE and we reject.
+    if (containsWriteKeyword(raw)) {
+      return {
+        ok: false,
+        reason: "writable CTEs (WITH … INSERT/UPDATE/DELETE/…) are not allowed",
+      };
+    }
     return { ok: true };
   }
   if (upper === "PRAGMA") {
@@ -217,11 +235,125 @@ export function classifyReadOnlySql(raw: string): { ok: true } | { ok: false; re
 }
 
 /**
- * The catalog-relevant subset of SQLite pragmas that mutate state.
+ * Whole-word scan for SQL DML keywords on the trivia-stripped statement.
+ * Used by the WITH branch of `classifyReadOnlySql` to catch writable CTEs.
+ *
+ * `replaceStringsAndComments` is a string/comment-aware filter — keywords
+ * that appear inside `'…'`, `"…"`, ` `…` `, line comments, or block
+ * comments are blanked out. Without that filter a CTE that selects the
+ * literal string `'INSERT'` would be misclassified as a write.
+ */
+const WRITE_KEYWORDS = ["INSERT", "UPDATE", "DELETE", "REPLACE", "MERGE", "UPSERT"];
+
+function containsWriteKeyword(raw: string): boolean {
+  const cleaned = replaceStringsAndComments(raw).toUpperCase();
+  for (const kw of WRITE_KEYWORDS) {
+    // \b in JS regex treats `_` as a word char, which is fine for SQL keywords
+    // (no SQL keyword has a leading or trailing underscore).
+    const re = new RegExp(`\\b${kw}\\b`);
+    if (re.test(cleaned)) return true;
+  }
+  return false;
+}
+
+/**
+ * Replace SQL string literals and comments with spaces so a downstream
+ * keyword scan sees only real SQL tokens. Spaces (rather than removal) are
+ * used so the keyword boundary regex still correctly identifies the gap.
+ *
+ * Recognises:
+ *   - `--` line comments through end-of-line
+ *   - `/* … *\/` block comments (non-nesting, matching SQLite)
+ *   - `' … '` strings with `''` escape
+ *   - `" … "` identifiers with `""` escape (quoted identifiers can contain
+ *     anything including write keywords like a column literally named "INSERT")
+ *   - `` ` … ` `` MySQL-style quoted identifiers (tolerated by SQLite)
+ *
+ * Unterminated literals/comments are spaced through to end of input, which
+ * makes any check fail open by reducing the searchable text — but the
+ * `hasMultipleStatements` check would have already blocked obviously
+ * malformed multi-statement payloads upstream.
+ */
+function replaceStringsAndComments(sql: string): string {
+  const out: string[] = [];
+  const n = sql.length;
+  let i = 0;
+  const space = (count: number): void => {
+    out.push(" ".repeat(count));
+  };
+  while (i < n) {
+    const c = sql.charAt(i);
+    const next = i + 1 < n ? sql.charAt(i + 1) : "";
+
+    if (c === "-" && next === "-") {
+      const eol = sql.indexOf("\n", i);
+      const end = eol === -1 ? n : eol;
+      space(end - i);
+      i = end;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      const close = sql.indexOf("*/", i + 2);
+      const end = close === -1 ? n : close + 2;
+      space(end - i);
+      i = end;
+      continue;
+    }
+    if (c === "'") {
+      space(1);
+      i++;
+      while (i < n) {
+        if (sql.charAt(i) === "'") {
+          if (sql.charAt(i + 1) === "'") { space(2); i += 2; continue; }
+          space(1); i++;
+          break;
+        }
+        space(1);
+        i++;
+      }
+      continue;
+    }
+    if (c === '"') {
+      space(1);
+      i++;
+      while (i < n) {
+        if (sql.charAt(i) === '"') {
+          if (sql.charAt(i + 1) === '"') { space(2); i += 2; continue; }
+          space(1); i++;
+          break;
+        }
+        space(1);
+        i++;
+      }
+      continue;
+    }
+    if (c === "`") {
+      space(1);
+      i++;
+      while (i < n && sql.charAt(i) !== "`") { space(1); i++; }
+      if (i < n) { space(1); i++; }
+      continue;
+    }
+    out.push(c);
+    i++;
+  }
+  return out.join("");
+}
+
+/**
+ * Pragmas the classifier rejects in ALL forms (both `PRAGMA name` and
+ * `PRAGMA name(...)` query forms). These are stateful enough that even
+ * reading them is a side-effect channel we don't want to expose.
+ *
  * Schema-qualified forms (`main.journal_mode`, `temp.foreign_keys`)
  * normalize to the unqualified name before the lookup.
+ *
+ * NOTE: this is the second line of defence. The first is a universal
+ * `PRAGMA name = …` write-form rejection in `classifyPragma` — that
+ * blocks writes to any pragma, even ones not in this set. The set itself
+ * only matters for pragmas where even the read form is dangerous.
  */
-const WRITE_PRAGMAS = new Set([
+const FULLY_BLOCKED_PRAGMAS = new Set([
   "foreign_keys",
   "journal_mode",
   "synchronous",
@@ -232,6 +364,29 @@ const WRITE_PRAGMAS = new Set([
   "optimize",
   "shrink_memory",
   "vacuum",
+  "writable_schema",
+  "trusted_schema",
+  "locking_mode",
+  "secure_delete",
+  "temp_store",
+  "automatic_index",
+  "recursive_triggers",
+  "defer_foreign_keys",
+  "ignore_check_constraints",
+  "case_sensitive_like",
+  "cell_size_check",
+  "checkpoint_fullfsync",
+  "fullfsync",
+  "legacy_alter_table",
+  "legacy_file_format",
+  "max_page_count",
+  "mmap_size",
+  "page_size",
+  "query_only",
+  "read_uncommitted",
+  "reverse_unordered_selects",
+  "soft_heap_limit",
+  "threads",
 ]);
 
 function classifyPragma(raw: string): { ok: true } | { ok: false; reason: string } {
@@ -251,10 +406,29 @@ function classifyPragma(raw: string): { ok: true } | { ok: false; reason: string
   const baseName = fullName.includes(".")
     ? fullName.split(".").pop()!
     : fullName;
-  if (WRITE_PRAGMAS.has(baseName)) {
+  if (FULLY_BLOCKED_PRAGMAS.has(baseName)) {
     return {
       ok: false,
       reason: `PRAGMA ${fullName} is not allowed on the read-only endpoint`,
+    };
+  }
+  // Universal write-form rejection: `PRAGMA <name> = <value>` mutates
+  // database state regardless of which pragma is targeted. Devin's review
+  // of #34 flagged that the original denylist let writes through for
+  // any pragma not explicitly listed (e.g. `PRAGMA cache_size = 0`,
+  // `PRAGMA locking_mode = EXCLUSIVE`). After dropping the loopback gate
+  // on `/query-readonly` those became reachable from any allow-listed
+  // browser origin.
+  //
+  // The function-call form `PRAGMA name(arg)` is a read-only query (e.g.
+  // `PRAGMA table_info(repos)`), so we only reject `=`. Whitespace before
+  // the `=` is allowed (`PRAGMA cache_size = 0` and `PRAGMA cache_size=0`
+  // are equivalent).
+  const after = skipTrivia(raw, i);
+  if (after < raw.length && raw[after] === "=") {
+    return {
+      ok: false,
+      reason: `PRAGMA ${fullName} = … (write form) is not allowed on the read-only endpoint`,
     };
   }
   return { ok: true };

@@ -129,6 +129,103 @@ describe("classifyReadOnlySql", () => {
       expect(v.ok).toBe(true);
     });
   });
+
+  // Regression tests for bypasses flagged in Devin's review of PR #34.
+  describe("writable CTE protection (Devin BUG_0002 on #34)", () => {
+    it.each([
+      [
+        "WITH d AS (SELECT 1) INSERT INTO repos(id) VALUES('x')",
+        "CTE-then-INSERT",
+      ],
+      [
+        "WITH d(x) AS (VALUES('hacked')) INSERT INTO repos(id, slug, name, provider, owner) SELECT x, x, x, x, '' FROM d",
+        "CTE-with-VALUES then INSERT",
+      ],
+      [
+        "WITH d AS (SELECT 1) UPDATE repos SET name='hacked'",
+        "CTE-then-UPDATE",
+      ],
+      [
+        "WITH d AS (SELECT 1) DELETE FROM repos",
+        "CTE-then-DELETE",
+      ],
+      [
+        "WITH d AS (SELECT 1) REPLACE INTO repos(id) VALUES('x')",
+        "CTE-then-REPLACE",
+      ],
+      [
+        "with recursive r(n) as (select 1) insert into repos(id) select cast(n as text) from r",
+        "lowercase recursive CTE-then-insert",
+      ],
+    ])("rejects writable CTE: %s (%s)", (sql, _label) => {
+      const v = classifyReadOnlySql(sql);
+      expect(v.ok, `expected ${sql} to be rejected`).toBe(false);
+    });
+
+    it("still accepts pure-read CTEs", () => {
+      expect(classifyReadOnlySql("WITH d AS (SELECT 1) SELECT * FROM d").ok).toBe(true);
+      expect(
+        classifyReadOnlySql(
+          "WITH RECURSIVE t(n) AS (SELECT 1 UNION SELECT n+1 FROM t) SELECT * FROM t LIMIT 5",
+        ).ok,
+      ).toBe(true);
+    });
+
+    it("does not false-positive on a string literal that contains 'INSERT'", () => {
+      // The keyword scanner runs over a strings/comments-stripped version
+      // of the SQL, so DML keywords inside literals don't match.
+      const v = classifyReadOnlySql(
+        "WITH d AS (SELECT 'INSERT INTO foo' AS hint) SELECT hint FROM d",
+      );
+      expect(v.ok).toBe(true);
+    });
+
+    it("does not false-positive on a column literally named INSERT", () => {
+      // `"INSERT"` is a quoted identifier — also stripped.
+      const v = classifyReadOnlySql('WITH d AS (SELECT "INSERT" FROM repos) SELECT * FROM d');
+      expect(v.ok).toBe(true);
+    });
+  });
+
+  describe("PRAGMA write-form protection (Devin BUG_0001 on #34)", () => {
+    it.each([
+      // Pragmas Devin called out specifically as previously-reachable
+      ["PRAGMA cache_size = 0", "cache_size write rejected"],
+      ["PRAGMA locking_mode = EXCLUSIVE", "locking_mode write rejected"],
+      ["PRAGMA writable_schema = ON", "writable_schema write rejected (also fully blocked)"],
+      ["PRAGMA temp_store = MEMORY", "temp_store write rejected"],
+      ["PRAGMA trusted_schema = OFF", "trusted_schema write rejected (also fully blocked)"],
+      // Whitespace / case variations
+      ["pragma cache_size=0", "lowercase + no spaces"],
+      ["PRAGMA   cache_size   =   0", "extra whitespace"],
+      ["PRAGMA main.cache_size = 0", "schema-qualified write"],
+    ])("rejects write-form: %s (%s)", (sql, _label) => {
+      const v = classifyReadOnlySql(sql);
+      expect(v.ok, `expected ${sql} to be rejected`).toBe(false);
+    });
+
+    it.each([
+      "PRAGMA cache_size",
+      "PRAGMA table_info(repos)",
+      "PRAGMA index_list(repos)",
+      "PRAGMA database_list",
+      "PRAGMA compile_options",
+    ])("accepts read-form: %s", (sql) => {
+      const v = classifyReadOnlySql(sql);
+      expect(v.ok).toBe(true);
+    });
+
+    it.each([
+      // Pragmas added to FULLY_BLOCKED_PRAGMAS: even the read form is rejected
+      "PRAGMA writable_schema",
+      "PRAGMA trusted_schema",
+      "PRAGMA locking_mode",
+      "PRAGMA query_only",
+    ])("rejects fully-blocked pragma even in read form: %s", (sql) => {
+      const v = classifyReadOnlySql(sql);
+      expect(v.ok).toBe(false);
+    });
+  });
 });
 
 describe("POST /api/v1/catalog/query-readonly", () => {
