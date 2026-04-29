@@ -24,6 +24,7 @@ import { createSessionRoutes } from "./routes/sessions.ts";
 import { createStorageRoutes } from "./routes/storage.ts";
 import { DaemonService } from "./services/daemon-service.ts";
 import type { SessionManager } from "./sessions/session-manager.ts";
+import type { HostConfigSync } from "./storage/host-sync.ts";
 import type { StorageManager } from "./storage/manager.ts";
 
 /**
@@ -50,7 +51,18 @@ const webIndexPath = resolve(webDistDir, "index.html");
 
 export function createApp(
   runtime: ManagedRuntime.ManagedRuntime<DaemonService, never>,
-  options: { storage?: StorageManager; sessionManager?: SessionManager } = {},
+  options: {
+    storage?: StorageManager;
+    sessionManager?: SessionManager;
+    /**
+     * The active host-config-sync loop, if `--host` was passed at boot.
+     * Plumbed through so `GET /api/v1/storage` can include its state
+     * (synced / awaiting_config / error / next-retry-at) and the
+     * dashboard can paint a "host-bound" pill without a separate
+     * endpoint.
+     */
+    hostSync?: HostConfigSync | null;
+  } = {},
 ) {
   const app = new Hono();
 
@@ -78,7 +90,10 @@ export function createApp(
 
   // Storage provider management + catalog query routes.
   if (options.storage) {
-    app.route("/api/v1/storage", createStorageRoutes(options.storage));
+    app.route(
+      "/api/v1/storage",
+      createStorageRoutes(options.storage, { hostSync: options.hostSync ?? null }),
+    );
     app.route("/api/v1/catalog", createCatalogRoutes(options.storage));
   }
 

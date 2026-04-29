@@ -135,6 +135,9 @@ importers:
       '@types/dockerode':
         specifier: ^3.3.39
         version: 3.3.47
+      spawntree-host:
+        specifier: workspace:*
+        version: link:../host
 
   packages/host:
     dependencies:

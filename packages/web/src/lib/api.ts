@@ -22,6 +22,7 @@ import {
   type SessionToolCallData,
   type SessionTurnData,
   type ServiceInfo,
+  type StorageStatusResponse,
   type WebRepo,
 } from "spawntree-core/browser";
 
@@ -52,6 +53,7 @@ export type Service = ServiceInfo;
 export type Env = EnvInfo;
 export type EnvListItem = EnvInfo;
 export type InfraStatus = InfraStatusResponse;
+export type StorageStatus = StorageStatusResponse;
 export type ConfigTestResult = ConfigTestResponse;
 export type ConfigPreviewResult = ConfigPreviewResponse;
 export type ConfigSuggestResult = ConfigSuggestResponse;
@@ -128,6 +130,20 @@ export function useInfra() {
     queryKey: ["infra"],
     queryFn: () => api.getInfraStatus(),
     refetchInterval: 30_000,
+  });
+}
+
+/**
+ * Polls the daemon's storage subsystem snapshot. Refresh cadence is 15s
+ * (vs 30s for infra) because host-sync state can change quickly during
+ * the initial connect / awaiting_config / synced transition and the
+ * dashboard should reflect it without the user reloading.
+ */
+export function useStorage() {
+  return useQuery({
+    queryKey: ["storage"],
+    queryFn: () => api.getStorageStatus(),
+    refetchInterval: 15_000,
   });
 }
 

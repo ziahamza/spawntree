@@ -1,5 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import { mkdtempSync, rmSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -10,92 +11,60 @@ import {
   type ReplicatorHandle,
   type ReplicatorProvider,
 } from "spawntree-core";
+import { createApp, openStore, type Store } from "spawntree-host";
 import { HostConfigSync } from "../src/storage/host-sync.ts";
 import { StorageManager } from "../src/storage/manager.ts";
 
 /**
- * End-to-end integration test against a real `spawntree-host` process.
+ * End-to-end integration test against the host's `createApp` factory —
+ * the same handler the CLI bin runs, just bound to a random port in this
+ * test's process. No child-process spawning, no `--frozen-lockfile`
+ * native-bindings dance, no "wait for stderr" race.
  *
- * Why: the host server's request router is a separate match block from
- * `handleAdmin`, and on PR #35 the daemon endpoints were silently 404-ing
- * because the router only dispatched `/api/hosts*`. Unit tests with a
- * stubbed fetch (`host-sync.test.ts`) did not catch it. This test boots
- * the real host binary, mints a daemon credential, pushes a config, and
- * asserts the daemon-side `HostConfigSync` reconciles the storage manager
- * to it — the same code path a real deployment exercises.
+ * Why this test exists: on PR #35 the host's request router silently
+ * dropped `/api/daemons*` paths because the dispatch guard only matched
+ * `/api/hosts*`. The unit-tested daemon-side fetch loop (`host-sync.test.ts`)
+ * stubs fetch, so it didn't notice the entire feature was 404-ing on the
+ * server side. Here we wire the real handler to an http.Server and assert
+ * the daemon-side `HostConfigSync` reconciles a config the host gives it
+ * — the same code path a real deployment exercises.
  *
- * Skipped automatically if `packages/host/dist/server.js` is missing
- * (e.g. running `pnpm test` without a prior `pnpm build`).
+ * Earlier iteration (PR #35 followups, before this rewrite) shelled out to
+ * `packages/host/dist/server.js`. That worked but added a 1-2s startup
+ * tax per beforeAll and tied the test to `pnpm build` ordering. The
+ * factory split makes both go away.
  */
-
-const HOST_BIN = resolve(import.meta.dirname, "..", "..", "host", "dist", "server.js");
-const haveHostBin = existsSync(HOST_BIN);
-const describeIfBuilt = haveHostBin ? describe : describe.skip;
 
 interface HostHandle {
   url: string;
-  proc: ChildProcess;
-  dbPath: string;
+  server: Server;
+  store: Store;
+  dbDir: string;
 }
 
 async function startHost(): Promise<HostHandle> {
-  const port = 17000 + Math.floor(Math.random() * 1000);
   const dbDir = mkdtempSync(resolve(tmpdir(), "spawntree-host-int-"));
   const dbPath = resolve(dbDir, "hosts.db");
-  const proc = spawn(process.execPath, [HOST_BIN], {
-    env: {
-      ...process.env,
-      HOST_SERVER_PORT: String(port),
-      HOST_SERVER_HOST: "127.0.0.1",
-      HOST_SERVER_DB: dbPath,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
+  const store = openStore(dbPath);
+  const { handler } = createApp({ store, host: "127.0.0.1", port: 0 });
+  const server = createServer(handler);
+
+  await new Promise<void>((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(0, "127.0.0.1", () => resolveListen());
   });
-
-  // Buffer all stderr/stdout so when the host crashes (e.g. better-sqlite3
-  // native binding missing on CI runners), the test failure surfaces the
-  // actual error instead of just `exit code 1`.
-  const stderrBuf: Array<string> = [];
-  const stdoutBuf: Array<string> = [];
-  proc.stderr?.on("data", (c: Buffer) => stderrBuf.push(c.toString()));
-  proc.stdout?.on("data", (c: Buffer) => stdoutBuf.push(c.toString()));
-
-  // Wait for the server to log its listen line before issuing requests.
-  // 15s timeout — generous for CI runners with cold caches and parallel
-  // load. Local runs bind in <100ms.
-  await new Promise<void>((resolveReady, rejectReady) => {
-    const timeout = setTimeout(() => {
-      rejectReady(
-        new Error(
-          `host did not become ready in 15s on :${port}\n--- stderr ---\n${stderrBuf.join("")}\n--- stdout ---\n${stdoutBuf.join("")}`,
-        ),
-      );
-    }, 15_000);
-    proc.stderr?.on("data", (chunk: Buffer) => {
-      if (chunk.toString().includes(`listening on http://127.0.0.1:${port}`)) {
-        clearTimeout(timeout);
-        resolveReady();
-      }
-    });
-    proc.on("exit", (code) => {
-      clearTimeout(timeout);
-      rejectReady(
-        new Error(
-          `host exited prematurely with code ${code}\n--- stderr ---\n${stderrBuf.join("")}\n--- stdout ---\n${stdoutBuf.join("")}`,
-        ),
-      );
-    });
-  });
-
-  return { url: `http://127.0.0.1:${port}`, proc, dbPath };
+  const addr = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${addr.port}`,
+    server,
+    store,
+    dbDir,
+  };
 }
 
 async function stopHost(handle: HostHandle): Promise<void> {
-  if (!handle.proc.killed) {
-    handle.proc.kill("SIGTERM");
-    await new Promise<void>((r) => handle.proc.once("exit", () => r()));
-  }
-  rmSync(resolve(handle.dbPath, ".."), { recursive: true, force: true });
+  await new Promise<void>((r) => handle.server.close(() => r()));
+  rmSync(handle.dbDir, { recursive: true, force: true });
 }
 
 /**
@@ -133,11 +102,8 @@ function makeRecordingProvider(): {
   return { provider, active: () => [...live] };
 }
 
-describeIfBuilt("HostConfigSync end-to-end against real spawntree-host", () => {
-  // Initialize to null so the cleanup hook is safe even if setup fails
-  // partway through — otherwise vitest reports a confusing
-  // `Cannot read properties of undefined (reading 'stop')` that masks
-  // the real startup error.
+describe("HostConfigSync end-to-end against in-process spawntree-host", () => {
+  // Initialize to null so cleanup is safe even if setup fails partway.
   let host: HostHandle | null = null;
   let dataDir: string | null = null;
   let manager: StorageManager | null = null;
@@ -157,7 +123,7 @@ describeIfBuilt("HostConfigSync end-to-end against real spawntree-host", () => {
       registry,
     });
     await manager.start();
-  }, 30_000);
+  });
 
   afterAll(async () => {
     await manager?.stop().catch(() => undefined);
@@ -166,9 +132,9 @@ describeIfBuilt("HostConfigSync end-to-end against real spawntree-host", () => {
   });
 
   it("POST /api/daemons mints a credential (router dispatches /api/daemons*)", async () => {
-    // This is the assertion that would have caught the routing bug Devin
-    // flagged on PR #35: before the fix, this 404'd because the top-level
-    // router only matched /api/hosts*.
+    // The assertion that would have caught the routing bug Devin flagged
+    // on PR #35: before the fix, this 404'd because the top-level router
+    // only matched /api/hosts*.
     const res = await fetch(`${host!.url}/api/daemons`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -240,5 +206,18 @@ describeIfBuilt("HostConfigSync end-to-end against real spawntree-host", () => {
     const status = await manager!.status();
     expect(status.replicators.map((r) => r.rid)).toContain("from-host");
     expect(recording.active().length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("GET / renders the landing page including the daemons section (UX wired up)", async () => {
+    // Smoke-tests the landing-page enrichment: the page now lists
+    // registered daemons alongside federation hosts. If we ever break the
+    // template, the curl-paste-ready instructions go with it.
+    const res = await fetch(`${host!.url}/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/text\/html/);
+    const html = await res.text();
+    expect(html).toContain("Daemons (--host / --host-key)");
+    expect(html).toContain("integration-test-daemon");
+    expect(html).toContain("e2e-flow");
   });
 });

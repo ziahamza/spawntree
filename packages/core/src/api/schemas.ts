@@ -82,6 +82,65 @@ export const InfraStatusResponse = Schema.Struct({
 });
 export type InfraStatusResponse = Schema.Schema.Type<typeof InfraStatusResponse>;
 
+// ─── Storage / host-sync ───────────────────────────────────────────────────
+//
+// Mirrors the union returned by `HostConfigSync.getStatus()` on the daemon.
+// Kept loose — `Schema.Unknown` is safer than tagging every variant because
+// the dashboard treats this as a display shape, not a domain operation.
+//
+// `null` here is a deliberate signal — the daemon was started without a
+// `--host` binding (standalone mode). The dashboard renders that as
+// "Standalone — local storage only".
+export const HostSyncState = Schema.Union([
+  Schema.Struct({ state: Schema.Literal("idle") }),
+  Schema.Struct({ state: Schema.Literal("fetching"), since: Schema.String }),
+  Schema.Struct({
+    state: Schema.Literal("synced"),
+    lastSyncAt: Schema.String,
+    daemonLabel: Schema.NullOr(Schema.String),
+  }),
+  Schema.Struct({
+    state: Schema.Literal("awaiting_config"),
+    lastCheckAt: Schema.String,
+    daemonLabel: Schema.NullOr(Schema.String),
+  }),
+  Schema.Struct({
+    state: Schema.Literal("error"),
+    lastErrorAt: Schema.String,
+    error: Schema.String,
+    nextRetryAt: Schema.String,
+  }),
+]);
+export type HostSyncState = Schema.Schema.Type<typeof HostSyncState>;
+
+/**
+ * `GET /api/v1/storage` shape consumed by the dashboard's infra page.
+ * Loose on `config` shapes since they vary per provider — we only need
+ * IDs for display.
+ */
+export const StorageStatusResponse = Schema.Struct({
+  primary: Schema.Struct({
+    id: Schema.String,
+    config: Schema.Unknown,
+    status: Schema.Unknown,
+  }),
+  replicators: Schema.Array(
+    Schema.Struct({
+      rid: Schema.String,
+      id: Schema.String,
+      config: Schema.Unknown,
+      status: Schema.Unknown,
+    }),
+  ),
+  availableProviders: Schema.Struct({
+    primaries: Schema.Array(Schema.Struct({ id: Schema.String })),
+    replicators: Schema.Array(Schema.Struct({ id: Schema.String })),
+  }),
+  migrating: Schema.Boolean,
+  hostSync: Schema.NullOr(HostSyncState),
+});
+export type StorageStatusResponse = Schema.Schema.Type<typeof StorageStatusResponse>;
+
 export const ApiError = Schema.Struct({
   error: Schema.String,
   code: Schema.String,
