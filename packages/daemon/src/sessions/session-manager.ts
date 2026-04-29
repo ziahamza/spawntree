@@ -1,14 +1,17 @@
+import { existsSync } from "node:fs";
 import type {
   ACPAdapter,
   ACPSessionDetail,
   CatalogDb,
   DiscoveredSession,
+  GitMetadata,
   SessionEvent,
   SessionInfo,
 } from "spawntree-core";
 import {
   ClaudeCodeAdapter,
   CodexACPAdapter,
+  detectGitMetadata,
   ProviderCapabilityError,
   schema as catalogSchema,
   SessionDeleteUnsupportedError,
@@ -80,6 +83,27 @@ export class SessionManager {
   private discoveryCacheAt = 0;
   private discoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private discoveryStopped = false;
+  /**
+   * Set the moment `startDiscoveryLoop` is called, BEFORE the first
+   * `tick()` resolves. Without this flag, the idempotency guard would
+   * still let a second call slip through during the (potentially several
+   * seconds) window where `discoveryTimer` is still null because the
+   * setTimeout assignment only happens after `runDiscoveryPass` finishes.
+   */
+  private discoveryLoopStarted = false;
+  /**
+   * Cache of `cwd → GitMetadata` for sessions whose adapter didn't report
+   * git metadata. Populated lazily by `backfillGitMetadata()`. Without
+   * this cache the daemon would `git rev-parse` the same worktree on
+   * every 30-second discovery tick — for a busy machine that's hundreds
+   * of subprocess spawns per minute.
+   *
+   * Cached values are kept for the lifetime of the daemon process. If a
+   * worktree is deleted and recreated at the same path with a different
+   * branch, the cached value goes stale until the next daemon restart;
+   * acceptable trade-off vs. re-detecting every tick.
+   */
+  private readonly gitMetadataCache = new Map<string, GitMetadata>();
 
   constructor(events: DomainEvents, options: { storage?: StorageManager } = {}) {
     this.events = events;
@@ -225,17 +249,25 @@ export class SessionManager {
         // of sessions the daemon sees over ACP. Without this hop, sessions
         // started outside the daemon (e.g. `codex exec ...` from a terminal)
         // are invisible to anything that queries `SELECT * FROM sessions`.
+        //
+        // `backfillGitMetadata` runs `git rev-parse` against the session's
+        // working_directory whenever the adapter reported any of branch /
+        // headCommit / remoteUrl as null. Some Codex sessions are missing
+        // `gitInfo` from `thread.gitInfo` for legacy reasons, and without
+        // a branch we can't link those sessions to the right PR in the UI.
+        // Detection is cached per-cwd so subsequent ticks are free.
         if (this.catalog) {
           for (const s of sessions) {
+            const git = this.backfillGitMetadata(s);
             await upsertSession(this.catalog, {
               sessionId: s.sourceId,
               provider,
               status: s.status,
               workingDirectory: s.workingDirectory,
               title: s.title,
-              gitBranch: s.gitBranch,
-              gitHeadCommit: s.gitHeadCommit,
-              gitRemoteUrl: s.gitRemoteUrl,
+              gitBranch: git.branch,
+              gitHeadCommit: git.headCommit,
+              gitRemoteUrl: git.remoteUrl,
               totalTurns: s.totalTurns,
               startedAt: s.startedAt,
             }).catch((err) => {
@@ -263,10 +295,17 @@ export class SessionManager {
    * pick up new Codex CLI sessions promptly without burning subprocess
    * spawns. Idempotent: calling this twice is a no-op.
    *
+   * The idempotency guard is `discoveryLoopStarted`, set synchronously
+   * before the first `tick()` runs. Checking only `discoveryTimer` would
+   * race because that field stays null until the FIRST `runDiscoveryPass`
+   * resolves and the next setTimeout is scheduled — a window where a
+   * second call would spawn a parallel loop.
+   *
    * Stop via `stopDiscoveryLoop()` (called from daemon shutdown).
    */
   startDiscoveryLoop(intervalMs = 30_000): void {
-    if (this.discoveryTimer || this.discoveryStopped) return;
+    if (this.discoveryLoopStarted || this.discoveryStopped) return;
+    this.discoveryLoopStarted = true;
 
     const tick = async () => {
       try {
@@ -290,6 +329,7 @@ export class SessionManager {
 
   stopDiscoveryLoop(): void {
     this.discoveryStopped = true;
+    this.discoveryLoopStarted = false;
     if (this.discoveryTimer) {
       clearTimeout(this.discoveryTimer);
       this.discoveryTimer = null;
@@ -483,6 +523,61 @@ export class SessionManager {
   }
 
   // ─── Private helpers ────────────────────────────────────────────────────
+
+  /**
+   * Fill in any null git metadata on a discovered session by running
+   * `git` against its `workingDirectory`. Returns the merged result so
+   * the caller can pass it straight into `upsertSession`.
+   *
+   * If the adapter already reported all three (branch/headCommit/remoteUrl),
+   * this is a zero-cost passthrough. Otherwise we look up the cached
+   * detection for the cwd, and if there's no cached entry, we run
+   * `detectGitMetadata` (synchronous git CLI) and cache the result.
+   *
+   * Sessions whose `workingDirectory` no longer exists on disk (deleted
+   * worktree, machine moved, etc.) skip detection — the existing nulls
+   * stay nulls, which is correct: those sessions can't be linked to a
+   * current branch anyway.
+   */
+  private backfillGitMetadata(session: DiscoveredSession): GitMetadata {
+    if (session.gitBranch && session.gitHeadCommit && session.gitRemoteUrl) {
+      return {
+        branch: session.gitBranch,
+        headCommit: session.gitHeadCommit,
+        remoteUrl: session.gitRemoteUrl,
+      };
+    }
+
+    const cwd = session.workingDirectory;
+    const adapterMeta: GitMetadata = {
+      branch: session.gitBranch ?? null,
+      headCommit: session.gitHeadCommit ?? null,
+      remoteUrl: session.gitRemoteUrl ?? null,
+    };
+    if (!cwd) return adapterMeta;
+
+    const cached = this.gitMetadataCache.get(cwd);
+    if (cached) {
+      return {
+        branch: adapterMeta.branch ?? cached.branch,
+        headCommit: adapterMeta.headCommit ?? cached.headCommit,
+        remoteUrl: adapterMeta.remoteUrl ?? cached.remoteUrl,
+      };
+    }
+
+    // A missing path would just give us all-null git output. Skip the
+    // spawns and don't cache, so a recreated worktree gets a fresh
+    // detection on the next discovery pass.
+    if (!existsSync(cwd)) return adapterMeta;
+
+    const detected = detectGitMetadata(cwd);
+    this.gitMetadataCache.set(cwd, detected);
+    return {
+      branch: adapterMeta.branch ?? detected.branch,
+      headCommit: adapterMeta.headCommit ?? detected.headCommit,
+      remoteUrl: adapterMeta.remoteUrl ?? detected.remoteUrl,
+    };
+  }
 
   private requireAdapter(provider: string): ACPAdapter {
     const adapter = this.adapters.get(provider);

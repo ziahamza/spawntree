@@ -1,6 +1,5 @@
 import { Effect, ManagedRuntime, Schema } from "effect";
 import { type Context, Hono } from "hono";
-import { cors } from "hono/cors";
 import { existsSync, readFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,30 +54,16 @@ export function createApp(
 ) {
   const app = new Hono();
 
-  app.use(
-    "*",
-    cors({
-      origin: (origin) => {
-        if (!origin) return origin;
-        try {
-          const url = new URL(origin);
-          const host = url.hostname;
-          const isLoopback =
-            host === "localhost" ||
-            host === "127.0.0.1" ||
-            host === "::1" ||
-            host.endsWith(".localhost");
-          return isLoopback ? origin : null;
-        } catch {
-          return null;
-        }
-      },
-      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-      allowHeaders: ["Content-Type", "Authorization", "X-Trace-Id"],
-      credentials: true,
-      maxAge: 600,
-    }),
-  );
+  // CORS is applied per route group:
+  //   - /api/v1/catalog and /api/v1/sessions use the shared module at
+  //     `lib/cors.ts` with PNA support and the gitenv.dev allow-list.
+  //   - The remaining routes (/api/v1/storage, /api/v1/envs, /api/v1/repos
+  //     etc.) are admin surfaces only ever called by the daemon's own
+  //     dashboard SPA bundled at the same origin, so they don't need CORS.
+  // A global loopback-only `hono/cors` middleware here would shadow the
+  // per-route CORS and silently break cross-origin reads from public
+  // Studio (https://gitenv.dev), which is the whole point of the CORS+PNA
+  // surface in `lib/cors.ts`.
 
   app.use(async (context, next) => {
     const startedAt = Date.now();

@@ -7,5 +7,6 @@ export { validateConfig } from "./config/schema.ts";
 export { substituteVars } from "./config/substitution.ts";
 export * from "./db/index.ts";
 export { WorktreeManager } from "./env/worktree.ts";
+export { detectGitMetadata, type GitMetadata } from "./lib/git.ts";
 export { type Service, type ServiceStatus } from "./services/interface.ts";
 export * from "./storage/index.ts";
