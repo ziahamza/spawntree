@@ -1,5 +1,13 @@
 # spawntree
 
+## 0.5.0
+
+### Patch Changes
+
+- Updated dependencies [[`c94e6f9`](https://github.com/ziahamza/spawntree/commit/c94e6f974509025e6b9281563283b178a3d94863), [`c94e6f9`](https://github.com/ziahamza/spawntree/commit/c94e6f974509025e6b9281563283b178a3d94863), [`c94e6f9`](https://github.com/ziahamza/spawntree/commit/c94e6f974509025e6b9281563283b178a3d94863)]:
+  - spawntree-core@0.5.0
+  - spawntree-daemon@0.4.0
+
 ## 0.4.0
 
 ### Patch Changes

@@ -1,5 +1,89 @@
 # spawntree-daemon
 
+## 0.4.0
+
+### Minor Changes
+
+- [#37](https://github.com/ziahamza/spawntree/pull/37) [`c94e6f9`](https://github.com/ziahamza/spawntree/commit/c94e6f974509025e6b9281563283b178a3d94863) Thanks [@ziahamza](https://github.com/ziahamza)! - Centralized storage config sync via `--host` / `--host-key`.
+
+  **Daemon**: new CLI flags `--host <url>` and `--host-key <dh_…>` bind a daemon
+  to a `spawntree-host` server. The pair is persisted to `~/.spawntree/host.json`
+  (0600) so subsequent boots don't need the args. On boot, the daemon pulls its
+  `StorageConfig` from `GET /api/daemons/me/config` and reconciles in-place via
+  `StorageManager.applyConfig` — primary swaps with data migration, replicators
+  diff by `rid`. Boot is non-blocking: 5-min steady-state poll, exponential
+  backoff (5s → 30s → 2m → 10m) on failure, `awaiting_config` state on host 404.
+  Status snapshot exposed via `GET /api/v1/storage`.
+
+  **Host**: new `daemons` table + endpoints. `POST /api/daemons` mints a `dh_…`
+  bearer credential (only revealed once); `GET /api/daemons` lists fingerprints;
+  `GET|PUT /api/daemons/<key>/config` lets operators push the config; `DELETE`
+  revokes; `GET /api/daemons/me/config` is the daemon's auth-gated read with
+  `Authorization: Bearer <key>`. The bearer token is identity + auth in one
+  shot — no separate daemon ID.
+
+  See `docs/host-config.md` for the full operator walkthrough.
+
+### Patch Changes
+
+- [#37](https://github.com/ziahamza/spawntree/pull/37) [`c94e6f9`](https://github.com/ziahamza/spawntree/commit/c94e6f974509025e6b9281563283b178a3d94863) Thanks [@ziahamza](https://github.com/ziahamza)! - Backfill git metadata from `working_directory` in the discovery loop, plus
+  re-export `detectGitMetadata` from `spawntree-core` for downstream daemons.
+
+  **Why**: some sessions reach `runDiscoveryPass` with NULL git metadata —
+  most commonly older Codex sessions whose `thread.gitInfo` wasn't captured
+  at session creation time. Without a `gitBranch` value those rows can't be
+  linked to a PR in the consuming UI, even though the session is clearly
+  tied to a particular branch on disk.
+
+  **Daemon**: when `discoverSessions` returns a row with any of `gitBranch /
+gitHeadCommit / gitRemoteUrl` null, `SessionManager.runDiscoveryPass` now
+  runs `git rev-parse` against the session's `workingDirectory` and merges
+  in whatever's missing. Adapter-reported values always win; we only fill
+  nulls. A per-cwd cache prevents the daemon from re-spawning git on every
+  30-second discovery tick. Sessions whose `workingDirectory` no longer
+  exists (deleted worktree) skip the spawn entirely — the existing nulls
+  stay null, which is correct.
+
+  **Core**: re-exports `detectGitMetadata` and `GitMetadata` from
+  `spawntree-core`'s public entry point so daemons (and other downstream
+  consumers) can use the same git detection helper without depending on
+  internal `lib/git.ts` paths. The helper itself was added to core by [#31](https://github.com/ziahamza/spawntree/issues/31).
+
+- [#37](https://github.com/ziahamza/spawntree/pull/37) [`c94e6f9`](https://github.com/ziahamza/spawntree/commit/c94e6f974509025e6b9281563283b178a3d94863) Thanks [@ziahamza](https://github.com/ziahamza)! - Close two SQL classifier bypasses on `/api/v1/catalog/query-readonly` that
+  became remotely exploitable when the loopback gate was lifted from that
+  route in [#33](https://github.com/ziahamza/spawntree/issues/33).
+
+  1. **Writable CTE bypass**: `WITH d AS (SELECT 1) INSERT INTO repos(...) VALUES(...)`
+     is a single statement starting with `WITH` but performing a write — the
+     classifier accepted it. Now: when first keyword is `WITH`, scan the body
+     for `INSERT/UPDATE/DELETE/REPLACE/MERGE/UPSERT` as whole words outside
+     strings + comments. Reject with `READONLY_QUERY_REJECTED`. Pure-read CTEs
+     continue to pass.
+
+  2. **PRAGMA classifier — switched from denylist to fail-closed allow-list**.
+     The previous deny-list let writes slip through for any pragma not
+     explicitly listed (e.g. `PRAGMA cache_size = 0`). A first-pass fix
+     universally rejected the `=` form, but Devin's follow-on review caught
+     that for stateful pragmas the function-call form is also a write —
+     `PRAGMA cache_size(0)` is equivalent to `PRAGMA cache_size = 0` and
+     was still reachable. The shipped fix is a strict allow-list:
+
+     - `ALLOWED_PRAGMAS: Map<name, "bare" | "function" | "both">` enumerates
+       every read-safe pragma along with the form(s) it's allowed in.
+     - Pragmas not on the map → rejected.
+     - `=` form → always rejected (no map entry can override).
+     - `(arg)` form → only allowed for `"function"` / `"both"` entries
+       (introspection pragmas like `table_info`, `index_list`, etc.).
+     - bare form → only allowed for `"bare"` / `"both"` entries.
+
+     Future SQLite pragmas are blocked by default until reviewed and added
+     to the allow-list. No more "we missed one in the deny list" follow-ups.
+
+  Caught by Devin Review on PRs [#34](https://github.com/ziahamza/spawntree/issues/34) and [#36](https://github.com/ziahamza/spawntree/issues/36).
+
+- Updated dependencies [[`c94e6f9`](https://github.com/ziahamza/spawntree/commit/c94e6f974509025e6b9281563283b178a3d94863)]:
+  - spawntree-core@0.5.0
+
 ## 0.3.0
 
 ### Minor Changes
