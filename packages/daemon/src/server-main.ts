@@ -79,7 +79,7 @@ async function main() {
     );
   }
 
-  const app = createApp(runtime, { storage, sessionManager });
+  const app = createApp(runtime, { storage, sessionManager, hostSync });
   const listener = getRequestListener(app.fetch);
   const server = createServer(listener);
 

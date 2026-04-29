@@ -19,14 +19,14 @@
 
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { URL } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import Database from "better-sqlite3";
 
-// ─── Config ─────────────────────────────────────────────────────────────
+// ─── Config (CLI-mode defaults; tests pass their own via createApp) ─────
 
 const PORT = Number(process.env.HOST_SERVER_PORT ?? 7777);
 const HOST = process.env.HOST_SERVER_HOST ?? "127.0.0.1";
@@ -82,7 +82,14 @@ function isValidDaemonKey(k: unknown): k is string {
   return typeof k === "string" && /^dh_[A-Za-z0-9_-]{40,}$/.test(k);
 }
 
-function openStore(path: string) {
+/**
+ * Public type for the SQLite-backed store. Exported so tests and external
+ * callers (the daemon's host-integration test, anyone embedding the server)
+ * can declare against `Store` without importing the implementation.
+ */
+export type Store = ReturnType<typeof openStore>;
+
+export function openStore(path: string) {
   const db = new Database(path);
   db.pragma("journal_mode = WAL");
   db.exec(`
@@ -208,8 +215,6 @@ function openStore(path: string) {
   };
 }
 
-const store = openStore(DB_PATH);
-
 // ─── HTTP helpers ───────────────────────────────────────────────────────
 
 function json(res: ServerResponse, status: number, body: unknown) {
@@ -247,6 +252,7 @@ function isValidUrl(url: string) {
 // ─── Admin handlers ─────────────────────────────────────────────────────
 
 async function handleAdmin(
+  store: Store,
   req: IncomingMessage,
   res: ServerResponse,
   pathname: string,
@@ -549,6 +555,7 @@ async function probeHealth(baseUrl: string): Promise<boolean> {
  * Streams the response back via Web Streams so SSE still works.
  */
 async function proxyToHost(
+  store: Store,
   req: IncomingMessage,
   res: ServerResponse,
   hostName: string,
@@ -686,8 +693,13 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function landingPage(res: ServerResponse) {
+function landingPage(
+  store: Store,
+  res: ServerResponse,
+  opts: { host: string; port: number },
+) {
   const hosts = store.list();
+  const daemons = store.listDaemons();
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   res.end(`<!doctype html>
 <html>
@@ -695,94 +707,161 @@ function landingPage(res: ServerResponse) {
 <style>
   body{font:14px/1.5 system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;color:#E6EDF3;background:#0D1117}
   h1{font-size:20px;margin-bottom:8px}
+  h2{font-size:16px;margin-top:24px}
   p{color:#8B949E}
-  pre{background:#161B22;padding:12px;border-radius:6px;overflow:auto}
-  .host{background:#161B22;padding:12px;margin:8px 0;border-radius:6px;border:1px solid #30363D}
-  .host b{color:#E6EDF3}
+  pre{background:#161B22;padding:12px;border-radius:6px;overflow:auto;font-size:12px}
+  .row{background:#161B22;padding:12px;margin:8px 0;border-radius:6px;border:1px solid #30363D}
+  .row b{color:#E6EDF3}
   .muted{color:#8B949E;font-size:12px}
+  .pill{display:inline-block;padding:1px 8px;margin-left:6px;border-radius:10px;font-size:11px;border:1px solid #30363D}
+  .pill.ok{color:#3FB950;border-color:#1F6F2A}
+  .pill.warn{color:#D29922;border-color:#7D5A0E}
   code{background:#161B22;padding:2px 6px;border-radius:3px}
   a{color:#58A6FF}
 </style>
 </head>
 <body>
 <h1>spawntree host server</h1>
-<p>Listening on <code>${escapeHtml(HOST)}:${PORT}</code>. Registered hosts: ${hosts.length}.</p>
+<p>Listening on <code>${escapeHtml(opts.host)}:${opts.port}</code> · Hosts: ${hosts.length} · Daemons: ${daemons.length}</p>
+
+<h2>Federation hosts</h2>
 ${
   hosts.length === 0
     ? "<p>No hosts registered yet.</p>"
     : hosts
         .map(
           (h) => `
-  <div class="host">
+  <div class="row">
     <b>${escapeHtml(h.name)}</b> → <code>${escapeHtml(h.url)}</code>
     ${h.label ? `<div class="muted">${escapeHtml(h.label)}</div>` : ""}
-    <div class="muted">proxy: <a href="/h/${encodeURIComponent(h.name)}/api/v1/daemon">/h/${escapeHtml(
-      h.name,
-    )}/api/v1/daemon</a></div>
+    <div class="muted">proxy: <a href="/h/${encodeURIComponent(h.name)}/api/v1/daemon">/h/${escapeHtml(h.name)}/api/v1/daemon</a></div>
   </div>
 `,
         )
         .join("")
 }
-<h2 style="font-size:16px;margin-top:24px">Register a host</h2>
-<pre>curl -X POST http://${escapeHtml(HOST)}:${PORT}/api/hosts \\
+<pre>curl -X POST http://${escapeHtml(opts.host)}:${opts.port}/api/hosts \\
   -H 'content-type: application/json' \\
   -d '{"name":"laptop","url":"http://127.0.0.1:2222"}'</pre>
-<p><a href="/api/hosts">/api/hosts</a> — JSON list</p>
+
+<h2>Daemons (--host / --host-key)</h2>
+${
+  daemons.length === 0
+    ? "<p>No daemons registered. Mint one with the curl below; pass the returned <code>key</code> to the daemon as <code>--host-key</code>.</p>"
+    : daemons
+        .map(
+          (d) => `
+  <div class="row">
+    <b>${escapeHtml(d.label)}</b>
+    <span class="pill ${d.hasConfig ? "ok" : "warn"}">${d.hasConfig ? "config set" : "awaiting config"}</span>
+    <div class="muted">key fingerprint: <code>${escapeHtml(d.keyFingerprint)}</code></div>
+    <div class="muted">registered ${escapeHtml(d.registeredAt)}${d.lastSeenAt ? ` · last seen ${escapeHtml(d.lastSeenAt)}` : " · never seen"}</div>
+  </div>
+`,
+        )
+        .join("")
+}
+<pre>curl -X POST http://${escapeHtml(opts.host)}:${opts.port}/api/daemons \\
+  -H 'content-type: application/json' \\
+  -d '{"label":"laptop"}'
+# response includes one-time \`key\`. Then on the daemon machine:
+spawntree daemon --host http://${escapeHtml(opts.host)}:${opts.port} --host-key dh_…</pre>
+
+<p><a href="/api/hosts">/api/hosts</a> · <a href="/api/daemons">/api/daemons</a></p>
 </body></html>`);
 }
 
-const server = createServer(async (req, res) => {
-  const pathname = new URL(req.url ?? "/", `http://${HOST}:${PORT}`).pathname;
+// ─── App factory ────────────────────────────────────────────────────────
 
-  // Landing page — only for GET /.
-  if (pathname === "/" && req.method === "GET") {
-    return landingPage(res);
-  }
-
-  // Admin surface — both `/api/hosts*` (the federation registry) and
-  // `/api/daemons*` (centralized config sync, added later) live in the
-  // same handler. Easy to forget to add the new prefix here when the
-  // handler grows; Devin Review caught exactly that on PR #35, leaving
-  // every daemon endpoint silently 404-ing. Keep this match in sync
-  // with the prefixes inside `handleAdmin`.
-  if (
-    pathname === "/api/hosts" ||
-    pathname.startsWith("/api/hosts/") ||
-    pathname === "/api/daemons" ||
-    pathname.startsWith("/api/daemons/")
-  ) {
-    const handled = await handleAdmin(req, res, pathname);
-    if (handled) return;
-  }
-
-  // Proxy surface: /h/:name/<rest>
-  const proxyMatch = /^\/h\/([^/]+)(\/.*)?$/.exec(pathname);
-  if (proxyMatch) {
-    const name = decodeURIComponent(proxyMatch[1]!);
-    const rest = proxyMatch[2] ?? "/";
-    // Preserve the full query string. RFC 3986 permits `?` inside
-    // query values, so `split("?")` would truncate everything after a
-    // second `?`. `slice(indexOf("?"))` keeps the tail intact.
-    const qIdx = req.url!.indexOf("?");
-    const upstreamPath = rest + (qIdx === -1 ? "" : req.url!.slice(qIdx));
-    return proxyToHost(req, res, name, upstreamPath);
-  }
-
-  json(res, 404, { error: "not found", code: "NOT_FOUND" });
-});
-
-server.listen(PORT, HOST, () => {
-  process.stderr.write(`[spawntree-host] listening on http://${HOST}:${PORT} (db: ${DB_PATH})\n`);
-});
-
-let shuttingDown = false;
-async function shutdown(signal: string) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  process.stderr.write(`[spawntree-host] received ${signal}, shutting down\n`);
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  process.exit(0);
+export interface AppOptions {
+  store: Store;
+  /** Used in landing-page links/curl examples. Tests can pass anything. */
+  host: string;
+  /** Used in landing-page links/curl examples. Tests can pass anything. */
+  port: number;
 }
-process.on("SIGINT", () => void shutdown("SIGINT"));
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
+
+/**
+ * Build the request handler — pure of side effects. Tests get to bring
+ * their own store (`openStore(":memory:")`) and bind the returned handler
+ * to any port via `createServer(handler).listen(0)`. The CLI entrypoint
+ * uses this same factory; `main()` is the only place that owns process-
+ * level concerns (port binding, signal handlers).
+ */
+export function createApp(opts: AppOptions): {
+  handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+} {
+  const { store, host: hostHeader, port } = opts;
+  const handler = async (req: IncomingMessage, res: ServerResponse) => {
+    const pathname = new URL(req.url ?? "/", `http://${hostHeader}:${port}`).pathname;
+
+    // Landing page — only for GET /.
+    if (pathname === "/" && req.method === "GET") {
+      return landingPage(store, res, { host: hostHeader, port });
+    }
+
+    // Admin surface — both `/api/hosts*` (the federation registry) and
+    // `/api/daemons*` (centralized config sync, added later) live in the
+    // same handler. Easy to forget to add the new prefix here when the
+    // handler grows; Devin Review caught exactly that on PR #35, leaving
+    // every daemon endpoint silently 404-ing. Keep this match in sync
+    // with the prefixes inside `handleAdmin`.
+    if (
+      pathname === "/api/hosts" ||
+      pathname.startsWith("/api/hosts/") ||
+      pathname === "/api/daemons" ||
+      pathname.startsWith("/api/daemons/")
+    ) {
+      const handled = await handleAdmin(store, req, res, pathname);
+      if (handled) return;
+    }
+
+    // Proxy surface: /h/:name/<rest>
+    const proxyMatch = /^\/h\/([^/]+)(\/.*)?$/.exec(pathname);
+    if (proxyMatch) {
+      const name = decodeURIComponent(proxyMatch[1]!);
+      const rest = proxyMatch[2] ?? "/";
+      // Preserve the full query string. RFC 3986 permits `?` inside
+      // query values, so `split("?")` would truncate everything after a
+      // second `?`. `slice(indexOf("?"))` keeps the tail intact.
+      const qIdx = req.url!.indexOf("?");
+      const upstreamPath = rest + (qIdx === -1 ? "" : req.url!.slice(qIdx));
+      return proxyToHost(store, req, res, name, upstreamPath);
+    }
+
+    json(res, 404, { error: "not found", code: "NOT_FOUND" });
+  };
+  return { handler };
+}
+
+// ─── CLI entrypoint ─────────────────────────────────────────────────────
+
+function main(): void {
+  const store = openStore(DB_PATH);
+  const { handler } = createApp({ store, host: HOST, port: PORT });
+  const server = createServer(handler);
+
+  server.listen(PORT, HOST, () => {
+    process.stderr.write(
+      `[spawntree-host] listening on http://${HOST}:${PORT} (db: ${DB_PATH})\n`,
+    );
+  });
+
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.stderr.write(`[spawntree-host] received ${signal}, shutting down\n`);
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+}
+
+// Only spin up the listener if this file is the entry — when imported as
+// a library (e.g. by the daemon's host-integration test), `main()` is a
+// no-op and consumers wire up their own server via `createApp`.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main();
+}

@@ -26,7 +26,8 @@
     "yaml": "^2.7.0"
   },
   "devDependencies": {
-    "@types/dockerode": "^3.3.39"
+    "@types/dockerode": "^3.3.39",
+    "spawntree-host": "workspace:*"
   },
   "license": "MIT",
   "repository": {
