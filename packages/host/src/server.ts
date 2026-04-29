@@ -740,8 +740,18 @@ const server = createServer(async (req, res) => {
     return landingPage(res);
   }
 
-  // Admin surface.
-  if (pathname === "/api/hosts" || pathname.startsWith("/api/hosts/")) {
+  // Admin surface — both `/api/hosts*` (the federation registry) and
+  // `/api/daemons*` (centralized config sync, added later) live in the
+  // same handler. Easy to forget to add the new prefix here when the
+  // handler grows; Devin Review caught exactly that on PR #35, leaving
+  // every daemon endpoint silently 404-ing. Keep this match in sync
+  // with the prefixes inside `handleAdmin`.
+  if (
+    pathname === "/api/hosts" ||
+    pathname.startsWith("/api/hosts/") ||
+    pathname === "/api/daemons" ||
+    pathname.startsWith("/api/daemons/")
+  ) {
     const handled = await handleAdmin(req, res, pathname);
     if (handled) return;
   }
