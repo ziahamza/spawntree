@@ -204,7 +204,25 @@ export function classifyReadOnlySql(raw: string): { ok: true } | { ok: false; re
     return { ok: false, reason: "multiple statements are not allowed on the read-only endpoint" };
   }
   const upper = firstKeyword.toUpperCase();
-  if (upper === "SELECT" || upper === "WITH" || upper === "EXPLAIN") {
+  if (upper === "SELECT" || upper === "EXPLAIN") {
+    return { ok: true };
+  }
+  if (upper === "WITH") {
+    // SQLite supports writable CTEs:
+    //   WITH d AS (SELECT 1) INSERT INTO repos(id) VALUES('x')
+    // is a single valid statement that starts with `WITH` but performs a
+    // write. The multi-statement check can't catch it (no `;` between the
+    // CTE and the DML). With `/query-readonly` exposed to public origins
+    // (this is the whole point of dropping `requireLocalOrigin`), an
+    // attacker on an allow-listed origin could mutate the catalog this
+    // way. Scan the body for any DML keyword as a whole word outside
+    // strings/comments — if found, this is a write-via-CTE and we reject.
+    if (containsWriteKeyword(raw)) {
+      return {
+        ok: false,
+        reason: "writable CTEs (WITH … INSERT/UPDATE/DELETE/…) are not allowed",
+      };
+    }
     return { ok: true };
   }
   if (upper === "PRAGMA") {
@@ -217,21 +235,175 @@ export function classifyReadOnlySql(raw: string): { ok: true } | { ok: false; re
 }
 
 /**
- * The catalog-relevant subset of SQLite pragmas that mutate state.
- * Schema-qualified forms (`main.journal_mode`, `temp.foreign_keys`)
- * normalize to the unqualified name before the lookup.
+ * Whole-word scan for SQL DML keywords on the trivia-stripped statement.
+ * Used by the WITH branch of `classifyReadOnlySql` to catch writable CTEs.
+ *
+ * `replaceStringsAndComments` is a string/comment-aware filter — keywords
+ * that appear inside `'…'`, `"…"`, ` `…` `, line comments, or block
+ * comments are blanked out. Without that filter a CTE that selects the
+ * literal string `'INSERT'` would be misclassified as a write.
  */
-const WRITE_PRAGMAS = new Set([
-  "foreign_keys",
-  "journal_mode",
-  "synchronous",
-  "user_version",
-  "application_id",
-  "schema_version",
-  "wal_checkpoint",
-  "optimize",
-  "shrink_memory",
-  "vacuum",
+const WRITE_KEYWORDS = ["INSERT", "UPDATE", "DELETE", "REPLACE", "MERGE", "UPSERT"];
+
+function containsWriteKeyword(raw: string): boolean {
+  const cleaned = replaceStringsAndComments(raw).toUpperCase();
+  for (const kw of WRITE_KEYWORDS) {
+    // \b in JS regex treats `_` as a word char, which is fine for SQL keywords
+    // (no SQL keyword has a leading or trailing underscore).
+    const re = new RegExp(`\\b${kw}\\b`);
+    if (re.test(cleaned)) return true;
+  }
+  return false;
+}
+
+/**
+ * Replace SQL string literals and comments with spaces so a downstream
+ * keyword scan sees only real SQL tokens. Spaces (rather than removal) are
+ * used so the keyword boundary regex still correctly identifies the gap.
+ *
+ * Recognises:
+ *   - `--` line comments through end-of-line
+ *   - `/* … *\/` block comments (non-nesting, matching SQLite)
+ *   - `' … '` strings with `''` escape
+ *   - `" … "` identifiers with `""` escape (quoted identifiers can contain
+ *     anything including write keywords like a column literally named "INSERT")
+ *   - `` ` … ` `` MySQL-style quoted identifiers (tolerated by SQLite)
+ *
+ * Unterminated literals/comments are spaced through to end of input, which
+ * makes any check fail open by reducing the searchable text — but the
+ * `hasMultipleStatements` check would have already blocked obviously
+ * malformed multi-statement payloads upstream.
+ */
+function replaceStringsAndComments(sql: string): string {
+  const out: string[] = [];
+  const n = sql.length;
+  let i = 0;
+  const space = (count: number): void => {
+    out.push(" ".repeat(count));
+  };
+  while (i < n) {
+    const c = sql.charAt(i);
+    const next = i + 1 < n ? sql.charAt(i + 1) : "";
+
+    if (c === "-" && next === "-") {
+      const eol = sql.indexOf("\n", i);
+      const end = eol === -1 ? n : eol;
+      space(end - i);
+      i = end;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      const close = sql.indexOf("*/", i + 2);
+      const end = close === -1 ? n : close + 2;
+      space(end - i);
+      i = end;
+      continue;
+    }
+    if (c === "'") {
+      space(1);
+      i++;
+      while (i < n) {
+        if (sql.charAt(i) === "'") {
+          if (sql.charAt(i + 1) === "'") { space(2); i += 2; continue; }
+          space(1); i++;
+          break;
+        }
+        space(1);
+        i++;
+      }
+      continue;
+    }
+    if (c === '"') {
+      space(1);
+      i++;
+      while (i < n) {
+        if (sql.charAt(i) === '"') {
+          if (sql.charAt(i + 1) === '"') { space(2); i += 2; continue; }
+          space(1); i++;
+          break;
+        }
+        space(1);
+        i++;
+      }
+      continue;
+    }
+    if (c === "`") {
+      space(1);
+      i++;
+      while (i < n && sql.charAt(i) !== "`") { space(1); i++; }
+      if (i < n) { space(1); i++; }
+      continue;
+    }
+    out.push(c);
+    i++;
+  }
+  return out.join("");
+}
+
+/**
+ * Allow-list of read-safe SQLite pragmas, with the form each is allowed in:
+ *
+ *   "bare"     →  `PRAGMA name`        (returns current value)
+ *   "function" →  `PRAGMA name(arg)`   (introspection — takes object name,
+ *                                       returns rows)
+ *   "both"     →  either form
+ *
+ * Pragmas NOT in this map are rejected entirely. The `=` write form
+ * (`PRAGMA name = value`) is rejected universally regardless of pragma.
+ *
+ * Why allow-list (Devin's review of #34 + #36 both pushed for this):
+ * SQLite's function-call form `PRAGMA name(value)` is semantically
+ * equivalent to `PRAGMA name = value` for STATEFUL pragmas. So
+ * `PRAGMA cache_size(0)` sets cache to zero (DoS), `PRAGMA cache_size(1000000)`
+ * allocates ~4 GB, etc. A deny-list will always miss something — every
+ * future SQLite release that adds a stateful pragma is a new bypass
+ * waiting to happen. An allow-list fails closed: a new pragma is
+ * blocked by default until reviewed and added here.
+ *
+ * Schema-qualified forms (`main.cache_size`) normalize to the
+ * unqualified base name before lookup.
+ */
+type PragmaForm = "bare" | "function" | "both";
+
+const ALLOWED_PRAGMAS = new Map<string, PragmaForm>([
+  // Introspection — function form takes an object name and returns rows.
+  ["table_info", "function"],
+  ["table_xinfo", "function"],
+  ["table_list", "both"],
+  ["index_info", "function"],
+  ["index_list", "function"],
+  ["index_xinfo", "function"],
+  ["foreign_key_list", "function"],
+  ["collation_list", "bare"],
+  ["compile_options", "bare"],
+  ["database_list", "bare"],
+  ["function_list", "bare"],
+  ["module_list", "bare"],
+  ["pragma_list", "bare"],
+
+  // Read-only counters / current-value queries (bare-name only — the
+  // function and `=` forms set state, which we never allow).
+  ["application_id", "bare"],
+  ["auto_vacuum", "bare"],
+  ["busy_timeout", "bare"],
+  ["cache_size", "bare"],
+  ["cache_spill", "bare"],
+  ["data_version", "bare"],
+  ["encoding", "bare"],
+  ["foreign_keys", "bare"],
+  ["freelist_count", "bare"],
+  ["journal_mode", "bare"],
+  ["journal_size_limit", "bare"],
+  ["max_page_count", "bare"],
+  ["page_count", "bare"],
+  ["page_size", "bare"],
+  ["recursive_triggers", "bare"],
+  ["schema_version", "bare"],
+  ["synchronous", "bare"],
+  ["temp_store", "bare"],
+  ["threads", "bare"],
+  ["user_version", "bare"],
+  ["wal_autocheckpoint", "bare"],
 ]);
 
 function classifyPragma(raw: string): { ok: true } | { ok: false; reason: string } {
@@ -239,25 +411,59 @@ function classifyPragma(raw: string): { ok: true } | { ok: false; reason: string
   // We already know the first keyword is PRAGMA; advance past it.
   i += "PRAGMA".length;
   i = skipTrivia(raw, i);
-  // The pragma name can include a schema qualifier (`main.journal_mode`).
+  // The pragma name can include a schema qualifier (`main.cache_size`).
   const start = i;
   while (i < raw.length && /[a-zA-Z0-9_.]/.test(raw[i]!)) i++;
   const fullName = raw.slice(start, i).toLowerCase();
   if (!fullName) {
     return { ok: false, reason: "PRAGMA name missing" };
   }
-  // `main.journal_mode` → `journal_mode`. Anything before the last dot is
+  // `main.cache_size` → `cache_size`. Anything before the last dot is
   // a schema identifier and doesn't change the pragma's effect.
   const baseName = fullName.includes(".")
     ? fullName.split(".").pop()!
     : fullName;
-  if (WRITE_PRAGMAS.has(baseName)) {
+
+  const allowedForm = ALLOWED_PRAGMAS.get(baseName);
+  if (!allowedForm) {
     return {
       ok: false,
-      reason: `PRAGMA ${fullName} is not allowed on the read-only endpoint`,
+      reason: `PRAGMA ${fullName} is not on the read-only allow-list`,
     };
   }
-  return { ok: true };
+
+  // Decide which form was invoked by the next non-trivia character:
+  //   `=` → write form, ALWAYS rejected
+  //   `(` → function form, allowed only for "function" / "both" pragmas
+  //   anything else (eof, ws, `;`) → bare form
+  //
+  // Devin's review of #36 (BUG_0001): for stateful pragmas the
+  // function form `PRAGMA cache_size(0)` is a write equivalent to
+  // `PRAGMA cache_size = 0`. The previous fix only blocked `=` and let
+  // the `(arg)` form through. The allow-list above — combined with this
+  // per-form check — closes that gap.
+  const after = skipTrivia(raw, i);
+  const ch = after < raw.length ? raw[after] : "";
+
+  if (ch === "=") {
+    return {
+      ok: false,
+      reason: `PRAGMA ${fullName} = … (write form) is not allowed on the read-only endpoint`,
+    };
+  }
+
+  const invokedForm: "bare" | "function" = ch === "(" ? "function" : "bare";
+
+  if (allowedForm === "both") return { ok: true };
+  if (allowedForm === invokedForm) return { ok: true };
+
+  return {
+    ok: false,
+    reason:
+      invokedForm === "function"
+        ? `PRAGMA ${fullName}(…) is not allowed (only the bare form is read-safe for this pragma)`
+        : `PRAGMA ${fullName} alone is not allowed (this pragma requires the function-call form, e.g. ${fullName}(<arg>))`,
+  };
 }
 
 /**
