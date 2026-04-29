@@ -23,6 +23,7 @@ import { URL } from "node:url";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { resolve } from "node:path";
+import { randomBytes } from "node:crypto";
 import Database from "better-sqlite3";
 
 // ─── Config ─────────────────────────────────────────────────────────────
@@ -41,6 +42,46 @@ interface HostRow {
   lastSeenAt: string | null;
 }
 
+interface DaemonRow {
+  key: string;
+  label: string;
+  storageConfig: string | null; // JSON string, null until operator sets it
+  registeredAt: string;
+  lastSeenAt: string | null;
+}
+
+/**
+ * Public-facing view of a daemon. Critically, this excludes the full
+ * `key` — admin listing endpoints only show a fingerprint so an
+ * operator browsing the dashboard doesn't accidentally leak the
+ * bearer token by screen-share.
+ */
+interface DaemonSummary {
+  keyFingerprint: string; // first 12 chars of the key, like git short sha
+  label: string;
+  registeredAt: string;
+  lastSeenAt: string | null;
+  hasConfig: boolean;
+}
+
+function fingerprint(key: string): string {
+  return key.slice(0, 12);
+}
+
+/**
+ * Opaque bearer token format: `dh_` + 32 random bytes base64url-encoded.
+ * Same vibe as `sk_`/`pat_`/`gh_` — visible on inspection that this is a
+ * spawntree daemon credential, ~43 chars after the prefix so collisions
+ * are astronomically unlikely.
+ */
+function generateDaemonKey(): string {
+  return `dh_${randomBytes(32).toString("base64url")}`;
+}
+
+function isValidDaemonKey(k: unknown): k is string {
+  return typeof k === "string" && /^dh_[A-Za-z0-9_-]{40,}$/.test(k);
+}
+
 function openStore(path: string) {
   const db = new Database(path);
   db.pragma("journal_mode = WAL");
@@ -52,9 +93,18 @@ function openStore(path: string) {
       registered_at TEXT NOT NULL,
       last_seen_at  TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS daemons (
+      key            TEXT PRIMARY KEY,
+      label          TEXT NOT NULL,
+      storage_config TEXT,
+      registered_at  TEXT NOT NULL,
+      last_seen_at   TEXT
+    );
   `);
 
   return {
+    // ─── hosts (existing) ──────────────────────────────────────────────
     list(): HostRow[] {
       return db
         .prepare(
@@ -86,6 +136,73 @@ function openStore(path: string) {
       db.prepare(`UPDATE hosts SET last_seen_at = ? WHERE name = ?`).run(
         new Date().toISOString(),
         name,
+      );
+    },
+
+    // ─── daemons (config sync) ─────────────────────────────────────────
+    /**
+     * Mint a new daemon credential. The returned `key` is the only time
+     * the full secret is ever revealed by this server — it must be
+     * captured by the operator and provisioned to the daemon.
+     */
+    registerDaemon(label: string): DaemonRow {
+      const key = generateDaemonKey();
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO daemons (key, label, storage_config, registered_at, last_seen_at)
+         VALUES (?, ?, NULL, ?, NULL)`,
+      ).run(key, label, now);
+      return {
+        key,
+        label,
+        storageConfig: null,
+        registeredAt: now,
+        lastSeenAt: null,
+      };
+    },
+    listDaemons(): DaemonSummary[] {
+      const rows = db
+        .prepare(
+          `SELECT key, label, storage_config AS storageConfig,
+                  registered_at AS registeredAt, last_seen_at AS lastSeenAt
+           FROM daemons ORDER BY registered_at DESC`,
+        )
+        .all() as DaemonRow[];
+      return rows.map((r) => ({
+        keyFingerprint: fingerprint(r.key),
+        label: r.label,
+        registeredAt: r.registeredAt,
+        lastSeenAt: r.lastSeenAt,
+        hasConfig: r.storageConfig !== null,
+      }));
+    },
+    /**
+     * Look up by full key. Used on the auth path; the daemon presents
+     * its key, the server resolves which row is being asked about.
+     */
+    getDaemonByKey(key: string): DaemonRow | undefined {
+      return db
+        .prepare(
+          `SELECT key, label, storage_config AS storageConfig,
+                  registered_at AS registeredAt, last_seen_at AS lastSeenAt
+           FROM daemons WHERE key = ?`,
+        )
+        .get(key) as DaemonRow | undefined;
+    },
+    deleteDaemonByKey(key: string): boolean {
+      return db.prepare(`DELETE FROM daemons WHERE key = ?`).run(key).changes > 0;
+    },
+    setDaemonConfig(key: string, configJson: string | null): boolean {
+      return (
+        db
+          .prepare(`UPDATE daemons SET storage_config = ? WHERE key = ?`)
+          .run(configJson, key).changes > 0
+      );
+    },
+    touchDaemon(key: string) {
+      db.prepare(`UPDATE daemons SET last_seen_at = ? WHERE key = ?`).run(
+        new Date().toISOString(),
+        key,
       );
     },
   };
@@ -222,7 +339,184 @@ async function handleAdmin(
     return true;
   }
 
+  // ─── /api/daemons — config sync for spawntree daemons ───────────────────
+  //
+  // Three roles served by this endpoint family:
+  //   1. Operator mints/lists/deletes daemon credentials (admin endpoints,
+  //      currently unauthenticated — host server expects to live on a
+  //      private network; same security posture as `/api/hosts`).
+  //   2. Operator sets the storage config that a particular daemon should
+  //      apply on its next sync (`PUT /api/daemons/<key>/config`).
+  //   3. The daemon itself fetches its config every boot
+  //      (`GET /api/daemons/me/config` with `Authorization: Bearer <key>`).
+  //      That's the only path that uses the bearer token; everything else
+  //      operates on the key-as-path-param.
+
+  if (pathname === "/api/daemons" && req.method === "POST") {
+    try {
+      const body = await readJson<{ label?: unknown }>(req);
+      if (typeof body.label !== "string" || !body.label.trim()) {
+        json(res, 400, { error: "'label' is required", code: "INVALID_LABEL" });
+        return true;
+      }
+      if (body.label.length > 256) {
+        json(res, 400, { error: "'label' too long (max 256 chars)", code: "INVALID_LABEL" });
+        return true;
+      }
+      const row = store.registerDaemon(body.label.trim());
+      // The full key is returned ONCE — operator must capture it.
+      json(res, 201, {
+        key: row.key,
+        label: row.label,
+        registeredAt: row.registeredAt,
+        warning: "This is the only time the full key is shown. Store it securely on the daemon machine.",
+      });
+    } catch {
+      json(res, 400, { error: "invalid JSON body", code: "INVALID_JSON" });
+    }
+    return true;
+  }
+
+  if (pathname === "/api/daemons" && req.method === "GET") {
+    json(res, 200, { daemons: store.listDaemons() });
+    return true;
+  }
+
+  // Daemon-side fetch path. Authenticated by `Authorization: Bearer <key>`.
+  if (pathname === "/api/daemons/me/config" && req.method === "GET") {
+    const auth = req.headers["authorization"];
+    const key = typeof auth === "string" && auth.startsWith("Bearer ")
+      ? auth.slice("Bearer ".length).trim()
+      : null;
+    if (!isValidDaemonKey(key)) {
+      json(res, 401, { error: "missing or malformed bearer token", code: "INVALID_KEY" });
+      return true;
+    }
+    const row = store.getDaemonByKey(key);
+    if (!row) {
+      json(res, 401, { error: "key not recognized", code: "INVALID_KEY" });
+      return true;
+    }
+    store.touchDaemon(key);
+    if (row.storageConfig === null) {
+      // Operator has not yet provisioned a config. The daemon should NOT
+      // wipe its local replication setup in response — 404 tells it to
+      // hold steady until the operator pushes one.
+      json(res, 404, {
+        error: "no config provisioned for this daemon yet",
+        code: "NO_CONFIG_SET",
+        daemon: { label: row.label },
+      });
+      return true;
+    }
+    try {
+      const config = JSON.parse(row.storageConfig) as unknown;
+      json(res, 200, { config, daemon: { label: row.label } });
+    } catch {
+      // Stored value is not parseable JSON — should be impossible if PUT
+      // validates, but defend so the daemon gets a clear error rather than
+      // silently mis-applying.
+      json(res, 500, {
+        error: "stored config is not valid JSON; ask the operator to re-set it",
+        code: "CONFIG_CORRUPT",
+      });
+    }
+    return true;
+  }
+
+  // Operator mutation paths: `/api/daemons/<key>` and `/api/daemons/<key>/config`.
+  const daemonByKey = /^\/api\/daemons\/([^/]+)(?:\/(config))?$/.exec(pathname);
+  if (daemonByKey && daemonByKey[1] !== "me") {
+    const key = decodeURIComponent(daemonByKey[1]!);
+    const sub = daemonByKey[2];
+    if (!isValidDaemonKey(key)) {
+      json(res, 400, { error: "invalid daemon key in path", code: "INVALID_KEY" });
+      return true;
+    }
+    const row = store.getDaemonByKey(key);
+    if (!row) {
+      json(res, 404, { error: "daemon not found", code: "DAEMON_NOT_FOUND" });
+      return true;
+    }
+
+    if (!sub && req.method === "DELETE") {
+      store.deleteDaemonByKey(key);
+      json(res, 200, { ok: true });
+      return true;
+    }
+
+    if (sub === "config" && req.method === "GET") {
+      // Admin-side read — returns the current config (or null) along with
+      // metadata. Distinct from `/me/config` which is the daemon's own
+      // bearer-authed read.
+      const config = row.storageConfig === null ? null : JSON.parse(row.storageConfig);
+      json(res, 200, {
+        label: row.label,
+        registeredAt: row.registeredAt,
+        lastSeenAt: row.lastSeenAt,
+        config,
+      });
+      return true;
+    }
+
+    if (sub === "config" && req.method === "PUT") {
+      try {
+        const body = await readJson<{ config?: unknown }>(req);
+        if (body.config === null) {
+          // Explicit null clears the config — daemon will see 404 on next sync.
+          store.setDaemonConfig(key, null);
+          json(res, 200, { ok: true, config: null });
+          return true;
+        }
+        if (!isPlausibleStorageConfig(body.config)) {
+          json(res, 400, {
+            error: "config must be a StorageConfig (`{ primary: {id, config}, replicators: [...] }`)",
+            code: "INVALID_CONFIG",
+          });
+          return true;
+        }
+        const serialized = JSON.stringify(body.config);
+        // Soft cap so a misuse can't blow up the column.
+        if (serialized.length > 64 * 1024) {
+          json(res, 400, { error: "config too large (>64KB)", code: "CONFIG_TOO_LARGE" });
+          return true;
+        }
+        store.setDaemonConfig(key, serialized);
+        json(res, 200, { ok: true, config: body.config });
+      } catch {
+        json(res, 400, { error: "invalid JSON body", code: "INVALID_JSON" });
+      }
+      return true;
+    }
+  }
+
   return false;
+}
+
+/**
+ * Loose structural check on the operator-supplied config payload. The
+ * daemon does proper Effect Schema validation when it actually applies
+ * the config, so we don't need to be exhaustive here — just reject the
+ * obvious wrong shapes (string instead of object, missing required keys,
+ * `replicators` not an array) so the operator gets a clear error
+ * synchronously instead of a misleading 200.
+ */
+function isPlausibleStorageConfig(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const c = value as Record<string, unknown>;
+  if (typeof c["primary"] !== "object" || c["primary"] === null) return false;
+  const p = c["primary"] as Record<string, unknown>;
+  if (typeof p["id"] !== "string") return false;
+  if (!("config" in p)) return false;
+  if (!Array.isArray(c["replicators"])) return false;
+  for (const r of c["replicators"] as Array<unknown>) {
+    if (typeof r !== "object" || r === null) return false;
+    const rr = r as Record<string, unknown>;
+    if (typeof rr["rid"] !== "string") return false;
+    if (typeof rr["id"] !== "string") return false;
+    if (!("config" in rr)) return false;
+  }
+  return true;
 }
 
 async function probeHealth(baseUrl: string): Promise<boolean> {
@@ -446,8 +740,18 @@ const server = createServer(async (req, res) => {
     return landingPage(res);
   }
 
-  // Admin surface.
-  if (pathname === "/api/hosts" || pathname.startsWith("/api/hosts/")) {
+  // Admin surface — both `/api/hosts*` (the federation registry) and
+  // `/api/daemons*` (centralized config sync, added later) live in the
+  // same handler. Easy to forget to add the new prefix here when the
+  // handler grows; Devin Review caught exactly that on PR #35, leaving
+  // every daemon endpoint silently 404-ing. Keep this match in sync
+  // with the prefixes inside `handleAdmin`.
+  if (
+    pathname === "/api/hosts" ||
+    pathname.startsWith("/api/hosts/") ||
+    pathname === "/api/daemons" ||
+    pathname.startsWith("/api/daemons/")
+  ) {
     const handled = await handleAdmin(req, res, pathname);
     if (handled) return;
   }

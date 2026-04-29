@@ -1,4 +1,11 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
@@ -114,4 +121,83 @@ export function runtimeMetadataPath(): string {
 export function saveRuntimeMetadata(metadata: RuntimeMetadata): void {
   ensureDir();
   writeFileSync(runtimeMetadataPath(), JSON.stringify(metadata, null, 2) + "\n");
+}
+
+// ─── Host binding (--host + --host-key) ─────────────────────────────────────
+
+/**
+ * The daemon's record of "I'm bound to host X with credential Y." Persisted
+ * at `~/.spawntree/host.json` (0600) so subsequent `spawntree daemon`
+ * invocations pick up the binding without re-passing CLI args.
+ *
+ * Override semantics: if either `--host` or `--host-key` is passed, the
+ * pair is written to disk on boot, replacing whatever was there before.
+ * To unbind: `rm ~/.spawntree/host.json`.
+ */
+export interface HostBinding {
+  /** Base URL of the spawntree-host server, e.g. `http://controller:7777`. */
+  url: string;
+  /** Bearer token issued by `POST /api/daemons` on the host. `dh_…` shape. */
+  key: string;
+}
+
+/**
+ * Resolve the binding path against an optional `dataDir`. Defaults to
+ * `~/.spawntree/host.json`. Tests pass an explicit dir so they don't
+ * touch the real home directory.
+ */
+export function hostBindingPath(dataDir: string = SPAWNTREE_HOME): string {
+  return resolve(dataDir, "host.json");
+}
+
+/**
+ * Read the persisted host binding, or `null` if none. Returns `null` (not
+ * throw) on a corrupt file so the daemon can boot in standalone mode and
+ * surface the issue via logs rather than crash.
+ */
+export function loadHostBinding(dataDir: string = SPAWNTREE_HOME): HostBinding | null {
+  const path = hostBindingPath(dataDir);
+  if (!existsSync(path)) return null;
+  try {
+    const raw = readFileSync(path, "utf-8");
+    const parsed = JSON.parse(raw) as Partial<HostBinding>;
+    if (typeof parsed.url !== "string" || typeof parsed.key !== "string") {
+      return null;
+    }
+    return { url: parsed.url, key: parsed.key };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist the host binding with `0600` perms. Re-chmods on every save in
+ * case the file was created with a default umask before — same posture as
+ * `storage.json` since the file contents are equally sensitive (the bearer
+ * token is the daemon's identity to the host).
+ */
+export function saveHostBinding(
+  binding: HostBinding,
+  dataDir: string = SPAWNTREE_HOME,
+): void {
+  mkdirSync(dataDir, { recursive: true });
+  const path = hostBindingPath(dataDir);
+  writeFileSync(
+    path,
+    JSON.stringify(binding, null, 2) + "\n",
+    { encoding: "utf-8", mode: 0o600 },
+  );
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    // Non-POSIX filesystems: chmod is a no-op.
+  }
+}
+
+/** `rm <dataDir>/host.json`. Used by future `spawntree host unbind`. */
+export function clearHostBinding(dataDir: string = SPAWNTREE_HOME): void {
+  const path = hostBindingPath(dataDir);
+  if (existsSync(path)) {
+    unlinkSync(path);
+  }
 }
