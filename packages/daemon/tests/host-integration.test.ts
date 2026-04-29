@@ -52,12 +52,25 @@ async function startHost(): Promise<HostHandle> {
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+  // Buffer all stderr/stdout so when the host crashes (e.g. better-sqlite3
+  // native binding missing on CI runners), the test failure surfaces the
+  // actual error instead of just `exit code 1`.
+  const stderrBuf: Array<string> = [];
+  const stdoutBuf: Array<string> = [];
+  proc.stderr?.on("data", (c: Buffer) => stderrBuf.push(c.toString()));
+  proc.stdout?.on("data", (c: Buffer) => stdoutBuf.push(c.toString()));
+
   // Wait for the server to log its listen line before issuing requests.
+  // 15s timeout — generous for CI runners with cold caches and parallel
+  // load. Local runs bind in <100ms.
   await new Promise<void>((resolveReady, rejectReady) => {
-    const timeout = setTimeout(
-      () => rejectReady(new Error(`host did not become ready in 5s on :${port}`)),
-      5_000,
-    );
+    const timeout = setTimeout(() => {
+      rejectReady(
+        new Error(
+          `host did not become ready in 15s on :${port}\n--- stderr ---\n${stderrBuf.join("")}\n--- stdout ---\n${stdoutBuf.join("")}`,
+        ),
+      );
+    }, 15_000);
     proc.stderr?.on("data", (chunk: Buffer) => {
       if (chunk.toString().includes(`listening on http://127.0.0.1:${port}`)) {
         clearTimeout(timeout);
@@ -66,7 +79,11 @@ async function startHost(): Promise<HostHandle> {
     });
     proc.on("exit", (code) => {
       clearTimeout(timeout);
-      rejectReady(new Error(`host exited prematurely with code ${code}`));
+      rejectReady(
+        new Error(
+          `host exited prematurely with code ${code}\n--- stderr ---\n${stderrBuf.join("")}\n--- stdout ---\n${stdoutBuf.join("")}`,
+        ),
+      );
     });
   });
 
@@ -117,20 +134,18 @@ function makeRecordingProvider(): {
 }
 
 describeIfBuilt("HostConfigSync end-to-end against real spawntree-host", () => {
-  let host: HostHandle;
-  let dataDir: string;
-  let manager: StorageManager;
+  // Initialize to null so the cleanup hook is safe even if setup fails
+  // partway through — otherwise vitest reports a confusing
+  // `Cannot read properties of undefined (reading 'stop')` that masks
+  // the real startup error.
+  let host: HostHandle | null = null;
+  let dataDir: string | null = null;
+  let manager: StorageManager | null = null;
   let recording: ReturnType<typeof makeRecordingProvider>;
 
   beforeAll(async () => {
     host = await startHost();
-  }, 10_000);
 
-  afterAll(async () => {
-    await stopHost(host);
-  });
-
-  beforeAll(async () => {
     dataDir = mkdtempSync(resolve(tmpdir(), "spawntree-int-data-"));
     recording = makeRecordingProvider();
     const registry = new StorageRegistry();
@@ -142,18 +157,19 @@ describeIfBuilt("HostConfigSync end-to-end against real spawntree-host", () => {
       registry,
     });
     await manager.start();
-  });
+  }, 30_000);
 
   afterAll(async () => {
-    await manager.stop();
-    rmSync(dataDir, { recursive: true, force: true });
+    await manager?.stop().catch(() => undefined);
+    if (dataDir) rmSync(dataDir, { recursive: true, force: true });
+    if (host) await stopHost(host);
   });
 
   it("POST /api/daemons mints a credential (router dispatches /api/daemons*)", async () => {
     // This is the assertion that would have caught the routing bug Devin
     // flagged on PR #35: before the fix, this 404'd because the top-level
     // router only matched /api/hosts*.
-    const res = await fetch(`${host.url}/api/daemons`, {
+    const res = await fetch(`${host!.url}/api/daemons`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ label: "integration-test-daemon" }),
@@ -165,7 +181,7 @@ describeIfBuilt("HostConfigSync end-to-end against real spawntree-host", () => {
   });
 
   it("GET /api/daemons lists the minted daemon (fingerprint only, no full key)", async () => {
-    const res = await fetch(`${host.url}/api/daemons`);
+    const res = await fetch(`${host!.url}/api/daemons`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       daemons: Array<{ keyFingerprint: string; label: string; hasConfig: boolean }>;
@@ -180,13 +196,13 @@ describeIfBuilt("HostConfigSync end-to-end against real spawntree-host", () => {
   });
 
   it("GET /api/daemons/me/config returns 401 without a bearer token", async () => {
-    const res = await fetch(`${host.url}/api/daemons/me/config`);
+    const res = await fetch(`${host!.url}/api/daemons/me/config`);
     expect(res.status).toBe(401);
   });
 
   it("happy path: mint → push config → daemon-side sync applies it", async () => {
     // 1. Mint a fresh daemon.
-    const mint = await fetch(`${host.url}/api/daemons`, {
+    const mint = await fetch(`${host!.url}/api/daemons`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ label: "e2e-flow" }),
@@ -195,7 +211,7 @@ describeIfBuilt("HostConfigSync end-to-end against real spawntree-host", () => {
     const { key } = (await mint.json()) as { key: string };
 
     // 2. Operator pushes a config for that daemon.
-    const put = await fetch(`${host.url}/api/daemons/${encodeURIComponent(key)}/config`, {
+    const put = await fetch(`${host!.url}/api/daemons/${encodeURIComponent(key)}/config`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -211,8 +227,8 @@ describeIfBuilt("HostConfigSync end-to-end against real spawntree-host", () => {
 
     // 3. Daemon-side: HostConfigSync reads `me/config` and reconciles.
     const sync = new HostConfigSync({
-      binding: { url: host.url, key },
-      manager,
+      binding: { url: host!.url, key },
+      manager: manager!,
       logger: () => undefined,
       pollIntervalMs: 1_000_000, // disable polling; we drive it manually
       backoffSequenceMs: [50],
@@ -221,7 +237,7 @@ describeIfBuilt("HostConfigSync end-to-end against real spawntree-host", () => {
     await sync.stop();
 
     // 4. The replicator declared by the host should now be live.
-    const status = await manager.status();
+    const status = await manager!.status();
     expect(status.replicators.map((r) => r.rid)).toContain("from-host");
     expect(recording.active().length).toBeGreaterThanOrEqual(1);
   });
