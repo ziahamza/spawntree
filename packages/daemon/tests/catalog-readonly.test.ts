@@ -187,43 +187,92 @@ describe("classifyReadOnlySql", () => {
     });
   });
 
-  describe("PRAGMA write-form protection (Devin BUG_0001 on #34)", () => {
+  describe("PRAGMA allow-list protection (Devin BUG_0001 on #34, BUG_0001 on #36)", () => {
     it.each([
-      // Pragmas Devin called out specifically as previously-reachable
-      ["PRAGMA cache_size = 0", "cache_size write rejected"],
-      ["PRAGMA locking_mode = EXCLUSIVE", "locking_mode write rejected"],
-      ["PRAGMA writable_schema = ON", "writable_schema write rejected (also fully blocked)"],
-      ["PRAGMA temp_store = MEMORY", "temp_store write rejected"],
-      ["PRAGMA trusted_schema = OFF", "trusted_schema write rejected (also fully blocked)"],
-      // Whitespace / case variations
+      // BUG_0001 on #34 — `=` write form
+      ["PRAGMA cache_size = 0", "cache_size = … rejected"],
+      ["PRAGMA locking_mode = EXCLUSIVE", "locking_mode = … rejected"],
+      ["PRAGMA writable_schema = ON", "writable_schema = … rejected"],
+      ["PRAGMA temp_store = MEMORY", "temp_store = … rejected"],
+      ["PRAGMA trusted_schema = OFF", "trusted_schema = … rejected"],
       ["pragma cache_size=0", "lowercase + no spaces"],
       ["PRAGMA   cache_size   =   0", "extra whitespace"],
       ["PRAGMA main.cache_size = 0", "schema-qualified write"],
-    ])("rejects write-form: %s (%s)", (sql, _label) => {
+
+      // BUG_0001 on #36 — function-call form is also a write for stateful pragmas.
+      // SQLite treats `PRAGMA cache_size(0)` as equivalent to `PRAGMA cache_size = 0`.
+      ["PRAGMA cache_size(0)", "cache_size(…) write rejected"],
+      ["PRAGMA cache_size(1000000)", "cache_size(huge) — would allocate ~4 GB"],
+      ["PRAGMA auto_vacuum(2)", "auto_vacuum(…) rejected"],
+      ["PRAGMA busy_timeout(60000)", "busy_timeout(…) rejected"],
+      ["PRAGMA journal_mode(WAL)", "journal_mode(…) rejected"],
+      ["PRAGMA synchronous(OFF)", "synchronous(…) rejected"],
+      ["PRAGMA main.cache_size(0)", "schema-qualified function-call write"],
+    ])("rejects write form: %s (%s)", (sql, _label) => {
       const v = classifyReadOnlySql(sql);
       expect(v.ok, `expected ${sql} to be rejected`).toBe(false);
     });
 
     it.each([
+      // Allow-listed bare-form reads.
       "PRAGMA cache_size",
-      "PRAGMA table_info(repos)",
-      "PRAGMA index_list(repos)",
       "PRAGMA database_list",
       "PRAGMA compile_options",
+      "PRAGMA application_id",
+      "PRAGMA user_version",
+      // Allow-listed function-form introspection reads.
+      "PRAGMA table_info(repos)",
+      "PRAGMA table_xinfo(repos)",
+      "PRAGMA index_list(repos)",
+      "PRAGMA index_info(my_idx)",
+      "PRAGMA foreign_key_list(repos)",
+      "PRAGMA table_list(repos)",
+      // Bare-form introspection that supports it.
+      "PRAGMA table_list",
     ])("accepts read-form: %s", (sql) => {
       const v = classifyReadOnlySql(sql);
-      expect(v.ok).toBe(true);
+      expect(v.ok, `expected ${sql} to be accepted`).toBe(true);
     });
 
     it.each([
-      // Pragmas added to FULLY_BLOCKED_PRAGMAS: even the read form is rejected
+      // Pragmas not on the allow-list are rejected outright. This is the
+      // "fail closed" property — anything SQLite adds in the future that
+      // we haven't reviewed gets blocked by default.
       "PRAGMA writable_schema",
       "PRAGMA trusted_schema",
       "PRAGMA locking_mode",
       "PRAGMA query_only",
-    ])("rejects fully-blocked pragma even in read form: %s", (sql) => {
+      "PRAGMA wal_checkpoint",
+      "PRAGMA optimize",
+      "PRAGMA shrink_memory",
+      "PRAGMA integrity_check",
+      // Made-up pragma name a future SQLite version might add.
+      "PRAGMA fingerprint_identity",
+    ])("rejects pragma not on allow-list: %s", (sql) => {
       const v = classifyReadOnlySql(sql);
-      expect(v.ok).toBe(false);
+      expect(v.ok, `expected ${sql} to be rejected`).toBe(false);
+    });
+
+    it.each([
+      // "bare"-only pragmas: function form is rejected even though the
+      // pragma is allow-listed. `cache_size(0)` would set the value.
+      "PRAGMA cache_size(0)",
+      "PRAGMA application_id(42)",
+      "PRAGMA user_version(1)",
+    ])("rejects function form for bare-only pragma: %s", (sql) => {
+      const v = classifyReadOnlySql(sql);
+      expect(v.ok, `expected ${sql} to be rejected`).toBe(false);
+    });
+
+    it.each([
+      // "function"-only pragmas: bare form is rejected (would error out
+      // anyway in SQLite, but we reject early for a clearer message).
+      "PRAGMA table_info",
+      "PRAGMA index_list",
+      "PRAGMA foreign_key_list",
+    ])("rejects bare form for function-only pragma: %s", (sql) => {
+      const v = classifyReadOnlySql(sql);
+      expect(v.ok, `expected ${sql} to be rejected`).toBe(false);
     });
   });
 });

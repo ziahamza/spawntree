@@ -341,52 +341,69 @@ function replaceStringsAndComments(sql: string): string {
 }
 
 /**
- * Pragmas the classifier rejects in ALL forms (both `PRAGMA name` and
- * `PRAGMA name(...)` query forms). These are stateful enough that even
- * reading them is a side-effect channel we don't want to expose.
+ * Allow-list of read-safe SQLite pragmas, with the form each is allowed in:
  *
- * Schema-qualified forms (`main.journal_mode`, `temp.foreign_keys`)
- * normalize to the unqualified name before the lookup.
+ *   "bare"     →  `PRAGMA name`        (returns current value)
+ *   "function" →  `PRAGMA name(arg)`   (introspection — takes object name,
+ *                                       returns rows)
+ *   "both"     →  either form
  *
- * NOTE: this is the second line of defence. The first is a universal
- * `PRAGMA name = …` write-form rejection in `classifyPragma` — that
- * blocks writes to any pragma, even ones not in this set. The set itself
- * only matters for pragmas where even the read form is dangerous.
+ * Pragmas NOT in this map are rejected entirely. The `=` write form
+ * (`PRAGMA name = value`) is rejected universally regardless of pragma.
+ *
+ * Why allow-list (Devin's review of #34 + #36 both pushed for this):
+ * SQLite's function-call form `PRAGMA name(value)` is semantically
+ * equivalent to `PRAGMA name = value` for STATEFUL pragmas. So
+ * `PRAGMA cache_size(0)` sets cache to zero (DoS), `PRAGMA cache_size(1000000)`
+ * allocates ~4 GB, etc. A deny-list will always miss something — every
+ * future SQLite release that adds a stateful pragma is a new bypass
+ * waiting to happen. An allow-list fails closed: a new pragma is
+ * blocked by default until reviewed and added here.
+ *
+ * Schema-qualified forms (`main.cache_size`) normalize to the
+ * unqualified base name before lookup.
  */
-const FULLY_BLOCKED_PRAGMAS = new Set([
-  "foreign_keys",
-  "journal_mode",
-  "synchronous",
-  "user_version",
-  "application_id",
-  "schema_version",
-  "wal_checkpoint",
-  "optimize",
-  "shrink_memory",
-  "vacuum",
-  "writable_schema",
-  "trusted_schema",
-  "locking_mode",
-  "secure_delete",
-  "temp_store",
-  "automatic_index",
-  "recursive_triggers",
-  "defer_foreign_keys",
-  "ignore_check_constraints",
-  "case_sensitive_like",
-  "cell_size_check",
-  "checkpoint_fullfsync",
-  "fullfsync",
-  "legacy_alter_table",
-  "legacy_file_format",
-  "max_page_count",
-  "mmap_size",
-  "page_size",
-  "query_only",
-  "read_uncommitted",
-  "reverse_unordered_selects",
-  "soft_heap_limit",
-  "threads",
+type PragmaForm = "bare" | "function" | "both";
+
+const ALLOWED_PRAGMAS = new Map<string, PragmaForm>([
+  // Introspection — function form takes an object name and returns rows.
+  ["table_info", "function"],
+  ["table_xinfo", "function"],
+  ["table_list", "both"],
+  ["index_info", "function"],
+  ["index_list", "function"],
+  ["index_xinfo", "function"],
+  ["foreign_key_list", "function"],
+  ["collation_list", "bare"],
+  ["compile_options", "bare"],
+  ["database_list", "bare"],
+  ["function_list", "bare"],
+  ["module_list", "bare"],
+  ["pragma_list", "bare"],
+
+  // Read-only counters / current-value queries (bare-name only — the
+  // function and `=` forms set state, which we never allow).
+  ["application_id", "bare"],
+  ["auto_vacuum", "bare"],
+  ["busy_timeout", "bare"],
+  ["cache_size", "bare"],
+  ["cache_spill", "bare"],
+  ["data_version", "bare"],
+  ["encoding", "bare"],
+  ["foreign_keys", "bare"],
+  ["freelist_count", "bare"],
+  ["journal_mode", "bare"],
+  ["journal_size_limit", "bare"],
+  ["max_page_count", "bare"],
+  ["page_count", "bare"],
+  ["page_size", "bare"],
+  ["recursive_triggers", "bare"],
+  ["schema_version", "bare"],
+  ["synchronous", "bare"],
+  ["temp_store", "bare"],
+  ["threads", "bare"],
+  ["user_version", "bare"],
+  ["wal_autocheckpoint", "bare"],
 ]);
 
 function classifyPragma(raw: string): { ok: true } | { ok: false; reason: string } {
@@ -394,44 +411,59 @@ function classifyPragma(raw: string): { ok: true } | { ok: false; reason: string
   // We already know the first keyword is PRAGMA; advance past it.
   i += "PRAGMA".length;
   i = skipTrivia(raw, i);
-  // The pragma name can include a schema qualifier (`main.journal_mode`).
+  // The pragma name can include a schema qualifier (`main.cache_size`).
   const start = i;
   while (i < raw.length && /[a-zA-Z0-9_.]/.test(raw[i]!)) i++;
   const fullName = raw.slice(start, i).toLowerCase();
   if (!fullName) {
     return { ok: false, reason: "PRAGMA name missing" };
   }
-  // `main.journal_mode` → `journal_mode`. Anything before the last dot is
+  // `main.cache_size` → `cache_size`. Anything before the last dot is
   // a schema identifier and doesn't change the pragma's effect.
   const baseName = fullName.includes(".")
     ? fullName.split(".").pop()!
     : fullName;
-  if (FULLY_BLOCKED_PRAGMAS.has(baseName)) {
+
+  const allowedForm = ALLOWED_PRAGMAS.get(baseName);
+  if (!allowedForm) {
     return {
       ok: false,
-      reason: `PRAGMA ${fullName} is not allowed on the read-only endpoint`,
+      reason: `PRAGMA ${fullName} is not on the read-only allow-list`,
     };
   }
-  // Universal write-form rejection: `PRAGMA <name> = <value>` mutates
-  // database state regardless of which pragma is targeted. Devin's review
-  // of #34 flagged that the original denylist let writes through for
-  // any pragma not explicitly listed (e.g. `PRAGMA cache_size = 0`,
-  // `PRAGMA locking_mode = EXCLUSIVE`). After dropping the loopback gate
-  // on `/query-readonly` those became reachable from any allow-listed
-  // browser origin.
+
+  // Decide which form was invoked by the next non-trivia character:
+  //   `=` → write form, ALWAYS rejected
+  //   `(` → function form, allowed only for "function" / "both" pragmas
+  //   anything else (eof, ws, `;`) → bare form
   //
-  // The function-call form `PRAGMA name(arg)` is a read-only query (e.g.
-  // `PRAGMA table_info(repos)`), so we only reject `=`. Whitespace before
-  // the `=` is allowed (`PRAGMA cache_size = 0` and `PRAGMA cache_size=0`
-  // are equivalent).
+  // Devin's review of #36 (BUG_0001): for stateful pragmas the
+  // function form `PRAGMA cache_size(0)` is a write equivalent to
+  // `PRAGMA cache_size = 0`. The previous fix only blocked `=` and let
+  // the `(arg)` form through. The allow-list above — combined with this
+  // per-form check — closes that gap.
   const after = skipTrivia(raw, i);
-  if (after < raw.length && raw[after] === "=") {
+  const ch = after < raw.length ? raw[after] : "";
+
+  if (ch === "=") {
     return {
       ok: false,
       reason: `PRAGMA ${fullName} = … (write form) is not allowed on the read-only endpoint`,
     };
   }
-  return { ok: true };
+
+  const invokedForm: "bare" | "function" = ch === "(" ? "function" : "bare";
+
+  if (allowedForm === "both") return { ok: true };
+  if (allowedForm === invokedForm) return { ok: true };
+
+  return {
+    ok: false,
+    reason:
+      invokedForm === "function"
+        ? `PRAGMA ${fullName}(…) is not allowed (only the bare form is read-safe for this pragma)`
+        : `PRAGMA ${fullName} alone is not allowed (this pragma requires the function-call form, e.g. ${fullName}(<arg>))`,
+  };
 }
 
 /**
