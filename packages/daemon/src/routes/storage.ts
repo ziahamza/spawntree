@@ -1,4 +1,5 @@
 import { type Context, Hono } from "hono";
+import type { HostConfigSync } from "../storage/host-sync.ts";
 import type { StorageManager } from "../storage/manager.ts";
 
 /**
@@ -26,6 +27,14 @@ export interface StorageRoutesOptions {
    * rejected. Defaults to checking `SPAWNTREE_STORAGE_TRUST_REMOTE` env var.
    */
   trustRemoteOrigin?: boolean;
+  /**
+   * The host-config-sync loop, if the daemon was booted with a `--host`
+   * binding. When present, `GET /api/v1/storage` includes its current
+   * status (state machine + last-error/next-retry) so the dashboard can
+   * surface "I'm bound to host X · synced 5m ago" without a separate
+   * endpoint. Null in standalone mode.
+   */
+  hostSync?: HostConfigSync | null;
 }
 
 export function createStorageRoutes(
@@ -50,7 +59,15 @@ export function createStorageRoutes(
 
   app.get("/", async (c) => {
     try {
-      return c.json(await manager.status());
+      const status = await manager.status();
+      // Surface host binding state alongside the storage snapshot so a
+      // single fetch tells the dashboard everything it needs to draw
+      // the "Storage" card. `hostSync: null` is a deliberate signal —
+      // the daemon is in standalone mode (no `--host` binding).
+      return c.json({
+        ...status,
+        hostSync: options.hostSync?.getStatus() ?? null,
+      });
     } catch (err) {
       return errorResponse(c, 500, "STORAGE_STATUS_FAILED", err);
     }

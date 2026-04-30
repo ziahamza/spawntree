@@ -1,5 +1,66 @@
 # spawntree-core
 
+## 0.6.0
+
+### Minor Changes
+
+- [#38](https://github.com/ziahamza/spawntree/pull/38) [`b3b4412`](https://github.com/ziahamza/spawntree/commit/b3b44126aee347b91cb3173fa248dd167d69342f) Thanks [@ziahamza](https://github.com/ziahamza)! - Two follow-ups on top of `--host` / `--host-key` ([#35](https://github.com/ziahamza/spawntree/issues/35)):
+
+  **`spawntree-host`**: split `server.ts` into a `createApp({ store, host, port })`
+  factory plus a thin CLI entrypoint guarded by `import.meta.url ===
+fileURLToPath(process.argv[1])`. `openStore` and the `Store` type are now
+  exported. The CLI behavior is unchanged (same env vars, same bin) but
+  embedders can now bind the handler to any `http.Server` without a child
+  process. The landing page at `GET /` now lists registered daemons (with
+  "config set" / "awaiting config" pills) alongside federation hosts.
+
+  **`spawntree-daemon`**: `GET /api/v1/storage` now returns a `hostSync` field
+  (union: `idle` | `fetching` | `synced` | `awaiting_config` | `error`, or
+  `null` in standalone mode) so the dashboard can paint host-binding state
+  without a separate endpoint. The infra page in the bundled web app
+  surfaces a "Storage" card and (when `--host` is in effect) a "Host
+  binding" card next to the existing PostgreSQL / Redis cards. Polished
+  across all four host-sync states + mobile after end-to-end QA: relative
+  time formatting, trimmed error messages, multi-line value layout fix,
+  status pill mapping (`Synced` / `Idle` / `Error` / `Fetching`).
+
+  **`spawntree-core`**: new `StorageStatusResponse` and `HostSyncState`
+  schemas, plus `apiClient.getStorageStatus()`.
+
+  Also: replaced the child-process integration test for the host server
+  with an in-process one that wires the new `createApp` factory to a
+  random-port `http.Server`. ~2× faster, no race on stderr, no dependency
+  on `dist/server.js` existing at test time. Bumped daemon's
+  `vitest.config` default timeout from 5s to 15s — pre-existing
+  parallel-load flakiness that grew worse as the suite passed 150 tests.
+
+## 0.5.0
+
+### Minor Changes
+
+- [#37](https://github.com/ziahamza/spawntree/pull/37) [`c94e6f9`](https://github.com/ziahamza/spawntree/commit/c94e6f974509025e6b9281563283b178a3d94863) Thanks [@ziahamza](https://github.com/ziahamza)! - Backfill git metadata from `working_directory` in the discovery loop, plus
+  re-export `detectGitMetadata` from `spawntree-core` for downstream daemons.
+
+  **Why**: some sessions reach `runDiscoveryPass` with NULL git metadata —
+  most commonly older Codex sessions whose `thread.gitInfo` wasn't captured
+  at session creation time. Without a `gitBranch` value those rows can't be
+  linked to a PR in the consuming UI, even though the session is clearly
+  tied to a particular branch on disk.
+
+  **Daemon**: when `discoverSessions` returns a row with any of `gitBranch /
+gitHeadCommit / gitRemoteUrl` null, `SessionManager.runDiscoveryPass` now
+  runs `git rev-parse` against the session's `workingDirectory` and merges
+  in whatever's missing. Adapter-reported values always win; we only fill
+  nulls. A per-cwd cache prevents the daemon from re-spawning git on every
+  30-second discovery tick. Sessions whose `workingDirectory` no longer
+  exists (deleted worktree) skip the spawn entirely — the existing nulls
+  stay null, which is correct.
+
+  **Core**: re-exports `detectGitMetadata` and `GitMetadata` from
+  `spawntree-core`'s public entry point so daemons (and other downstream
+  consumers) can use the same git detection helper without depending on
+  internal `lib/git.ts` paths. The helper itself was added to core by [#31](https://github.com/ziahamza/spawntree/issues/31).
+
 ## 0.4.0
 
 ### Minor Changes

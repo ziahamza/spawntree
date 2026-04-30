@@ -21,6 +21,7 @@ import {
   RestoreDbResponse,
   SessionDetail,
   SessionEventPayload,
+  StorageStatusResponse,
   WebListReposResponse,
   WebRepoDetailResponse,
   WebRepoTreeResponse,
@@ -140,6 +141,16 @@ export class ApiClient {
 
   async getInfraStatus() {
     return this.request("/api/v1/infra", { schema: InfraStatusResponse });
+  }
+
+  /**
+   * Snapshot of the daemon's storage subsystem: primary, replicators, and
+   * (when the daemon was booted with `--host`) the host-config-sync state.
+   * Used by the dashboard's infra page to surface host binding status next
+   * to postgres/redis without a separate admin UI.
+   */
+  async getStorageStatus() {
+    return this.request("/api/v1/storage", { schema: StorageStatusResponse });
   }
 
   async stopInfra(body: StopInfraRequest) {

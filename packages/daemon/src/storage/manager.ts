@@ -153,32 +153,80 @@ export class StorageManager {
   }
 
   async addReplicator(rid: string, id: string, config: unknown): Promise<void> {
-    return this.withLock(async () => {
-      if (this.config.replicators.some((r) => r.rid === rid)) {
-        throw new Error(`Replicator with rid="${rid}" already exists`);
-      }
-      await this.startReplicator(rid, id, config);
-      this.config = {
-        ...this.config,
-        replicators: [...this.config.replicators, { rid, id, config }],
-      };
-      saveStorageConfig(this.configPath, this.config);
-    });
+    return this.withLock(() => this.addReplicatorLocked(rid, id, config));
   }
 
   async removeReplicator(rid: string): Promise<void> {
+    return this.withLock(() => this.removeReplicatorLocked(rid));
+  }
+
+  /**
+   * Apply a complete `StorageConfig` snapshot to the manager: hot-swap the
+   * primary if it differs, then reconcile replicators (add new ones,
+   * remove ones not in the target, replace any whose config changed).
+   *
+   * This is the entry point used by `HostConfigSync` when it pulls a
+   * config from a `spawntree-host`. The whole operation runs inside the
+   * manager's lock so a concurrent admin-API call can't interleave a
+   * half-applied state.
+   */
+  async applyConfig(target: StorageConfig): Promise<void> {
     return this.withLock(async () => {
-      const handle = this.replicators.get(rid);
-      if (handle) {
-        await handle.stop();
-        this.replicators.delete(rid);
+      // 1. Primary first — if it changes, replicators get torn down and
+      //    rebuilt as part of the swap, so we don't double-stop them.
+      await this.setPrimaryLocked(target.primary);
+
+      // 2. Reconcile replicators against the (possibly updated) primary.
+      //    Diff by `rid` + canonical config. Identical entries are no-ops.
+      const currentByRid = new Map(this.config.replicators.map((r) => [r.rid, r]));
+      const targetByRid = new Map(target.replicators.map((r) => [r.rid, r]));
+
+      // Remove any rid no longer in the target.
+      for (const rid of currentByRid.keys()) {
+        if (!targetByRid.has(rid)) {
+          await this.removeReplicatorLocked(rid);
+        }
       }
-      this.config = {
-        ...this.config,
-        replicators: this.config.replicators.filter((r) => r.rid !== rid),
-      };
-      saveStorageConfig(this.configPath, this.config);
+
+      // Add or replace anything in the target that differs from current.
+      for (const entry of target.replicators) {
+        const existing = currentByRid.get(entry.rid);
+        const sameProvider = existing?.id === entry.id;
+        const sameConfig = existing
+          ? canonicalEqual(existing.config ?? {}, entry.config ?? {})
+          : false;
+        if (existing && sameProvider && sameConfig) continue;
+        if (existing) await this.removeReplicatorLocked(entry.rid);
+        await this.addReplicatorLocked(entry.rid, entry.id, entry.config);
+      }
     });
+  }
+
+  /** Lock-internal — assumes caller is already inside `withLock`. */
+  private async addReplicatorLocked(rid: string, id: string, config: unknown): Promise<void> {
+    if (this.config.replicators.some((r) => r.rid === rid)) {
+      throw new Error(`Replicator with rid="${rid}" already exists`);
+    }
+    await this.startReplicator(rid, id, config);
+    this.config = {
+      ...this.config,
+      replicators: [...this.config.replicators, { rid, id, config }],
+    };
+    saveStorageConfig(this.configPath, this.config);
+  }
+
+  /** Lock-internal — assumes caller is already inside `withLock`. */
+  private async removeReplicatorLocked(rid: string): Promise<void> {
+    const handle = this.replicators.get(rid);
+    if (handle) {
+      await handle.stop();
+      this.replicators.delete(rid);
+    }
+    this.config = {
+      ...this.config,
+      replicators: this.config.replicators.filter((r) => r.rid !== rid),
+    };
+    saveStorageConfig(this.configPath, this.config);
   }
 
   async triggerReplicator(rid: string): Promise<ProviderStatus> {

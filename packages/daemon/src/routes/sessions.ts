@@ -10,6 +10,12 @@ import {
   UnknownProviderError,
 } from "spawntree-core";
 import { BadRequestError } from "../errors.ts";
+import {
+  buildCorsHeaders,
+  corsHeaderEntries,
+  corsPolicyFromEnv,
+  isAllowedBrowserOrigin,
+} from "../lib/cors.ts";
 import type { SessionManager } from "../sessions/session-manager.ts";
 
 /**
@@ -27,6 +33,31 @@ import type { SessionManager } from "../sessions/session-manager.ts";
  */
 export function createSessionRoutes(manager: SessionManager) {
   const app = new Hono();
+  const policy = corsPolicyFromEnv("SPAWNTREE_SESSIONS_TRUST_REMOTE");
+
+  app.use("*", async (c, next) => {
+    const origin = c.req.header("origin");
+    const pnaRequested = c.req.header("access-control-request-private-network") === "true";
+
+    if (c.req.method === "OPTIONS") {
+      if (!origin || !isAllowedBrowserOrigin(origin, policy)) {
+        return c.text("Not Found", 404);
+      }
+
+      return new Response(null, {
+        status: 204,
+        headers: buildCorsHeaders(origin, { pnaRequested }),
+      });
+    }
+
+    await next();
+
+    if (origin && isAllowedBrowserOrigin(origin, policy)) {
+      for (const [name, value] of corsHeaderEntries(origin, { pnaRequested })) {
+        c.header(name, value);
+      }
+    }
+  });
 
   // List all sessions across all providers.
   app.get("/", async (c) => {
@@ -294,3 +325,5 @@ function isTagged<T extends string>(
     (error as { _tag?: string })._tag === tag
   );
 }
+
+// CORS / PNA helpers moved to packages/daemon/src/lib/cors.ts.

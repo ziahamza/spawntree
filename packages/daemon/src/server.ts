@@ -1,6 +1,5 @@
 import { Effect, ManagedRuntime, Schema } from "effect";
 import { type Context, Hono } from "hono";
-import { cors } from "hono/cors";
 import { existsSync, readFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +24,7 @@ import { createSessionRoutes } from "./routes/sessions.ts";
 import { createStorageRoutes } from "./routes/storage.ts";
 import { DaemonService } from "./services/daemon-service.ts";
 import type { SessionManager } from "./sessions/session-manager.ts";
+import type { HostConfigSync } from "./storage/host-sync.ts";
 import type { StorageManager } from "./storage/manager.ts";
 
 /**
@@ -51,34 +51,31 @@ const webIndexPath = resolve(webDistDir, "index.html");
 
 export function createApp(
   runtime: ManagedRuntime.ManagedRuntime<DaemonService, never>,
-  options: { storage?: StorageManager; sessionManager?: SessionManager } = {},
+  options: {
+    storage?: StorageManager;
+    sessionManager?: SessionManager;
+    /**
+     * The active host-config-sync loop, if `--host` was passed at boot.
+     * Plumbed through so `GET /api/v1/storage` can include its state
+     * (synced / awaiting_config / error / next-retry-at) and the
+     * dashboard can paint a "host-bound" pill without a separate
+     * endpoint.
+     */
+    hostSync?: HostConfigSync | null;
+  } = {},
 ) {
   const app = new Hono();
 
-  app.use(
-    "*",
-    cors({
-      origin: (origin) => {
-        if (!origin) return origin;
-        try {
-          const url = new URL(origin);
-          const host = url.hostname;
-          const isLoopback =
-            host === "localhost" ||
-            host === "127.0.0.1" ||
-            host === "::1" ||
-            host.endsWith(".localhost");
-          return isLoopback ? origin : null;
-        } catch {
-          return null;
-        }
-      },
-      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-      allowHeaders: ["Content-Type", "Authorization", "X-Trace-Id"],
-      credentials: true,
-      maxAge: 600,
-    }),
-  );
+  // CORS is applied per route group:
+  //   - /api/v1/catalog and /api/v1/sessions use the shared module at
+  //     `lib/cors.ts` with PNA support and the gitenv.dev allow-list.
+  //   - The remaining routes (/api/v1/storage, /api/v1/envs, /api/v1/repos
+  //     etc.) are admin surfaces only ever called by the daemon's own
+  //     dashboard SPA bundled at the same origin, so they don't need CORS.
+  // A global loopback-only `hono/cors` middleware here would shadow the
+  // per-route CORS and silently break cross-origin reads from public
+  // Studio (https://gitenv.dev), which is the whole point of the CORS+PNA
+  // surface in `lib/cors.ts`.
 
   app.use(async (context, next) => {
     const startedAt = Date.now();
@@ -93,7 +90,10 @@ export function createApp(
 
   // Storage provider management + catalog query routes.
   if (options.storage) {
-    app.route("/api/v1/storage", createStorageRoutes(options.storage));
+    app.route(
+      "/api/v1/storage",
+      createStorageRoutes(options.storage, { hostSync: options.hostSync ?? null }),
+    );
     app.route("/api/v1/catalog", createCatalogRoutes(options.storage));
   }
 
