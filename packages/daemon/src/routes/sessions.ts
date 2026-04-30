@@ -3,6 +3,7 @@ import { type Context, Hono } from "hono";
 import {
   CreateSessionRequest,
   ProviderCapabilityError,
+  RespondToToolCallRequest,
   SendSessionMessageRequest,
   SessionBusyError,
   SessionDeleteUnsupportedError,
@@ -21,6 +22,7 @@ import type { SessionManager } from "../sessions/session-manager.ts";
  *   DELETE /api/v1/sessions/:id                  delete / forget session
  *   POST   /api/v1/sessions/:id/messages         send a message (start a turn)
  *   POST   /api/v1/sessions/:id/interrupt        cancel active turn
+ *   POST   /api/v1/sessions/:id/tool-calls/:toolCallId/respond  resolve a pending approval prompt
  *   GET    /api/v1/sessions/:id/events           SSE stream of session events
  */
 export function createSessionRoutes(manager: SessionManager) {
@@ -127,6 +129,23 @@ export function createSessionRoutes(manager: SessionManager) {
     const sessionId = c.req.param("id");
     try {
       await manager.interrupt(sessionId);
+      return c.json({ ok: true });
+    } catch (error) {
+      return sessionErrorResponse(error);
+    }
+  });
+
+  // Respond to a pending approval prompt for a specific tool call.
+  app.post("/:id/tool-calls/:toolCallId/respond", async (c) => {
+    const sessionId = c.req.param("id");
+    const toolCallId = c.req.param("toolCallId");
+    try {
+      const body = await decodeBody(RespondToToolCallRequest, c);
+      const response =
+        body.outcome === "selected"
+          ? { outcome: { outcome: "selected" as const, optionId: body.optionId } }
+          : { outcome: { outcome: "cancelled" as const } };
+      await manager.respondToToolCall(sessionId, toolCallId, response);
       return c.json({ ok: true });
     } catch (error) {
       return sessionErrorResponse(error);

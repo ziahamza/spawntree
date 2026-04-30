@@ -42,8 +42,23 @@ export interface DefaultClientOptions {
    * appropriate for spawntree's model where the user has explicitly
    * launched the agent on their own machine. For remote or multi-tenant
    * scenarios, override with a custom `client` that prompts the user.
+   *
+   * Ignored when `permissionHandler` is set.
    */
   permissionPolicy?: "allow_once" | "allow_always" | "reject_once" | "reject_always";
+  /**
+   * Async handler invoked on every `request_permission` RPC. When provided,
+   * it fully owns the response and `permissionPolicy` is ignored. Use this
+   * to surface a real prompt to the user (e.g. via the daemon's SessionManager
+   * pendingApprovals map) and resolve the promise once the user decides.
+   *
+   * Returning `{ outcome: "cancelled" }` aborts the tool call on the agent
+   * side; returning `{ outcome: "selected", optionId }` with one of the
+   * `allow_*` options proceeds, with `reject_*` denies.
+   */
+  permissionHandler?: (
+    params: acp.RequestPermissionRequest,
+  ) => Promise<acp.RequestPermissionResponse>;
   /** If true, fs/read_text_file and fs/write_text_file are served via node:fs. Default true. */
   enableFs?: boolean;
 }
@@ -176,6 +191,7 @@ function defaultClientImpl(
 ): acp.Client {
   const policy = options.permissionPolicy ?? "allow_once";
   const enableFs = options.enableFs ?? true;
+  const handler = options.permissionHandler;
 
   const client: acp.Client = {
     sessionUpdate: async (params) => {
@@ -183,6 +199,9 @@ function defaultClientImpl(
     },
 
     requestPermission: async (params) => {
+      // Custom async handler wins — it can suspend on user input.
+      if (handler) return handler(params);
+
       // Exact policy match — always honor if the agent offered it.
       const match = params.options.find((o) => o.kind === policy);
       if (match) {

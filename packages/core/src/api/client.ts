@@ -38,6 +38,7 @@ import type {
   DumpDbRequest,
   RegisterRepoRequest,
   RelinkCloneRequest,
+  RespondToToolCallRequest,
   RestoreDbRequest,
   SendSessionMessageRequest,
   StopInfraRequest,
@@ -321,6 +322,16 @@ export class ApiClient {
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interrupt`, {
       method: "POST",
     });
+  }
+
+  async respondToToolCall(sessionId: string, toolCallId: string, body: RespondToToolCallRequest) {
+    return this.request(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/tool-calls/${encodeURIComponent(toolCallId)}/respond`,
+      {
+        method: "POST",
+        body,
+      },
+    );
   }
 
   async *streamSessionEvents(

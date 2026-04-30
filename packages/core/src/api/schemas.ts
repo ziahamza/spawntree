@@ -501,6 +501,34 @@ export const SendSessionMessageRequest = Schema.Struct({
 });
 export type SendSessionMessageRequest = Schema.Schema.Type<typeof SendSessionMessageRequest>;
 
+/**
+ * Permission option offered by the agent on a `request_permission` RPC.
+ * Mirrors `@zed-industries/agent-client-protocol` PermissionOption — kept
+ * as a local schema so consumers don't need an ACP-specific dependency.
+ */
+export const ToolCallApprovalOption = Schema.Struct({
+  optionId: Schema.String,
+  name: Schema.String,
+  kind: Schema.Literals(["allow_once", "allow_always", "reject_once", "reject_always"]),
+});
+export type ToolCallApprovalOption = Schema.Schema.Type<typeof ToolCallApprovalOption>;
+
+/**
+ * User response to a pending approval prompt. Matches ACP
+ * `RequestPermissionResponse.outcome` shape so the daemon can pass it
+ * through to the agent without translation.
+ */
+export const RespondToToolCallRequest = Schema.Union([
+  Schema.Struct({
+    outcome: Schema.Literal("selected"),
+    optionId: Schema.String,
+  }),
+  Schema.Struct({
+    outcome: Schema.Literal("cancelled"),
+  }),
+]);
+export type RespondToToolCallRequest = Schema.Schema.Type<typeof RespondToToolCallRequest>;
+
 export const ContentBlock = Schema.Union([
   Schema.Struct({ type: Schema.Literal("text"), text: Schema.String }),
   Schema.Struct({ type: Schema.Literal("image"), data: Schema.String, mimeType: Schema.String }),
@@ -539,11 +567,17 @@ export const SessionToolCallData = Schema.Struct({
   turnId: Schema.NullOr(Schema.String),
   toolName: Schema.String,
   toolKind: Schema.Literals(["terminal", "file_edit", "mcp", "other"]),
-  status: Schema.Literals(["pending", "in_progress", "completed", "error"]),
+  status: Schema.Literals(["pending", "in_progress", "awaiting_approval", "completed", "error"]),
   arguments: Schema.Unknown,
   result: Schema.Unknown,
   durationMs: Schema.NullOr(Schema.Number),
   createdAt: Schema.String,
+  /**
+   * Set only while `status === "awaiting_approval"`. Carries the agent's
+   * permission options so the UI can render Allow/Reject buttons. Cleared
+   * when the tool call moves to a terminal status.
+   */
+  approvalOptions: Schema.optional(Schema.Array(ToolCallApprovalOption)),
 });
 export type SessionToolCallData = Schema.Schema.Type<typeof SessionToolCallData>;
 
@@ -578,6 +612,11 @@ export const SessionEventPayload = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("tool_call_completed"),
+    sessionId: Schema.String,
+    toolCall: SessionToolCallData,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("tool_call_awaiting_approval"),
     sessionId: Schema.String,
     toolCall: SessionToolCallData,
   }),
