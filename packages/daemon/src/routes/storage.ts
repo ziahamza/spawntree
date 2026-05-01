@@ -1,4 +1,11 @@
 import { type Context, Hono } from "hono";
+import {
+  buildCorsHeaders,
+  corsHeaderEntries,
+  corsPolicyFromEnv,
+  isAllowedBrowserOrigin,
+  type CorsPolicy,
+} from "../lib/cors.ts";
 import type { HostConfigSync } from "../storage/host-sync.ts";
 import type { StorageManager } from "../storage/manager.ts";
 
@@ -42,11 +49,51 @@ export function createStorageRoutes(
   options: StorageRoutesOptions = {},
 ) {
   const app = new Hono();
-  const trustRemote = options.trustRemoteOrigin
-    ?? process.env.SPAWNTREE_STORAGE_TRUST_REMOTE === "1";
+  const policy: CorsPolicy = {
+    ...corsPolicyFromEnv("SPAWNTREE_STORAGE_TRUST_REMOTE"),
+    trustRemote: options.trustRemoteOrigin
+      ?? process.env.SPAWNTREE_STORAGE_TRUST_REMOTE === "1",
+  };
+  // Storage routes accept GET (read) plus PUT/POST/DELETE (admin writes).
+  // The catalog default ("GET,POST,DELETE,OPTIONS") doesn't include PUT,
+  // which matters because `PUT /primary` is the primary swap endpoint.
+  const ALLOWED_METHODS = "GET,POST,PUT,DELETE,OPTIONS";
 
+  app.use("*", async (c, next) => {
+    const origin = c.req.header("origin");
+    const pnaRequested = c.req.header("access-control-request-private-network") === "true";
+
+    if (c.req.method === "OPTIONS") {
+      if (!origin || !isAllowedBrowserOrigin(origin, policy)) {
+        return c.text("Not Found", 404);
+      }
+      return new Response(null, {
+        status: 204,
+        headers: buildCorsHeaders(origin, { pnaRequested, methods: ALLOWED_METHODS }),
+      });
+    }
+
+    await next();
+
+    if (origin && isAllowedBrowserOrigin(origin, policy)) {
+      for (const [name, value] of corsHeaderEntries(origin, {
+        pnaRequested,
+        methods: ALLOWED_METHODS,
+      })) {
+        c.header(name, value);
+      }
+    }
+  });
+
+  /**
+   * Loopback gate for the admin write surface. `GET /` is deliberately
+   * NOT wrapped — it's a read-only status snapshot, safe to expose to any
+   * CORS-allow-listed browser origin (including public Studio at
+   * gitenv.dev). The CORS middleware above is the origin filter; this
+   * gate is the additional IP filter for write methods.
+   */
   const requireLocalOrigin = async (c: Context, next: () => Promise<void>) => {
-    if (trustRemote) return next();
+    if (policy.trustRemote) return next();
     if (isLoopbackRequest(c)) return next();
     return c.json(
       {
