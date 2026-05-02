@@ -73,3 +73,4 @@
 - [ ] Windows support
 - [ ] Homebrew tap
 - [ ] Plugin system
+- [ ] Document the git-subtree workflow for downstream vendors
