@@ -75,3 +75,4 @@
 - [ ] Plugin system
 - [ ] Document the git-subtree workflow for downstream vendors
 - [ ] Add `spawntree --version` flag (currently only via `spawntree help`)
+- [ ] Bumping minor versions should auto-update CHANGELOG header
