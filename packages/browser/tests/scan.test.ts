@@ -14,12 +14,16 @@
  * worktree-stitching pass without hitting any real disk.
  */
 import { describe, expect, it } from "vitest";
+<<<<<<< HEAD
 import {
   hintMatchesRepoGit,
   scanFolder,
   stitchWorktrees,
   type ScannedEntry,
 } from "../src/fsa/scan.ts";
+=======
+import { scanFolder, stitchWorktrees, type ScannedEntry } from "../src/fsa/scan.ts";
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
 
 type MockNode = { kind: "dir"; entries: Record<string, MockNode> } | { kind: "file"; text: string };
 
@@ -272,6 +276,7 @@ describe("stitchWorktrees", () => {
     // import alive for future test cases.
     expect(HEAD_FEATURE.length).toBeGreaterThan(0);
   });
+<<<<<<< HEAD
 
   describe("path-boundary suffix match (regression for PR #51 review)", () => {
     // The old `hint.endsWith(repoGit) || hint.endsWith('/' + repoGit)`
@@ -344,4 +349,6 @@ describe("stitchWorktrees", () => {
       expect(stitched.has("other-main-repo-feat")).toBe(false);
     });
   });
+=======
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
 });

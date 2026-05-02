@@ -10,6 +10,7 @@
  * from is the consumer's problem — typically a CF Worker / host
  * endpoint that proxies upload-pack with auth.
  *
+<<<<<<< HEAD
  * Two modes:
  *
  *   1. **Wants** — caller already has the SHA(s). Pass `wants: [sha]`,
@@ -28,12 +29,21 @@
  *
  * On success we write the pack into `.git/objects/pack/`, run
  * `git.indexPack`, and update remote-tracking refs. All writes use the
+=======
+ * On success we write the pack into `.git/objects/pack/`, run
+ * `git.indexPack`, and update `refs/remotes/origin/<headRef>` so
+ * subsequent diffs can resolve the new commit. All writes use the
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
  * `fetchOnly` adapter mode that restricts writes to those locations.
  */
 
 import git from "isomorphic-git";
 import type { IsoFs } from "../fsa/fs-adapter.ts";
+<<<<<<< HEAD
 import type { FetchPackFn, FetchPackInput, FetchPackResult } from "../types.ts";
+=======
+import type { FetchPackFn, FetchPackInput } from "../types.ts";
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
 
@@ -46,6 +56,7 @@ export type TryFetchPackInput = {
    */
   cloneId: string;
   remoteUrl: string;
+<<<<<<< HEAD
   /**
    * Object SHAs to fetch directly. Either this OR `refNames` must be
    * non-empty after filtering; passing both empty fails fast with
@@ -65,13 +76,22 @@ export type TryFetchPackInput = {
    * when in wants-mode. Pointed at `wants[0]`. Ignored in refNames-mode
    * — the consumer's resolved `refs` map drives ref writes there.
    */
+=======
+  wants: string[];
+  haves: string[];
+  /** Optional ref name to write into refs/remotes/origin/ on success. */
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
   headRef?: string;
   signal?: AbortSignal;
   fetchPack: FetchPackFn;
 };
 
 export type TryFetchPackResult =
+<<<<<<< HEAD
   | { ok: true; bytes: number; resolvedRefs?: Record<string, string> }
+=======
+  | { ok: true; bytes: number }
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
   | {
       ok: false;
       reason: "no-network" | "auth" | "blocked" | "missing-object" | "unknown";
@@ -82,6 +102,7 @@ export type TryFetchPackResult =
  * Fetch a packfile and integrate it into the on-disk gitdir.
  */
 export async function tryFetchPack(input: TryFetchPackInput): Promise<TryFetchPackResult> {
+<<<<<<< HEAD
   const { fs, gitdir, cloneId, remoteUrl, wants, haves, refNames, headRef, fetchPack } = input;
   const filteredWants = wants.filter((w) => SHA_RE.test(w));
   // Ref names are user-supplied strings — defend against empty / null
@@ -91,6 +112,12 @@ export async function tryFetchPack(input: TryFetchPackInput): Promise<TryFetchPa
   const filteredRefNames = (refNames ?? []).filter((n) => typeof n === "string" && n.length > 0);
   if (filteredWants.length === 0 && filteredRefNames.length === 0) {
     return { ok: false, reason: "missing-object", details: "no valid wants or refNames" };
+=======
+  const { fs, gitdir, cloneId, remoteUrl, wants, haves, headRef, fetchPack } = input;
+  const filteredWants = wants.filter((w) => SHA_RE.test(w));
+  if (filteredWants.length === 0) {
+    return { ok: false, reason: "missing-object", details: "no valid wants" };
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
   }
 
   const callbackInput: FetchPackInput = {
@@ -98,12 +125,20 @@ export async function tryFetchPack(input: TryFetchPackInput): Promise<TryFetchPa
     remoteUrl,
     wants: filteredWants,
     haves: haves.filter((h) => SHA_RE.test(h)),
+<<<<<<< HEAD
     ...(filteredRefNames.length > 0 ? { refNames: filteredRefNames } : {}),
   };
 
   let response: FetchPackResult;
   try {
     response = await fetchPack(callbackInput);
+=======
+  };
+
+  let buffer: Uint8Array;
+  try {
+    buffer = await fetchPack(callbackInput);
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
   } catch (err) {
     const message = (err as Error).message ?? String(err);
     // Distinguish auth-style failures from generic network noise so the
@@ -117,6 +152,7 @@ export async function tryFetchPack(input: TryFetchPackInput): Promise<TryFetchPa
     return { ok: false, reason: "no-network", details: message };
   }
 
+<<<<<<< HEAD
   // Normalise the two possible callback shapes (`Uint8Array` for
   // wants-only legacy mode; `{ pack, refs }` when the proxy resolved
   // refs server-side).
@@ -141,6 +177,10 @@ export async function tryFetchPack(input: TryFetchPackInput): Promise<TryFetchPa
       reason: "unknown",
       details: "fetchPack did not return Uint8Array or { pack, refs }",
     };
+=======
+  if (!(buffer instanceof Uint8Array)) {
+    return { ok: false, reason: "unknown", details: "fetchPack did not return Uint8Array" };
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
   }
 
   // Strip pkt-line wrapping if present — the proxy may return either
@@ -182,6 +222,7 @@ export async function tryFetchPack(input: TryFetchPackInput): Promise<TryFetchPa
     return { ok: false, reason: "unknown", details: (err as Error).message ?? String(err) };
   }
 
+<<<<<<< HEAD
   // Update remote-tracking refs so `resolveRefSha` picks new commits
   // up next time. Two sources:
   //
@@ -256,6 +297,27 @@ export function findPackStart(buf: Uint8Array): number {
   // a few bytes in, but the off-by-one would matter for callers that
   // hand us a tightly-cropped pack.
   for (let i = 0; i <= buf.length - 4; i++) {
+=======
+  // Update the remote-tracking ref so resolveRefSha picks the new
+  // commit up next time. We point it at the first want — the head sha
+  // the caller asked for. If headRef is omitted we skip the ref write
+  // (the object is now in the DB and can be resolved by sha lookup).
+  if (headRef) {
+    const refPath = `${gitdir}/refs/remotes/origin/${headRef}`;
+    try {
+      await fs.promises.writeFile(refPath, `${filteredWants[0]}\n`);
+    } catch {
+      // Ref-write failure is non-fatal — diff lookup uses the sha directly.
+    }
+  }
+
+  return { ok: true, bytes: packBuffer.byteLength };
+}
+
+function findPackStart(buf: Uint8Array): number {
+  // ASCII "PACK" = 0x50 0x41 0x43 0x4B
+  for (let i = 0; i < buf.length - 4; i++) {
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
     if (buf[i] === 0x50 && buf[i + 1] === 0x41 && buf[i + 2] === 0x43 && buf[i + 3] === 0x4b) {
       return i;
     }

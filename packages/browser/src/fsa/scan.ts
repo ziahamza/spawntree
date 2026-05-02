@@ -393,6 +393,7 @@ export async function scanFolder(
  *   2. As a weaker fallback: same `originUrl` and the worktree's path
  *      is a sibling/child of the repo's path.
  */
+<<<<<<< HEAD
 
 /**
  * Path-boundary aware suffix match. `hint.endsWith(repoGit)` alone
@@ -409,6 +410,8 @@ export function hintMatchesRepoGit(hint: string, repoGit: string): boolean {
   return startIdx === 0 || hint[startIdx - 1] === "/";
 }
 
+=======
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
 export function stitchWorktrees(
   entries: ScannedEntry[],
 ): Map<string, string /* main repo relativePath */> {
@@ -422,6 +425,7 @@ export function stitchWorktrees(
     if (e.kind !== "worktree") continue;
     let matched: string | null = null;
 
+<<<<<<< HEAD
     // Strategy 1: hint suffix match.
     //
     // We want the hint's path to END at a path-boundary aligned with
@@ -433,11 +437,18 @@ export function stitchWorktrees(
     // `hintMatchesRepoGit` enforces that the position immediately
     // before the matched suffix is either the start of the hint or a
     // path separator.
+=======
+    // Strategy 1: hint suffix match
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
     if (e.mainGitDirHint) {
       const hint = e.mainGitDirHint;
       for (const [rel] of repoByRel) {
         const repoGit = rel ? `${rel}/.git` : ".git";
+<<<<<<< HEAD
         if (hintMatchesRepoGit(hint, repoGit)) {
+=======
+        if (hint.endsWith(repoGit) || hint.endsWith(`/${repoGit}`)) {
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
           matched = rel;
           break;
         }

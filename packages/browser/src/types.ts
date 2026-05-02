@@ -40,6 +40,7 @@ export type FetchPackInput = {
   cloneId: string;
   /** Origin URL of the clone, normalized form unspecified. */
   remoteUrl: string;
+<<<<<<< HEAD
   /**
    * Object SHAs the caller needs (typically the PR head sha). The
    * consumer's proxy resolves these directly via `upload-pack`.
@@ -61,10 +62,15 @@ export type FetchPackInput = {
    * `resolveRefSha` find the new commit on the next call.
    */
   refNames?: string[];
+=======
+  /** Object SHAs the caller needs (typically just the PR head sha). */
+  wants: string[];
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
   /** Object SHAs the caller already has (for thin packs). */
   haves: string[];
 };
 
+<<<<<<< HEAD
 /**
  * Successful pack response.
  *
@@ -84,6 +90,9 @@ export type FetchPackInput = {
 export type FetchPackResult = Uint8Array | { pack: Uint8Array; refs?: Record<string, string> };
 
 export type FetchPackFn = (input: FetchPackInput) => Promise<FetchPackResult>;
+=======
+export type FetchPackFn = (input: FetchPackInput) => Promise<Uint8Array>;
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
 
 // ─── Diff results ────────────────────────────────────────────────────
 
