@@ -106,9 +106,7 @@ infraCmd
 // db subcommands
 // ---------------------------------------------------------------------------
 
-const dbCmd = program
-  .command("db")
-  .description("Database template management (dump / restore)");
+const dbCmd = program.command("db").description("Database template management (dump / restore)");
 
 dbCmd
   .command("dump <name>")
@@ -142,7 +140,9 @@ dbCmd
         dbName: options.db,
         templateName: name,
       });
-      console.log(`Database dumped to template "${template.name}" (${formatBytes(template.size)}).`);
+      console.log(
+        `Database dumped to template "${template.name}" (${formatBytes(template.size)}).`,
+      );
     } catch (err) {
       console.error("Failed to dump database:", err instanceof Error ? err.message : err);
       process.exit(1);

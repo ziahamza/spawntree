@@ -11,7 +11,8 @@ test("repro add config modal", async () => {
   page.on("console", (msg) => logs.push(["console", msg.type(), msg.text()]));
   page.on("pageerror", (error) => logs.push(["pageerror", error.message]));
   page.on("requestfailed", (request) =>
-    logs.push(["requestfailed", request.url(), request.failure()?.errorText]));
+    logs.push(["requestfailed", request.url(), request.failure()?.errorText]),
+  );
 
   await page.goto("http://127.0.0.1:2422/", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1000);

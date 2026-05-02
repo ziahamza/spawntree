@@ -107,9 +107,7 @@ export class LogStreamer {
         sendFn = send;
 
         // Replay buffered history
-        const services = filterService
-          ? [filterService]
-          : this.getServicesForEnv(repoId, envId);
+        const services = filterService ? [filterService] : this.getServicesForEnv(repoId, envId);
 
         for (const svc of services) {
           const key = bufferKey(repoId, envId, svc);
@@ -192,9 +190,7 @@ export class LogStreamer {
     service?: string,
     lines = 200,
   ): Promise<LogLine[]> {
-    const services = service
-      ? [service]
-      : this.getServicesForEnv(repoId, envId);
+    const services = service ? [service] : this.getServicesForEnv(repoId, envId);
 
     const all: LogLine[] = [];
 

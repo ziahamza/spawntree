@@ -132,7 +132,10 @@ export function corsPolicyFromEnv(envFlag: string): CorsPolicy {
   const trustRemote = process.env[envFlag] === "1";
   const extra = process.env["SPAWNTREE_CORS_ORIGINS"];
   const extraOrigins = extra
-    ? extra.split(",").map((s) => s.trim()).filter(Boolean)
+    ? extra
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
     : undefined;
   return { trustRemote, extraOrigins };
 }

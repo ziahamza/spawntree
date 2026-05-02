@@ -32,19 +32,13 @@ export interface SpawntreeConfig {
   services: Record<string, ServiceConfig>;
 }
 
-export function parseConfig(
-  yamlContent: string,
-  envVars: Record<string, string>,
-): SpawntreeConfig {
+export function parseConfig(yamlContent: string, envVars: Record<string, string>): SpawntreeConfig {
   const raw = parseYaml(yamlContent) as Record<string, unknown>;
   const substituted = substituteVarsInObject(raw, envVars);
   return substituted as SpawntreeConfig;
 }
 
-function substituteVarsInObject(
-  obj: unknown,
-  vars: Record<string, string>,
-): unknown {
+function substituteVarsInObject(obj: unknown, vars: Record<string, string>): unknown {
   if (typeof obj === "string") {
     return substituteVars(obj, vars);
   }

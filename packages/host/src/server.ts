@@ -201,9 +201,8 @@ export function openStore(path: string) {
     },
     setDaemonConfig(key: string, configJson: string | null): boolean {
       return (
-        db
-          .prepare(`UPDATE daemons SET storage_config = ? WHERE key = ?`)
-          .run(configJson, key).changes > 0
+        db.prepare(`UPDATE daemons SET storage_config = ? WHERE key = ?`).run(configJson, key)
+          .changes > 0
       );
     },
     touchDaemon(key: string) {
@@ -375,7 +374,8 @@ async function handleAdmin(
         key: row.key,
         label: row.label,
         registeredAt: row.registeredAt,
-        warning: "This is the only time the full key is shown. Store it securely on the daemon machine.",
+        warning:
+          "This is the only time the full key is shown. Store it securely on the daemon machine.",
       });
     } catch {
       json(res, 400, { error: "invalid JSON body", code: "INVALID_JSON" });
@@ -391,9 +391,10 @@ async function handleAdmin(
   // Daemon-side fetch path. Authenticated by `Authorization: Bearer <key>`.
   if (pathname === "/api/daemons/me/config" && req.method === "GET") {
     const auth = req.headers["authorization"];
-    const key = typeof auth === "string" && auth.startsWith("Bearer ")
-      ? auth.slice("Bearer ".length).trim()
-      : null;
+    const key =
+      typeof auth === "string" && auth.startsWith("Bearer ")
+        ? auth.slice("Bearer ".length).trim()
+        : null;
     if (!isValidDaemonKey(key)) {
       json(res, 401, { error: "missing or malformed bearer token", code: "INVALID_KEY" });
       return true;
@@ -476,7 +477,8 @@ async function handleAdmin(
         }
         if (!isPlausibleStorageConfig(body.config)) {
           json(res, 400, {
-            error: "config must be a StorageConfig (`{ primary: {id, config}, replicators: [...] }`)",
+            error:
+              "config must be a StorageConfig (`{ primary: {id, config}, replicators: [...] }`)",
             code: "INVALID_CONFIG",
           });
           return true;
@@ -693,11 +695,7 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function landingPage(
-  store: Store,
-  res: ServerResponse,
-  opts: { host: string; port: number },
-) {
+function landingPage(store: Store, res: ServerResponse, opts: { host: string; port: number }) {
   const hosts = store.list();
   const daemons = store.listDaemons();
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -842,9 +840,7 @@ function main(): void {
   const server = createServer(handler);
 
   server.listen(PORT, HOST, () => {
-    process.stderr.write(
-      `[spawntree-host] listening on http://${HOST}:${PORT} (db: ${DB_PATH})\n`,
-    );
+    process.stderr.write(`[spawntree-host] listening on http://${HOST}:${PORT} (db: ${DB_PATH})\n`);
   });
 
   let shuttingDown = false;

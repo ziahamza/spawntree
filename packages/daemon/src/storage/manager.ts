@@ -58,11 +58,13 @@ export class StorageManager {
     this.configPath = resolve(options.dataDir, "storage.json");
     this.ctx = {
       dataDir: options.dataDir,
-      logger: options.logger ?? ((level, msg, fields) => {
-        process.stderr.write(
-          `[spawntree-daemon] storage.${level} ${msg}${fields ? " " + JSON.stringify(fields) : ""}\n`,
-        );
-      }),
+      logger:
+        options.logger ??
+        ((level, msg, fields) => {
+          process.stderr.write(
+            `[spawntree-daemon] storage.${level} ${msg}${fields ? " " + JSON.stringify(fields) : ""}\n`,
+          );
+        }),
     };
     this.config = loadStorageConfig(this.configPath);
   }

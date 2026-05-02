@@ -2,6 +2,6 @@
   "name": "@spawntree/cloud",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
-  "description": "Cloud-hosted spawntree (Cloudflare Workers) - future"
+  "description": "Cloud-hosted spawntree (Cloudflare Workers) - future",
+  "type": "module"
 }

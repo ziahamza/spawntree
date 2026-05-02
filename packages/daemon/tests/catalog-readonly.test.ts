@@ -7,11 +7,7 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  catalogHttpProxy,
-  createCatalogHttpDb,
-  schema,
-} from "spawntree-core";
+import { catalogHttpProxy, createCatalogHttpDb, schema } from "spawntree-core";
 import { StorageManager } from "../src/storage/manager.ts";
 import { classifyReadOnlySql, createCatalogRoutes } from "../src/routes/catalog.ts";
 import { applyCatalogSchema, upsertRepo } from "../src/catalog/queries.ts";
@@ -133,26 +129,14 @@ describe("classifyReadOnlySql", () => {
   // Regression tests for bypasses flagged in Devin's review of PR #34.
   describe("writable CTE protection (Devin BUG_0002 on #34)", () => {
     it.each([
-      [
-        "WITH d AS (SELECT 1) INSERT INTO repos(id) VALUES('x')",
-        "CTE-then-INSERT",
-      ],
+      ["WITH d AS (SELECT 1) INSERT INTO repos(id) VALUES('x')", "CTE-then-INSERT"],
       [
         "WITH d(x) AS (VALUES('hacked')) INSERT INTO repos(id, slug, name, provider, owner) SELECT x, x, x, x, '' FROM d",
         "CTE-with-VALUES then INSERT",
       ],
-      [
-        "WITH d AS (SELECT 1) UPDATE repos SET name='hacked'",
-        "CTE-then-UPDATE",
-      ],
-      [
-        "WITH d AS (SELECT 1) DELETE FROM repos",
-        "CTE-then-DELETE",
-      ],
-      [
-        "WITH d AS (SELECT 1) REPLACE INTO repos(id) VALUES('x')",
-        "CTE-then-REPLACE",
-      ],
+      ["WITH d AS (SELECT 1) UPDATE repos SET name='hacked'", "CTE-then-UPDATE"],
+      ["WITH d AS (SELECT 1) DELETE FROM repos", "CTE-then-DELETE"],
+      ["WITH d AS (SELECT 1) REPLACE INTO repos(id) VALUES('x')", "CTE-then-REPLACE"],
       [
         "with recursive r(n) as (select 1) insert into repos(id) select cast(n as text) from r",
         "lowercase recursive CTE-then-insert",
@@ -303,10 +287,7 @@ describe("POST /api/v1/catalog/query-readonly", () => {
     });
 
     const app = new Hono();
-    app.route(
-      "/api/v1/catalog",
-      createCatalogRoutes(storage, { trustRemoteOrigin: true }),
-    );
+    app.route("/api/v1/catalog", createCatalogRoutes(storage, { trustRemoteOrigin: true }));
     server = createServer(getRequestListener(app.fetch));
     await new Promise<void>((res, rej) => {
       server.once("error", rej);
@@ -404,19 +385,15 @@ describe("POST /api/v1/catalog/query-readonly", () => {
       }),
     ).rejects.toThrow();
     const check = drizzle(storage.client, { schema });
-    const rows = await check
-      .select()
-      .from(schema.repos)
-      .where(eq(schema.repos.id, "x"));
+    const rows = await check.select().from(schema.repos).where(eq(schema.repos.id, "x"));
     expect(rows).toHaveLength(0);
   });
 
   it("raw catalogHttpProxy({ readOnly: true }) + drizzle-proxy also routes correctly", async () => {
     const { drizzle: drizzleProxy } = await import("drizzle-orm/sqlite-proxy");
-    const db = drizzleProxy(
-      catalogHttpProxy({ url: `http://127.0.0.1:${port}`, readOnly: true }),
-      { schema },
-    );
+    const db = drizzleProxy(catalogHttpProxy({ url: `http://127.0.0.1:${port}`, readOnly: true }), {
+      schema,
+    });
     const rows = await db.select().from(schema.sessions);
     expect(rows).toHaveLength(0);
   });

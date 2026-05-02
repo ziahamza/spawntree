@@ -21,15 +21,17 @@ function pgTemplateDir(): string {
 }
 
 function dockerfileContent(version: string): string {
-  return [
-    `FROM postgres:${version}`,
-    `RUN apt-get update && apt-get install -y --no-install-recommends \\`,
-    `    postgresql-${version}-pgvector \\`,
-    `    postgresql-${version}-cron \\`,
-    `    postgresql-${version}-postgis-3 \\`,
-    `    && rm -rf /var/lib/apt/lists/*`,
-    `# pg_trgm and uuid-ossp are built-in contrib modules, just need CREATE EXTENSION`,
-  ].join("\n") + "\n";
+  return (
+    [
+      `FROM postgres:${version}`,
+      `RUN apt-get update && apt-get install -y --no-install-recommends \\`,
+      `    postgresql-${version}-pgvector \\`,
+      `    postgresql-${version}-cron \\`,
+      `    postgresql-${version}-postgis-3 \\`,
+      `    && rm -rf /var/lib/apt/lists/*`,
+      `# pg_trgm and uuid-ossp are built-in contrib modules, just need CREATE EXTENSION`,
+    ].join("\n") + "\n"
+  );
 }
 
 const IMAGE_TAG_PREFIX = "spawntree-postgres";
@@ -40,10 +42,7 @@ function describeDockerProgressValue(value: unknown): string {
 }
 
 // Execute a command inside a running container and return stdout.
-async function execInContainer(
-  container: Dockerode.Container,
-  cmd: string[],
-): Promise<string> {
+async function execInContainer(container: Dockerode.Container, cmd: string[]): Promise<string> {
   const exec = await container.exec({
     Cmd: cmd,
     AttachStdout: true,
@@ -106,7 +105,9 @@ export class PostgresRunner {
 
   async ensureRunning(): Promise<void> {
     this._status = "starting";
-    console.log(`[spawntree-daemon] [postgres:${this.version}] Ensuring container is running on port ${this.port}...`);
+    console.log(
+      `[spawntree-daemon] [postgres:${this.version}] Ensuring container is running on port ${this.port}...`,
+    );
 
     try {
       // Look for existing container by label
@@ -154,8 +155,8 @@ export class PostgresRunner {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("connect ENOENT") || msg.includes("connect ECONNREFUSED")) {
         throw new Error(
-          `[spawntree-daemon] Docker is not running or not installed. `
-            + `Please start Docker Desktop or install Docker Engine. (${msg})`,
+          `[spawntree-daemon] Docker is not running or not installed. ` +
+            `Please start Docker Desktop or install Docker Engine. (${msg})`,
           { cause: err },
         );
       }
@@ -210,7 +211,9 @@ export class PostgresRunner {
   async createDatabase(dbName: string): Promise<void> {
     const exists = await this.databaseExists(dbName);
     if (exists) {
-      console.log(`[spawntree-daemon] [postgres:${this.version}] Database "${dbName}" already exists`);
+      console.log(
+        `[spawntree-daemon] [postgres:${this.version}] Database "${dbName}" already exists`,
+      );
       return;
     }
     console.log(`[spawntree-daemon] [postgres:${this.version}] Creating database "${dbName}"...`);
@@ -264,18 +267,16 @@ export class PostgresRunner {
    * sourceUrl is a standard postgres connection string.
    */
   async forkFrom(dbName: string, sourceUrl: string): Promise<void> {
-    console.log(`[spawntree-daemon] [postgres:${this.version}] Forking "${dbName}" from ${sourceUrl}...`);
+    console.log(
+      `[spawntree-daemon] [postgres:${this.version}] Forking "${dbName}" from ${sourceUrl}...`,
+    );
     const container = this.requireContainer();
 
     // Dump from source into the container via pg_dump piped to pg_restore
     // We run pg_dump on the host and pipe into pg_restore inside the container
     // using dockerode exec with stdin
     const exec = await container.exec({
-      Cmd: [
-        "bash",
-        "-c",
-        `pg_restore -U postgres -d "${dbName}" --no-owner --no-acl -v`,
-      ],
+      Cmd: ["bash", "-c", `pg_restore -U postgres -d "${dbName}" --no-owner --no-acl -v`],
       AttachStdin: true,
       AttachStdout: true,
       AttachStderr: true,
@@ -284,12 +285,7 @@ export class PostgresRunner {
     // Actually, we use a two-step approach: pg_dump from source host → pipe → pg_restore in container
     // Since pg_dump runs on the host, we spawn it and stream into the exec
     const { spawn } = await import("node:child_process");
-    const dumpProcess = spawn("pg_dump", [
-      "--format=custom",
-      "--no-owner",
-      "--no-acl",
-      sourceUrl,
-    ]);
+    const dumpProcess = spawn("pg_dump", ["--format=custom", "--no-owner", "--no-acl", sourceUrl]);
 
     const stream = await exec.start({ hijack: true, stdin: true });
 
@@ -307,7 +303,9 @@ export class PostgresRunner {
   }
 
   async dumpToTemplate(dbName: string, templateName: string): Promise<void> {
-    console.log(`[spawntree-daemon] [postgres:${this.version}] Dumping "${dbName}" to template "${templateName}"...`);
+    console.log(
+      `[spawntree-daemon] [postgres:${this.version}] Dumping "${dbName}" to template "${templateName}"...`,
+    );
     const templatePath = resolvePath(pgTemplateDir(), `${templateName}.dump`);
     const container = this.requireContainer();
 
@@ -383,7 +381,7 @@ export class PostgresRunner {
     });
   }
 
-  listTemplates(): Array<{ name: string; size: number; createdAt: string; }> {
+  listTemplates(): Array<{ name: string; size: number; createdAt: string }> {
     const dir = pgTemplateDir();
     try {
       return readdirSync(dir)
@@ -467,7 +465,9 @@ export class PostgresRunner {
             if (lastLine?.error) {
               reject(new Error(describeDockerProgressValue(lastLine.error)));
             } else {
-              console.log(`[spawntree-daemon] [postgres:${this.version}] Image ${tag} built successfully`);
+              console.log(
+                `[spawntree-daemon] [postgres:${this.version}] Image ${tag} built successfully`,
+              );
               resolve();
             }
           }
@@ -509,7 +509,9 @@ export class PostgresRunner {
 
     await container.start();
     this.containerId = container.id;
-    console.log(`[spawntree-daemon] [postgres:${this.version}] Container started: ${container.id.slice(0, 12)}`);
+    console.log(
+      `[spawntree-daemon] [postgres:${this.version}] Container started: ${container.id.slice(0, 12)}`,
+    );
 
     await this.waitForReady(60_000);
     this._status = "running";
@@ -523,11 +525,7 @@ export class PostgresRunner {
     while (Date.now() - start < timeoutMs) {
       try {
         const container = this.requireContainer();
-        const out = await execInContainer(container, [
-          "pg_isready",
-          "-U",
-          "postgres",
-        ]);
+        const out = await execInContainer(container, ["pg_isready", "-U", "postgres"]);
         if (out.includes("accepting connections")) {
           console.log(`[spawntree-daemon] [postgres:${this.version}] Ready!`);
           return;
@@ -538,8 +536,6 @@ export class PostgresRunner {
       await new Promise((r) => setTimeout(r, interval));
     }
 
-    throw new Error(
-      `Postgres ${this.version} did not become ready within ${timeoutMs / 1000}s`,
-    );
+    throw new Error(`Postgres ${this.version} did not become ready within ${timeoutMs / 1000}s`);
   }
 }

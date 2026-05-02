@@ -1,11 +1,4 @@
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
@@ -176,17 +169,10 @@ export function loadHostBinding(dataDir: string = SPAWNTREE_HOME): HostBinding |
  * `storage.json` since the file contents are equally sensitive (the bearer
  * token is the daemon's identity to the host).
  */
-export function saveHostBinding(
-  binding: HostBinding,
-  dataDir: string = SPAWNTREE_HOME,
-): void {
+export function saveHostBinding(binding: HostBinding, dataDir: string = SPAWNTREE_HOME): void {
   mkdirSync(dataDir, { recursive: true });
   const path = hostBindingPath(dataDir);
-  writeFileSync(
-    path,
-    JSON.stringify(binding, null, 2) + "\n",
-    { encoding: "utf-8", mode: 0o600 },
-  );
+  writeFileSync(path, JSON.stringify(binding, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
   try {
     chmodSync(path, 0o600);
   } catch {

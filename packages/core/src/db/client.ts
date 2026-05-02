@@ -77,17 +77,17 @@ export interface CreateCatalogClientOptions {
  * schema is shared, so the rows are typed identically.
  */
 export function createCatalogClient(options: CreateCatalogClientOptions): CatalogClient {
-  const client = options.client ?? createClient({
-    url: options.url,
-    authToken: options.authToken,
-    ...options.libsql,
-  });
+  const client =
+    options.client ??
+    createClient({
+      url: options.url,
+      authToken: options.authToken,
+      ...options.libsql,
+    });
   if (options.bootstrap) {
     // Synchronous-looking caller contract for the sync variant; if callers
     // want to await bootstrap they should use `createCatalogClientAsync`.
-    throw new Error(
-      "bootstrap: true requires createCatalogClientAsync — DDL is async",
-    );
+    throw new Error("bootstrap: true requires createCatalogClientAsync — DDL is async");
   }
   const db = drizzle(client, { schema });
   return {
@@ -108,11 +108,13 @@ export function createCatalogClient(options: CreateCatalogClientOptions): Catalo
 export async function createCatalogClientAsync(
   options: CreateCatalogClientOptions,
 ): Promise<CatalogClient> {
-  const client = options.client ?? createClient({
-    url: options.url,
-    authToken: options.authToken,
-    ...options.libsql,
-  });
+  const client =
+    options.client ??
+    createClient({
+      url: options.url,
+      authToken: options.authToken,
+      ...options.libsql,
+    });
   if (options.bootstrap !== false) {
     for (const stmt of BASELINE_DDL) {
       await client.execute(stmt);

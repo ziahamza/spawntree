@@ -34,7 +34,8 @@ function parseLogLine(raw: string): LogLine {
   const m = raw.match(/^\[([^\]]+)\]\s+(\S+):\s+(.*)$/);
   if (m) {
     const [, ts, service, message] = m;
-    const isError = /error|err|fatal|panic/i.test(message) || /error|err|fatal|panic/i.test(service);
+    const isError =
+      /error|err|fatal|panic/i.test(message) || /error|err|fatal|panic/i.test(service);
     return { ts, service, message, isError };
   }
   // Fallback: no structure
@@ -116,9 +117,7 @@ export function LogViewer({ repoID, envID, repoPath, activeService }: LogViewerP
   };
 
   const displayedFilter = activeService !== undefined ? activeService : filter;
-  const visibleLines = displayedFilter
-    ? lines.filter((l) => l.service === displayedFilter)
-    : lines;
+  const visibleLines = displayedFilter ? lines.filter((l) => l.service === displayedFilter) : lines;
 
   return (
     <div className="flex flex-col h-full min-h-0 relative">
@@ -155,14 +154,18 @@ export function LogViewer({ repoID, envID, repoPath, activeService }: LogViewerP
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto font-mono text-xs bg-background p-4 min-h-0"
       >
-        {visibleLines.length === 0 ? <p className="text-muted">Waiting for log output…</p> : (
+        {visibleLines.length === 0 ? (
+          <p className="text-muted">Waiting for log output…</p>
+        ) : (
           visibleLines.map((line, i) => (
             <div
               key={i}
               className={`flex gap-2 leading-5 ${line.isError ? "text-red" : "text-foreground"}`}
             >
               {line.ts && <span className="text-muted flex-shrink-0 select-none">{line.ts}</span>}
-              {line.service && <span className="text-blue flex-shrink-0 select-none">{line.service}</span>}
+              {line.service && (
+                <span className="text-blue flex-shrink-0 select-none">{line.service}</span>
+              )}
               <span className="break-all">{line.message}</span>
             </div>
           ))

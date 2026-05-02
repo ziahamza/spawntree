@@ -450,9 +450,7 @@ export class SessionManager {
       try {
         await this.runDiscoveryPass();
       } catch (err) {
-        process.stderr.write(
-          `[spawntree-daemon] discovery pass failed: ${String(err)}\n`,
-        );
+        process.stderr.write(`[spawntree-daemon] discovery pass failed: ${String(err)}\n`);
       }
       // setTimeout chain (not setInterval) so we never overlap two passes
       // when an adapter is slow.

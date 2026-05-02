@@ -1,4 +1,9 @@
-import { createServer, type IncomingMessage, request as httpRequest, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  request as httpRequest,
+  type ServerResponse,
+} from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { Service, ServiceConfig, ServiceStatus } from "spawntree-core";
 
@@ -131,7 +136,9 @@ export class ExternalRunner implements Service {
       },
       (proxyRes) => {
         // Rewrite CORS headers to allow the local origin
-        const responseHeaders: Record<string, string | string[] | undefined> = { ...proxyRes.headers };
+        const responseHeaders: Record<string, string | string[] | undefined> = {
+          ...proxyRes.headers,
+        };
 
         // Replace upstream origin with local origin in CORS headers
         const localOrigin = `http://127.0.0.1:${this.allocatedPort}`;
@@ -146,7 +153,8 @@ export class ExternalRunner implements Service {
         }
         responseHeaders["access-control-allow-credentials"] = "true";
         responseHeaders["access-control-allow-methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS";
-        responseHeaders["access-control-allow-headers"] = req.headers["access-control-request-headers"] || "*";
+        responseHeaders["access-control-allow-headers"] =
+          req.headers["access-control-request-headers"] || "*";
 
         // Don't cache (local dev)
         delete responseHeaders["x-frame-options"];
@@ -185,7 +193,11 @@ export class ExternalRunner implements Service {
     req.pipe(proxyReq);
   }
 
-  private proxyWebSocket(req: IncomingMessage, socket: import("node:stream").Duplex, _head: Buffer): void {
+  private proxyWebSocket(
+    req: IncomingMessage,
+    socket: import("node:stream").Duplex,
+    _head: Buffer,
+  ): void {
     const targetPath = req.url || "/";
     const wsProtocol = this.isHttps ? "wss:" : "ws:";
     const targetUrl = new URL(targetPath, `${wsProtocol}//${this.upstreamUrl.host}`);

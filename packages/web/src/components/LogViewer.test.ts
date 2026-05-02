@@ -27,7 +27,8 @@ function parseLogLine(raw: string): LogLine {
   const m = raw.match(/^\[([^\]]+)\]\s+(\S+):\s+(.*)$/);
   if (m) {
     const [, ts, service, message] = m;
-    const isError = /error|err|fatal|panic/i.test(message) || /error|err|fatal|panic/i.test(service);
+    const isError =
+      /error|err|fatal|panic/i.test(message) || /error|err|fatal|panic/i.test(service);
     return { ts, service, message, isError };
   }
   const isError = /error|err|fatal|panic/i.test(raw);
@@ -37,7 +38,7 @@ function parseLogLine(raw: string): LogLine {
 describe("parseLogLine", () => {
   it("parses JSON SSE data from server", () => {
     const raw =
-      "{\"ts\":\"2026-04-01T10:42:31Z\",\"service\":\"api\",\"stream\":\"stdout\",\"line\":\"GET /health 200 2ms\"}";
+      '{"ts":"2026-04-01T10:42:31Z","service":"api","stream":"stdout","line":"GET /health 200 2ms"}';
     const line = parseLogLine(raw);
     expect(line.ts).toBe("2026-04-01T10:42:31Z");
     expect(line.service).toBe("api");
@@ -47,14 +48,14 @@ describe("parseLogLine", () => {
 
   it("detects stderr as error", () => {
     const raw =
-      "{\"ts\":\"2026-04-01T10:42:31Z\",\"service\":\"worker\",\"stream\":\"stderr\",\"line\":\"connection refused\"}";
+      '{"ts":"2026-04-01T10:42:31Z","service":"worker","stream":"stderr","line":"connection refused"}';
     const line = parseLogLine(raw);
     expect(line.isError).toBe(true);
   });
 
   it("detects error keywords in message", () => {
     const raw =
-      "{\"ts\":\"\",\"service\":\"web\",\"stream\":\"stdout\",\"line\":\"Error: ECONNREFUSED 127.0.0.1:5432\"}";
+      '{"ts":"","service":"web","stream":"stdout","line":"Error: ECONNREFUSED 127.0.0.1:5432"}';
     const line = parseLogLine(raw);
     expect(line.isError).toBe(true);
     expect(line.message).toBe("Error: ECONNREFUSED 127.0.0.1:5432");

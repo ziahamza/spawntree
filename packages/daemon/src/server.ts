@@ -102,13 +102,30 @@ export function createApp(
     app.route("/api/v1/sessions", createSessionRoutes(options.sessionManager));
   }
 
-  app.get("/api/v1/daemon", (context) => runJson(runtime, context, DaemonService.use((service) => service.daemonInfo)));
+  app.get("/api/v1/daemon", (context) =>
+    runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.daemonInfo),
+    ),
+  );
 
-  app.get("/api/v1/envs", (context) => runJson(runtime, context, DaemonService.use((service) => service.listEnvs())));
+  app.get("/api/v1/envs", (context) =>
+    runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.listEnvs()),
+    ),
+  );
 
   app.post("/api/v1/envs", async (context) => {
     const body = await decodeBody(CreateEnvRequest, context);
-    return runJson(runtime, context, DaemonService.use((service) => service.createEnv(body)), 201);
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.createEnv(body)),
+      201,
+    );
   });
 
   app.get("/api/v1/repos/:repoId/envs", (context) =>
@@ -116,44 +133,67 @@ export function createApp(
       runtime,
       context,
       DaemonService.use((service) => service.listEnvs(context.req.param("repoId"))),
-    ));
+    ),
+  );
 
   app.get("/api/v1/repos/:repoId/envs/:envId", (context) =>
     runJson(
       runtime,
       context,
       DaemonService.use((service) =>
-        service.getEnv(context.req.param("repoId"), context.req.param("envId"), context.req.query("repoPath"))
+        service.getEnv(
+          context.req.param("repoId"),
+          context.req.param("envId"),
+          context.req.query("repoPath"),
+        ),
       ),
-    ));
+    ),
+  );
 
   app.post("/api/v1/repos/:repoId/envs/:envId/down", (context) =>
     runJson(
       runtime,
       context,
       DaemonService.use((service) =>
-        service.downEnv(context.req.param("repoId"), context.req.param("envId"), context.req.query("repoPath"))
+        service.downEnv(
+          context.req.param("repoId"),
+          context.req.param("envId"),
+          context.req.query("repoPath"),
+        ),
       ),
-    ));
+    ),
+  );
 
   app.delete("/api/v1/repos/:repoId/envs/:envId", (context) =>
     runJson(
       runtime,
       context,
       DaemonService.use((service) =>
-        service.deleteEnv(context.req.param("repoId"), context.req.param("envId"), context.req.query("repoPath"))
+        service.deleteEnv(
+          context.req.param("repoId"),
+          context.req.param("envId"),
+          context.req.query("repoPath"),
+        ),
       ),
-    ));
+    ),
+  );
 
   app.get("/api/v1/repos/:repoId/envs/:envId/logs", async (context) => {
     try {
       const stream = await runtime.runPromise(
         DaemonService.use((service) =>
-          service.logs(context.req.param("repoId"), context.req.param("envId"), context.req.query("repoPath"), {
-            service: context.req.query("service"),
-            follow: context.req.query("follow") !== "false",
-            lines: context.req.query("lines") ? Number.parseInt(context.req.query("lines") ?? "50", 10) : 50,
-          })
+          service.logs(
+            context.req.param("repoId"),
+            context.req.param("envId"),
+            context.req.query("repoPath"),
+            {
+              service: context.req.query("service"),
+              follow: context.req.query("follow") !== "false",
+              lines: context.req.query("lines")
+                ? Number.parseInt(context.req.query("lines") ?? "50", 10)
+                : 50,
+            },
+          ),
         ),
       );
       return new Response(stream, {
@@ -172,7 +212,9 @@ export function createApp(
     try {
       const since = context.req.query("since");
       const stream = await runtime.runPromise(
-        DaemonService.use((service) => service.events(since ? Number.parseInt(since, 10) : undefined)),
+        DaemonService.use((service) =>
+          service.events(since ? Number.parseInt(since, 10) : undefined),
+        ),
       );
       return new Response(stream, {
         headers: {
@@ -186,31 +228,57 @@ export function createApp(
     }
   });
 
-  app.get("/api/v1/infra", (context) => runJson(runtime, context, DaemonService.use((service) => service.infraStatus)));
+  app.get("/api/v1/infra", (context) =>
+    runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.infraStatus),
+    ),
+  );
 
   app.post("/api/v1/infra/stop", async (context) => {
     const body = await decodeBody(StopInfraRequest, context);
-    return runJson(runtime, context, DaemonService.use((service) => service.stopInfra(body)));
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.stopInfra(body)),
+    );
   });
 
   app.post("/api/v1/registry/repos", async (context) => {
     const body = await decodeBody(RegisterRepoRequest, context);
-    return runJson(runtime, context, DaemonService.use((service) => service.registerRepo(body)), 201);
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.registerRepo(body)),
+      201,
+    );
   });
 
   app.post("/api/v1/db/dump", async (context) => {
     const body = await decodeBody(DumpDbRequest, context);
-    return runJson(runtime, context, DaemonService.use((service) => service.dumpDb(body)));
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.dumpDb(body)),
+    );
   });
 
   app.post("/api/v1/db/restore", async (context) => {
     const body = await decodeBody(RestoreDbRequest, context);
-    return runJson(runtime, context, DaemonService.use((service) => service.restoreDb(body)));
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.restoreDb(body)),
+    );
   });
 
-  app.get(
-    "/api/v1/web/repos",
-    (context) => runJson(runtime, context, DaemonService.use((service) => service.listWebRepos)),
+  app.get("/api/v1/web/repos", (context) =>
+    runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.listWebRepos),
+    ),
   );
 
   app.get("/api/v1/web/repos/:repoSlug/tree", (context) =>
@@ -218,23 +286,34 @@ export function createApp(
       runtime,
       context,
       DaemonService.use((service) => service.getWebRepoTree(context.req.param("repoSlug"))),
-    ));
+    ),
+  );
 
   app.get("/api/v1/web/repos/:repoSlug", (context) =>
     runJson(
       runtime,
       context,
       DaemonService.use((service) => service.getWebRepo(context.req.param("repoSlug"))),
-    ));
+    ),
+  );
 
   app.post("/api/v1/web/repos/probe", async (context) => {
     const body = await decodeBody(Schema.Struct({ path: Schema.String }), context);
-    return runJson(runtime, context, DaemonService.use((service) => service.probeAddPath(body.path)));
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.probeAddPath(body.path)),
+    );
   });
 
   app.post("/api/v1/web/repos/add", async (context) => {
     const body = await decodeBody(AddFolderRequest, context);
-    return runJson(runtime, context, DaemonService.use((service) => service.addFolder(body)), 201);
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.addFolder(body)),
+      201,
+    );
   });
 
   app.patch("/api/v1/web/repos/:repoSlug/clones/:cloneId", async (context) => {
@@ -243,7 +322,7 @@ export function createApp(
       runtime,
       context,
       DaemonService.use((service) =>
-        service.relinkClone(context.req.param("repoSlug"), context.req.param("cloneId"), body)
+        service.relinkClone(context.req.param("repoSlug"), context.req.param("cloneId"), body),
       ),
     );
   });
@@ -252,8 +331,11 @@ export function createApp(
     runJson(
       runtime,
       context,
-      DaemonService.use((service) => service.deleteClone(context.req.param("repoSlug"), context.req.param("cloneId"))),
-    ));
+      DaemonService.use((service) =>
+        service.deleteClone(context.req.param("repoSlug"), context.req.param("cloneId")),
+      ),
+    ),
+  );
 
   app.post("/api/v1/web/repos/:repoSlug/worktrees/archive", async (context) => {
     const body = await decodeBody(ArchiveWorktreeRequest, context);
@@ -266,27 +348,47 @@ export function createApp(
 
   app.post("/api/v1/web/config/suggest", async (context) => {
     const body = await decodeBody(ConfigSuggestRequest, context);
-    return runJson(runtime, context, DaemonService.use((service) => service.suggestConfig(body)));
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.suggestConfig(body)),
+    );
   });
 
   app.post("/api/v1/web/config/test", async (context) => {
     const body = await decodeBody(ConfigTestRequest, context);
-    return runJson(runtime, context, DaemonService.use((service) => service.testConfig(body)));
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.testConfig(body)),
+    );
   });
 
   app.post("/api/v1/web/config/preview/start", async (context) => {
     const body = await decodeBody(ConfigPreviewRequest, context);
-    return runJson(runtime, context, DaemonService.use((service) => service.startConfigPreview(body)));
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.startConfigPreview(body)),
+    );
   });
 
   app.post("/api/v1/web/config/preview/stop", async (context) => {
     const body = await decodeBody(ConfigPreviewStopRequest, context);
-    return runJson(runtime, context, DaemonService.use((service) => service.stopConfigPreview(body)));
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.stopConfigPreview(body)),
+    );
   });
 
   app.post("/api/v1/web/config/save", async (context) => {
     const body = await decodeBody(ConfigSaveRequest, context);
-    return runJson(runtime, context, DaemonService.use((service) => service.saveConfig(body)));
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.saveConfig(body)),
+    );
   });
 
   app.get("*", (context) => serveWebAsset(context.req.path));
@@ -309,7 +411,9 @@ async function decodeBody<A extends Schema.Top>(schema: A, context: Context) {
   }
 
   try {
-    return await (Schema.decodeUnknownPromise(schema as never)(body) as Promise<Schema.Schema.Type<A>>);
+    return await (Schema.decodeUnknownPromise(schema as never)(body) as Promise<
+      Schema.Schema.Type<A>
+    >);
   } catch (error) {
     throw new BadRequestError({ code: "INVALID_BODY", message: toErrorMessage(error) });
   }
@@ -364,8 +468,13 @@ function normalizeError(error: unknown) {
 function isTagged<T extends string>(
   error: unknown,
   tag: T,
-): error is { _tag: T; code: string; message: string; details?: unknown; } {
-  return typeof error === "object" && error !== null && "_tag" in error && (error as { _tag?: string; })._tag === tag;
+): error is { _tag: T; code: string; message: string; details?: unknown } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    (error as { _tag?: string })._tag === tag
+  );
 }
 
 function toErrorMessage(error: unknown) {

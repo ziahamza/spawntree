@@ -44,9 +44,7 @@ describe("probeDaemonReachable", () => {
     const stub: typeof fetch = (_input, init) =>
       new Promise<Response>((_, reject) => {
         const signal = init?.signal as AbortSignal | undefined;
-        signal?.addEventListener("abort", () =>
-          reject(new DOMException("aborted", "AbortError")),
-        );
+        signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
       });
     const start = Date.now();
     const ok = await probeDaemonReachable({

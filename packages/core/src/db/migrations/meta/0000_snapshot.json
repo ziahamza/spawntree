@@ -54,16 +54,12 @@
       "indexes": {
         "clones_path_unique": {
           "name": "clones_path_unique",
-          "columns": [
-            "path"
-          ],
+          "columns": ["path"],
           "isUnique": true
         },
         "clones_repo_id_idx": {
           "name": "clones_repo_id_idx",
-          "columns": [
-            "repo_id"
-          ],
+          "columns": ["repo_id"],
           "isUnique": false
         }
       },
@@ -72,12 +68,8 @@
           "name": "clones_repo_id_repos_id_fk",
           "tableFrom": "clones",
           "tableTo": "repos",
-          "columnsFrom": [
-            "repo_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["repo_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -205,9 +197,7 @@
       "indexes": {
         "repos_slug_unique": {
           "name": "repos_slug_unique",
-          "columns": [
-            "slug"
-          ],
+          "columns": ["slug"],
           "isUnique": true
         }
       },
@@ -293,16 +283,12 @@
       "indexes": {
         "session_tool_calls_session_id_idx": {
           "name": "session_tool_calls_session_id_idx",
-          "columns": [
-            "session_id"
-          ],
+          "columns": ["session_id"],
           "isUnique": false
         },
         "session_tool_calls_turn_id_idx": {
           "name": "session_tool_calls_turn_id_idx",
-          "columns": [
-            "turn_id"
-          ],
+          "columns": ["turn_id"],
           "isUnique": false
         }
       },
@@ -311,12 +297,8 @@
           "name": "session_tool_calls_session_id_sessions_session_id_fk",
           "tableFrom": "session_tool_calls",
           "tableTo": "sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "session_id"
-          ],
+          "columnsFrom": ["session_id"],
+          "columnsTo": ["session_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -409,17 +391,12 @@
       "indexes": {
         "session_turns_session_id_idx": {
           "name": "session_turns_session_id_idx",
-          "columns": [
-            "session_id"
-          ],
+          "columns": ["session_id"],
           "isUnique": false
         },
         "session_turns_session_turn_idx": {
           "name": "session_turns_session_turn_idx",
-          "columns": [
-            "session_id",
-            "turn_index"
-          ],
+          "columns": ["session_id", "turn_index"],
           "isUnique": false
         }
       },
@@ -428,12 +405,8 @@
           "name": "session_turns_session_id_sessions_session_id_fk",
           "tableFrom": "session_turns",
           "tableTo": "sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "session_id"
-          ],
+          "columnsFrom": ["session_id"],
+          "columnsTo": ["session_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -527,16 +500,12 @@
       "indexes": {
         "sessions_provider_idx": {
           "name": "sessions_provider_idx",
-          "columns": [
-            "provider"
-          ],
+          "columns": ["provider"],
           "isUnique": false
         },
         "sessions_updated_at_idx": {
           "name": "sessions_updated_at_idx",
-          "columns": [
-            "updated_at"
-          ],
+          "columns": ["updated_at"],
           "isUnique": false
         }
       },
@@ -637,9 +606,7 @@
       "indexes": {
         "worktrees_clone_id_idx": {
           "name": "worktrees_clone_id_idx",
-          "columns": [
-            "clone_id"
-          ],
+          "columns": ["clone_id"],
           "isUnique": false
         }
       },
@@ -648,12 +615,8 @@
           "name": "worktrees_clone_id_clones_id_fk",
           "tableFrom": "worktrees",
           "tableTo": "clones",
-          "columnsFrom": [
-            "clone_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["clone_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }

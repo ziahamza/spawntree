@@ -33,7 +33,7 @@ export function registerUpCommand(program: Command): void {
 
       if (!existsSync(configFile)) {
         console.error(`Config file not found: ${configFile}`);
-        console.error("Run \"spawntree init\" to create one.");
+        console.error('Run "spawntree init" to create one.');
         process.exit(1);
       }
 
@@ -84,7 +84,9 @@ export function registerUpCommand(program: Command): void {
           configFile,
         });
 
-        console.log(`Environment "${env.envId}" created. Port range: ${env.basePort}-${env.basePort + 99}`);
+        console.log(
+          `Environment "${env.envId}" created. Port range: ${env.basePort}-${env.basePort + 99}`,
+        );
         console.log("Streaming logs (Ctrl+C to stop)...\n");
       } catch (err) {
         console.error("Failed to create environment:", err instanceof Error ? err.message : err);
@@ -111,7 +113,10 @@ export function registerUpCommand(program: Command): void {
 
       // Stream logs until interrupted
       try {
-        for await (const logLine of client.streamLogs(repoId, envId, undefined, { follow: true, lines: 0 })) {
+        for await (const logLine of client.streamLogs(repoId, envId, undefined, {
+          follow: true,
+          lines: 0,
+        })) {
           printLogLine(logLine);
         }
       } catch (err) {

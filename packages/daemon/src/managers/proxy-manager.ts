@@ -27,7 +27,9 @@ export class ProxyManager {
       return true;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") {
-        console.log(`[spawntree-proxy] Port ${this.proxy.port} in use (portless or another instance running)`);
+        console.log(
+          `[spawntree-proxy] Port ${this.proxy.port} in use (portless or another instance running)`,
+        );
         this.started = false;
         return false;
       } else {

@@ -39,7 +39,11 @@ export interface StorageContext {
   /** Absolute path to the spawntree data directory (e.g. ~/.spawntree). */
   readonly dataDir: string;
   /** Structured log emitter. Providers should use this, not console.*. */
-  readonly logger: (level: "info" | "warn" | "error", message: string, fields?: Record<string, unknown>) => void;
+  readonly logger: (
+    level: "info" | "warn" | "error",
+    message: string,
+    fields?: Record<string, unknown>,
+  ) => void;
 }
 
 // ─── Primary storage ──────────────────────────────────────────────────────
@@ -100,7 +104,11 @@ export interface ReplicatorProvider<Config = unknown> {
    * and can read `handle.dbPath` (for snapshot-style replicators) or
    * `handle.client` (for query-driven replication) as appropriate.
    */
-  start(config: Config, primary: PrimaryStorageHandle, ctx: StorageContext): Promise<ReplicatorHandle>;
+  start(
+    config: Config,
+    primary: PrimaryStorageHandle,
+    ctx: StorageContext,
+  ): Promise<ReplicatorHandle>;
 }
 
 // ─── Persisted config shape ───────────────────────────────────────────────

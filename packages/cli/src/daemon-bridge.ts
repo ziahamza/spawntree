@@ -62,9 +62,7 @@ export async function ensureDaemon(): Promise<void> {
 
     child.unref();
 
-    waitForDaemon(10_000)
-      .then(resolve)
-      .catch(reject);
+    waitForDaemon(10_000).then(resolve).catch(reject);
   });
 
   if (!started) {
@@ -98,9 +96,7 @@ export function getCurrentRepoId(): string {
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
   } catch {
-    throw new Error(
-      "Not a git repository. spawntree requires a git repository.",
-    );
+    throw new Error("Not a git repository. spawntree requires a git repository.");
   }
   return deriveRepoId(repoRoot);
 }
@@ -116,9 +112,7 @@ export function getRepoPath(): string {
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
   } catch {
-    throw new Error(
-      "Not a git repository. spawntree requires a git repository.",
-    );
+    throw new Error("Not a git repository. spawntree requires a git repository.");
   }
 }
 
@@ -155,7 +149,7 @@ async function waitForDaemon(timeoutMs: number): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const metadata = readRuntimeMetadata();
-    if (metadata?.httpPort && await isDaemonRunning()) {
+    if (metadata?.httpPort && (await isDaemonRunning())) {
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 150));

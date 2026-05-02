@@ -39,9 +39,7 @@ export async function upsertRepo(db: CatalogDb, repo: Repo): Promise<void> {
   const registeredAt = repo.registeredAt || nowIso();
   const updatedAt = nowIso();
   await db.transaction(async (tx) => {
-    await tx
-      .delete(repos)
-      .where(and(eq(repos.slug, repo.slug), ne(repos.id, repo.id)));
+    await tx.delete(repos).where(and(eq(repos.slug, repo.slug), ne(repos.id, repo.id)));
     await tx
       .insert(repos)
       .values({
@@ -80,9 +78,7 @@ export async function upsertClone(db: CatalogDb, clone: Clone): Promise<void> {
   const registeredAt = clone.registeredAt || nowIso();
   const lastSeenAt = nowIso();
   await db.transaction(async (tx) => {
-    await tx
-      .delete(clones)
-      .where(and(eq(clones.path, clone.path), ne(clones.id, clone.id)));
+    await tx.delete(clones).where(and(eq(clones.path, clone.path), ne(clones.id, clone.id)));
     await tx
       .insert(clones)
       .values({
@@ -136,10 +132,7 @@ export async function replaceWorktrees(
  * daemon can consistently go through the catalog module rather than
  * reaching into Drizzle schema internals.
  */
-export async function upsertWatchedPath(
-  db: CatalogDb,
-  watchedPath: WatchedPath,
-): Promise<void> {
+export async function upsertWatchedPath(db: CatalogDb, watchedPath: WatchedPath): Promise<void> {
   await db
     .insert(watchedPaths)
     .values({
@@ -160,10 +153,7 @@ export async function upsertWatchedPath(
 }
 
 /** Same pattern for registered repos. */
-export async function registerRepo(
-  db: CatalogDb,
-  registered: RegisteredRepo,
-): Promise<void> {
+export async function registerRepo(db: CatalogDb, registered: RegisteredRepo): Promise<void> {
   await db
     .insert(registeredRepos)
     .values({

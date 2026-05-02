@@ -70,7 +70,9 @@ function printEnvStatus(env: EnvInfo): void {
   // Header
   const header = `    ${"NAME".padEnd(nameWidth)}  ${"TYPE".padEnd(typeWidth)}  ${"STATUS".padEnd(statusWidth)}  PORT`;
   console.log(header);
-  console.log(`    ${"-".repeat(nameWidth)}  ${"-".repeat(typeWidth)}  ${"-".repeat(statusWidth)}  ----`);
+  console.log(
+    `    ${"-".repeat(nameWidth)}  ${"-".repeat(typeWidth)}  ${"-".repeat(statusWidth)}  ----`,
+  );
 
   for (const svc of env.services) {
     const statusColored = colorStatus(svc.status);

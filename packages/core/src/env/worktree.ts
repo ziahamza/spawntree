@@ -74,14 +74,11 @@ export class WorktreeManager {
     }
 
     try {
-      execSync(
-        `git worktree add "${worktreePath}" HEAD --detach`,
-        {
-          cwd: this.repoRoot,
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"],
-        },
-      );
+      execSync(`git worktree add "${worktreePath}" HEAD --detach`, {
+        cwd: this.repoRoot,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(`Failed to create worktree for "${envName}": ${msg}`, { cause: err });

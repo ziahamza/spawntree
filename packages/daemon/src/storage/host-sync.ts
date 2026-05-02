@@ -70,8 +70,9 @@ export class HostConfigSync {
     this.fetchImpl = options.fetch ?? fetch;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_MS;
     this.backoffSequenceMs = options.backoffSequenceMs ?? DEFAULT_BACKOFF_MS;
-    this.logger = options.logger
-      ?? ((level, msg, fields) => {
+    this.logger =
+      options.logger ??
+      ((level, msg, fields) => {
         process.stderr.write(
           `[spawntree-daemon] host-sync.${level} ${msg}${fields ? " " + JSON.stringify(fields) : ""}\n`,
         );
@@ -217,9 +218,10 @@ export class HostConfigSync {
   }
 
   private recordError(message: string): void {
-    const delay = this.backoffSequenceMs[
-      Math.min(this.consecutiveErrors, this.backoffSequenceMs.length - 1)
-    ] ?? this.backoffSequenceMs[this.backoffSequenceMs.length - 1] ?? 60_000;
+    const delay =
+      this.backoffSequenceMs[Math.min(this.consecutiveErrors, this.backoffSequenceMs.length - 1)] ??
+      this.backoffSequenceMs[this.backoffSequenceMs.length - 1] ??
+      60_000;
     const at = nowIso();
     this.status = {
       state: "error",

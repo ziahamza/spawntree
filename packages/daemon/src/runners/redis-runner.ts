@@ -22,10 +22,7 @@ function describeDockerProgressValue(value: unknown): string {
 }
 
 // Execute a command inside a running container and return stdout.
-async function execInContainer(
-  container: Dockerode.Container,
-  cmd: string[],
-): Promise<string> {
+async function execInContainer(container: Dockerode.Container, cmd: string[]): Promise<string> {
   const exec = await container.exec({
     Cmd: cmd,
     AttachStdout: true,
@@ -88,10 +85,7 @@ export class RedisRunner {
       const containers = await this.docker.listContainers({
         all: true,
         filters: JSON.stringify({
-          label: [
-            "spawntree.managed=true",
-            "spawntree.type=redis",
-          ],
+          label: ["spawntree.managed=true", "spawntree.type=redis"],
         }),
       });
 
@@ -101,14 +95,18 @@ export class RedisRunner {
         const container = this.docker.getContainer(containerId);
 
         if (info.State === "running") {
-          console.log(`[spawntree-daemon] [redis] Reusing running container ${containerId.slice(0, 12)}`);
+          console.log(
+            `[spawntree-daemon] [redis] Reusing running container ${containerId.slice(0, 12)}`,
+          );
           this.containerId = containerId;
           this._status = "running";
           return;
         }
 
         // Stopped — start it
-        console.log(`[spawntree-daemon] [redis] Starting stopped container ${containerId.slice(0, 12)}...`);
+        console.log(
+          `[spawntree-daemon] [redis] Starting stopped container ${containerId.slice(0, 12)}...`,
+        );
         await container.start();
         this.containerId = containerId;
         await this.waitForReady(30_000);
@@ -124,8 +122,8 @@ export class RedisRunner {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("connect ENOENT") || msg.includes("connect ECONNREFUSED")) {
         throw new Error(
-          `[spawntree-daemon] Docker is not running or not installed. `
-            + `Please start Docker Desktop or install Docker Engine. (${msg})`,
+          `[spawntree-daemon] Docker is not running or not installed. ` +
+            `Please start Docker Desktop or install Docker Engine. (${msg})`,
           { cause: err },
         );
       }
@@ -195,12 +193,7 @@ export class RedisRunner {
     }
     console.log(`[spawntree-daemon] [redis] Flushing db index ${dbIndex}...`);
     const container = this.docker.getContainer(this.containerId);
-    await execInContainer(container, [
-      "redis-cli",
-      "-n",
-      String(dbIndex),
-      "FLUSHDB",
-    ]);
+    await execInContainer(container, ["redis-cli", "-n", String(dbIndex), "FLUSHDB"]);
   }
 
   // --------------------------------------------------------------------------
@@ -232,10 +225,10 @@ export class RedisRunner {
         (event: Record<string, unknown>) => {
           if (event.status) {
             const status = describeDockerProgressValue(event.status);
-            const progress = event.progress ? ` ${describeDockerProgressValue(event.progress)}` : "";
-            console.log(
-              `[spawntree-daemon] [redis] pull: ${status}${progress}`,
-            );
+            const progress = event.progress
+              ? ` ${describeDockerProgressValue(event.progress)}`
+              : "";
+            console.log(`[spawntree-daemon] [redis] pull: ${status}${progress}`);
           }
         },
       );

@@ -160,9 +160,7 @@ function resolveHostBinding(argv: ReadonlyArray<string>): HostBinding | null {
   if (cliHost && cliKey) {
     const url = cliHost.replace(/\/+$/, "");
     if (!isHttpUrl(url)) {
-      process.stderr.write(
-        `[spawntree-daemon] --host must be an http(s) URL; got ${cliHost}\n`,
-      );
+      process.stderr.write(`[spawntree-daemon] --host must be an http(s) URL; got ${cliHost}\n`);
       process.exit(2);
     }
     if (!isHostKey(cliKey)) {
@@ -173,9 +171,7 @@ function resolveHostBinding(argv: ReadonlyArray<string>): HostBinding | null {
     }
     const binding: HostBinding = { url, key: cliKey };
     saveHostBinding(binding);
-    process.stderr.write(
-      `[spawntree-daemon] host: persisted binding to ${hostBindingPath()}\n`,
-    );
+    process.stderr.write(`[spawntree-daemon] host: persisted binding to ${hostBindingPath()}\n`);
     return binding;
   }
 

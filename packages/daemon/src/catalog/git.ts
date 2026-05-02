@@ -206,7 +206,7 @@ export function tryGhMetadata(owner: string, repo: string) {
   try {
     const output = execFileSync(
       "gh",
-      ["api", `repos/${owner}/${repo}`, "--jq", ".default_branch + \"\n\" + (.description // \"\")"],
+      ["api", `repos/${owner}/${repo}`, "--jq", '.default_branch + "\n" + (.description // "")'],
       {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -296,12 +296,19 @@ export function discoverWorktrees(clonePath: string, cloneId: Clone["id"]): Arra
   }));
 }
 
-export function inspectGitPath(path: string, defaultBranch: string, hasPathEnvs: boolean): GitPathInfo {
+export function inspectGitPath(
+  path: string,
+  defaultBranch: string,
+  hasPathEnvs: boolean,
+): GitPathInfo {
   validateGitRepo(path);
 
   const branch = currentBranch(path);
   const headRef = gitOutput(path, ["rev-parse", "HEAD"]);
-  const { branchName: baseRefName, resolvedRef: baseRefResolved } = resolveBaseRef(path, defaultBranch);
+  const { branchName: baseRefName, resolvedRef: baseRefResolved } = resolveBaseRef(
+    path,
+    defaultBranch,
+  );
 
   let mergeBase = "";
   let insertions = 0;
@@ -327,7 +334,11 @@ export function inspectGitPath(path: string, defaultBranch: string, hasPathEnvs:
     }
   }
 
-  const statusOutput = gitOutputAllowEmpty(path, ["status", "--porcelain", "--untracked-files=all"]);
+  const statusOutput = gitOutputAllowEmpty(path, [
+    "status",
+    "--porcelain",
+    "--untracked-files=all",
+  ]);
   const hasUncommittedChanges = statusOutput.trim().length > 0;
   const activityAt = estimateGitActivityAt(path, headRef, statusOutput);
 
@@ -341,7 +352,8 @@ export function inspectGitPath(path: string, defaultBranch: string, hasPathEnvs:
     isMergedIntoBase,
     isBaseOutOfDate,
     isBaseBranch,
-    canArchive: !isPrimaryWorktreePath(path) && !hasPathEnvs && isMergedIntoBase && !hasUncommittedChanges,
+    canArchive:
+      !isPrimaryWorktreePath(path) && !hasPathEnvs && isMergedIntoBase && !hasUncommittedChanges,
     baseRefName: displayBaseRefName(baseRefResolved, baseRefName) || undefined,
   };
 }
@@ -352,8 +364,9 @@ export function removeGitWorktree(path: string) {
   }
 
   const worktrees = listGitWorktrees(path);
-  let execDir = worktrees.find((worktree) => isPrimaryWorktreePath(worktree.path))?.path
-    ?? worktrees.find((worktree) => resolve(worktree.path) !== resolve(path))?.path;
+  let execDir =
+    worktrees.find((worktree) => isPrimaryWorktreePath(worktree.path))?.path ??
+    worktrees.find((worktree) => resolve(worktree.path) !== resolve(path))?.path;
 
   if (!execDir) {
     execDir = validateGitRepo(path);
@@ -367,7 +380,7 @@ export function removeGitWorktree(path: string) {
 }
 
 function resolveBaseRef(path: string, defaultBranch: string) {
-  const candidates: Array<{ branchName: string; ref: string; }> = [];
+  const candidates: Array<{ branchName: string; ref: string }> = [];
   const addCandidates = (branchName: string) => {
     if (!branchName) {
       return;
@@ -555,7 +568,7 @@ function gitOutputAllowEmpty(dir: string, args: Array<string>) {
   try {
     return gitOutput(dir, args);
   } catch (error) {
-    const message = (error as Error & { stderr?: Buffer | string; }).stderr;
+    const message = (error as Error & { stderr?: Buffer | string }).stderr;
     if (typeof message === "string" && message.trim().length > 0) {
       return message.trim();
     }

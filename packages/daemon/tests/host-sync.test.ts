@@ -26,9 +26,10 @@ interface FetchCall {
   method: string;
 }
 
-function makeStubFetch(
-  responses: Array<Response | (() => Promise<Response> | Response) | Error>,
-): { fetch: typeof fetch; calls: Array<FetchCall> } {
+function makeStubFetch(responses: Array<Response | (() => Promise<Response> | Response) | Error>): {
+  fetch: typeof fetch;
+  calls: Array<FetchCall>;
+} {
   const calls: Array<FetchCall> = [];
   let i = 0;
   const stub: typeof fetch = async (input, init) => {
@@ -149,9 +150,7 @@ describe("HostConfigSync", () => {
   });
 
   it("on 404: state=awaiting_config, daemon's local config untouched", async () => {
-    const { fetch } = makeStubFetch([
-      jsonResponse({ daemon: { label: "fresh" } }, 404),
-    ]);
+    const { fetch } = makeStubFetch([jsonResponse({ daemon: { label: "fresh" } }, 404)]);
     const sync = new HostConfigSync({
       binding: { url: "http://controller:7777", key: TEST_KEY },
       manager,

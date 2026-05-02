@@ -87,9 +87,9 @@ export class ProxyServer {
     if (!targetPort) {
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end(
-        `No route for host: ${host}\nActive routes:\n${
-          [...this.routes.entries()].map(([h, p]) => `  ${h} → ${p}`).join("\n")
-        }`,
+        `No route for host: ${host}\nActive routes:\n${[...this.routes.entries()]
+          .map(([h, p]) => `  ${h} → ${p}`)
+          .join("\n")}`,
       );
       return;
     }

@@ -123,10 +123,7 @@ describe("createCatalogClient / schema", () => {
       },
     ]);
 
-    const githubOnly = await catalog.db
-      .select()
-      .from(repos)
-      .where(eq(repos.provider, "github"));
+    const githubOnly = await catalog.db.select().from(repos).where(eq(repos.provider, "github"));
     expect(githubOnly).toHaveLength(1);
     expect(githubOnly[0]?.id).toBe("a");
   });
@@ -276,7 +273,7 @@ describe("createCatalogClient / schema", () => {
       createCatalogClient({
         url: `file:${resolve(tmp, "bootstrap-sync.db")}`,
         bootstrap: true,
-      })
+      }),
     ).toThrow(/createCatalogClientAsync/);
   });
 
