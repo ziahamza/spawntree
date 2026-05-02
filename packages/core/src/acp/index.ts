@@ -1,8 +1,9 @@
 export type {
   ACPAdapter,
-  // ContentBlock, SessionStatus, SessionToolCallData, SessionTurnData are
-  // exported from api/schemas.ts with runtime-validatable Schema definitions.
-  // Export only the types that don't have Schema counterparts here.
+  // ContentBlock, SessionStatus, SessionToolCallData, SessionTurnData,
+  // ToolCallApprovalOption are exported from api/schemas.ts with
+  // runtime-validatable Schema definitions. Export only the types that
+  // don't have Schema counterparts here.
   DiscoveredSession,
   SessionEvent,
   // SessionDetail is the plain interface from the adapter; the Schema version
@@ -10,6 +11,13 @@ export type {
   // to avoid ambiguity when both are needed.
   SessionDetail as ACPSessionDetail,
 } from "./adapter.ts";
+// Re-exported from the ACP package so consumers (e.g. the daemon) can wire
+// up a custom permissionHandler without adding a direct dependency on
+// `@zed-industries/agent-client-protocol`.
+export type {
+  RequestPermissionRequest as ACPRequestPermissionRequest,
+  RequestPermissionResponse as ACPRequestPermissionResponse,
+} from "@zed-industries/agent-client-protocol";
 export {
   ProviderCapabilityError,
   SessionBusyError,

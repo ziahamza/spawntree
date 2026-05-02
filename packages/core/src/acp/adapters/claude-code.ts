@@ -35,6 +35,14 @@ export interface ClaudeCodeAdapterOptions {
   clientVersion?: string;
   /** Forwarded to the default ACP Client. */
   permissionPolicy?: "allow_once" | "allow_always" | "reject_once" | "reject_always";
+  /**
+   * Forwarded to the default ACP Client. When set, takes precedence over
+   * `permissionPolicy` and lets the caller (typically the daemon's
+   * SessionManager) suspend on real user input before resolving.
+   */
+  permissionHandler?: (
+    params: acp.RequestPermissionRequest,
+  ) => Promise<acp.RequestPermissionResponse>;
 }
 
 interface TrackedSession {
@@ -111,7 +119,10 @@ export class ClaudeCodeAdapter implements ACPAdapter {
       args,
       env: this.options.env,
       label: "claude-code",
-      defaultClient: { permissionPolicy: this.options.permissionPolicy ?? "allow_once" },
+      defaultClient: {
+        permissionPolicy: this.options.permissionPolicy ?? "allow_once",
+        permissionHandler: this.options.permissionHandler,
+      },
     });
 
     try {

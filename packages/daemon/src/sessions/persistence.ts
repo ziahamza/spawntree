@@ -8,11 +8,7 @@ import type {
   SessionToolCallData,
   SessionTurnData,
 } from "spawntree-core";
-import {
-  sessions,
-  sessionToolCalls,
-  sessionTurns,
-} from "spawntree-core";
+import { sessions, sessionToolCalls, sessionTurns } from "spawntree-core";
 
 /**
  * Mirror ACP session state into the catalog DB. The ACP adapter subprocesses
@@ -201,10 +197,7 @@ export async function upsertToolCall(
  * content/stopReason hydration to the adapter's next `getSessionDetail`
  * call if needed.
  */
-export async function persistSessionEvent(
-  db: CatalogDb,
-  event: SessionEvent,
-): Promise<void> {
+export async function persistSessionEvent(db: CatalogDb, event: SessionEvent): Promise<void> {
   switch (event.type) {
     case "turn_started": {
       await upsertTurn(db, {
@@ -234,7 +227,8 @@ export async function persistSessionEvent(
       return;
     }
     case "tool_call_started":
-    case "tool_call_completed": {
+    case "tool_call_completed":
+    case "tool_call_awaiting_approval": {
       await upsertToolCall(db, event.sessionId, event.toolCall);
       return;
     }
@@ -264,10 +258,7 @@ async function nextTurnIndex(db: CatalogDb, sessionId: string): Promise<number> 
  * it drops straight into the existing HTTP response envelope.
  */
 export async function listPersistedSessions(db: CatalogDb): Promise<Array<SessionInfo>> {
-  const rows = await db
-    .select()
-    .from(sessions)
-    .orderBy(desc(sessions.updatedAt));
+  const rows = await db.select().from(sessions).orderBy(desc(sessions.updatedAt));
   return rows.map(rowToSessionInfo);
 }
 
@@ -275,18 +266,11 @@ export async function getPersistedSession(
   db: CatalogDb,
   sessionId: string,
 ): Promise<SessionInfo | undefined> {
-  const [row] = await db
-    .select()
-    .from(sessions)
-    .where(eq(sessions.sessionId, sessionId))
-    .limit(1);
+  const [row] = await db.select().from(sessions).where(eq(sessions.sessionId, sessionId)).limit(1);
   return row ? rowToSessionInfo(row) : undefined;
 }
 
-export async function deletePersistedSession(
-  db: CatalogDb,
-  sessionId: string,
-): Promise<void> {
+export async function deletePersistedSession(db: CatalogDb, sessionId: string): Promise<void> {
   // FK cascades drop turns + tool calls.
   await db.delete(sessions).where(eq(sessions.sessionId, sessionId));
 }
@@ -304,10 +288,7 @@ export async function deletePersistedSession(
  * before `turn_started` landed in the queue), the UPDATE affects 0 rows
  * and that's fine.
  */
-export async function hydrateTurnContent(
-  db: CatalogDb,
-  turn: SessionTurnData,
-): Promise<void> {
+export async function hydrateTurnContent(db: CatalogDb, turn: SessionTurnData): Promise<void> {
   await db
     .update(sessionTurns)
     .set({
@@ -323,6 +304,22 @@ export async function hydrateTurnContent(
       errorMessage: turn.errorMessage ?? null,
     })
     .where(eq(sessionTurns.id, turn.id));
+}
+
+/**
+ * Mark every tool call left in `awaiting_approval` as `error` with a
+ * "daemon restarted" hint. The agent that requested permission died
+ * with the previous daemon process, so its Promise will never resolve;
+ * showing the tool call as forever-pending in the UI would be a lie.
+ */
+export async function abortPendingApprovalsOnRestart(db: CatalogDb): Promise<void> {
+  await db
+    .update(sessionToolCalls)
+    .set({
+      status: "error",
+      result: { error: "daemon restarted while awaiting approval" },
+    })
+    .where(eq(sessionToolCalls.status, "awaiting_approval"));
 }
 
 function rowToSessionInfo(row: typeof sessions.$inferSelect): SessionInfo {

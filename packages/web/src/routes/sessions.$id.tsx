@@ -49,11 +49,16 @@ type MutableToolCall = {
   turnId: string | null;
   toolName: string;
   toolKind: "terminal" | "file_edit" | "mcp" | "other";
-  status: "pending" | "in_progress" | "completed" | "error";
+  status: "pending" | "in_progress" | "awaiting_approval" | "completed" | "error";
   arguments: unknown;
   result: unknown;
   durationMs: number | null;
   createdAt: string;
+  approvalOptions?: readonly {
+    optionId: string;
+    name: string;
+    kind: "allow_once" | "allow_always" | "reject_once" | "reject_always";
+  }[];
 };
 
 export const Route = createFileRoute("/sessions/$id")({

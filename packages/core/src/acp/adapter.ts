@@ -180,16 +180,28 @@ export interface SessionTurnData {
   createdAt: string;
 }
 
+export interface ToolCallApprovalOption {
+  optionId: string;
+  name: string;
+  kind: "allow_once" | "allow_always" | "reject_once" | "reject_always";
+}
+
 export interface SessionToolCallData {
   id: string;
   turnId: string | null;
   toolName: string;
   toolKind: "terminal" | "file_edit" | "mcp" | "other";
-  status: "pending" | "in_progress" | "completed" | "error";
+  status: "pending" | "in_progress" | "awaiting_approval" | "completed" | "error";
   arguments: unknown;
   result: unknown;
   durationMs: number | null;
   createdAt: string;
+  /**
+   * Set only while `status === "awaiting_approval"`. Carries the agent's
+   * permission options so the UI can render Allow/Reject buttons. Cleared
+   * when the tool call moves to a terminal status.
+   */
+  approvalOptions?: ToolCallApprovalOption[];
 }
 
 export type ContentBlock =
@@ -211,5 +223,6 @@ export type SessionEvent =
   | { type: "message_delta"; sessionId: string; turnId: string; text: string }
   | { type: "tool_call_started"; sessionId: string; toolCall: SessionToolCallData }
   | { type: "tool_call_completed"; sessionId: string; toolCall: SessionToolCallData }
+  | { type: "tool_call_awaiting_approval"; sessionId: string; toolCall: SessionToolCallData }
   | { type: "turn_completed"; sessionId: string; turnId: string; status: string }
   | { type: "session_status_changed"; sessionId: string; status: SessionStatus };

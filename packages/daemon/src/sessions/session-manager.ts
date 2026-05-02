@@ -1,12 +1,16 @@
 import { existsSync } from "node:fs";
 import type {
   ACPAdapter,
+  ACPRequestPermissionRequest,
+  ACPRequestPermissionResponse,
   ACPSessionDetail,
   CatalogDb,
   DiscoveredSession,
   GitMetadata,
   SessionEvent,
   SessionInfo,
+  SessionToolCallData,
+  ToolCallApprovalOption,
 } from "spawntree-core";
 import {
   ClaudeCodeAdapter,
@@ -22,6 +26,7 @@ import type { DomainEvents } from "../events/domain-events.ts";
 import { applyCatalogSchema } from "../catalog/queries.ts";
 import type { StorageManager } from "../storage/manager.ts";
 import {
+  abortPendingApprovalsOnRestart,
   deletePersistedSession,
   getPersistedSession,
   hydrateTurnContent,
@@ -29,6 +34,13 @@ import {
   persistSessionEvent,
   upsertSession,
 } from "./persistence.ts";
+
+/** Pending approval entry held while a tool call awaits user response. */
+interface PendingApproval {
+  resolver: (response: ACPRequestPermissionResponse) => void;
+  options: ToolCallApprovalOption[];
+  sessionId: string;
+}
 
 /**
  * Manages the lifecycle of ACP adapters and routes session operations to
@@ -72,6 +84,14 @@ export class SessionManager {
    * race the `turn_started` INSERT and run its UPDATE against 0 rows.
    */
   private readonly persistQueues = new Map<string, Promise<unknown>>();
+  /**
+   * Tool calls awaiting human approval — keyed by `toolCallId`. The value
+   * is the Promise resolver fed back to the ACP `request_permission` RPC
+   * once the user clicks Allow/Deny in the Studio. If the daemon shuts
+   * down with entries here, the agent is left waiting forever, so we
+   * also clear the corresponding rows on startup (see `start()`).
+   */
+  private readonly pendingApprovals = new Map<string, PendingApproval>();
 
   /**
    * In-memory snapshot of the most recent `discoverSessions()` pass, keyed
@@ -114,7 +134,12 @@ export class SessionManager {
 
     // Register built-in adapters. Additional adapters can be added via
     // `registerAdapter()` before the manager is used.
-    this.adapters.set("claude-code", new ClaudeCodeAdapter());
+    this.adapters.set(
+      "claude-code",
+      new ClaudeCodeAdapter({
+        permissionHandler: (params) => this.handlePermissionRequest(params),
+      }),
+    );
     this.adapters.set("codex", new CodexACPAdapter());
   }
 
@@ -128,7 +153,121 @@ export class SessionManager {
   async start(): Promise<void> {
     if (this.storage) {
       await applyCatalogSchema(this.storage.client);
+      // Anything left in `awaiting_approval` is orphaned — the agent that
+      // was waiting on the resolver died with the previous daemon process.
+      // Mark them as error so the UI doesn't show a forever-pending row.
+      if (this.catalog) {
+        await abortPendingApprovalsOnRestart(this.catalog).catch((err) => {
+          process.stderr.write(
+            `[spawntree-daemon] failed to clear pending approvals on startup: ${String(err)}\n`,
+          );
+        });
+      }
     }
+  }
+
+  /**
+   * ACP permission handler — invoked by the Claude Code adapter when the
+   * agent requests permission to run a tool. Persists the tool call as
+   * `awaiting_approval`, broadcasts the event over SSE so the Studio can
+   * render Allow/Deny buttons, and pends a Promise. The Promise resolves
+   * when `respondToToolCall()` is called (typically from the HTTP route
+   * `POST /sessions/:id/tool-calls/:toolCallId/respond`).
+   *
+   * If the same toolCallId already has a pending entry, the previous
+   * resolver is cancelled (resolved with `{ outcome: "cancelled" }`) so
+   * the older Promise unblocks instead of leaking.
+   */
+  private handlePermissionRequest(
+    params: ACPRequestPermissionRequest,
+  ): Promise<ACPRequestPermissionResponse> {
+    const toolCallId = params.toolCall.toolCallId;
+    const sessionId = params.sessionId;
+    process.stderr.write(
+      `[spawntree-daemon] permission requested: session=${sessionId} toolCall=${toolCallId} title=${params.toolCall.title ?? "?"} kind=${params.toolCall.kind ?? "?"} options=${params.options.map((o) => o.kind).join(",")}\n`,
+    );
+    const options: ToolCallApprovalOption[] = params.options.map(
+      (o: ACPRequestPermissionRequest["options"][number]) => ({
+        optionId: o.optionId,
+        name: o.name,
+        kind: o.kind as ToolCallApprovalOption["kind"],
+      }),
+    );
+    const toolCall = approvalToolCallFromRequest(params, options);
+
+    // Publish synthetic SessionEvent so the same SSE pipeline + persistence
+    // queue handle it (status row in DB ends up "awaiting_approval"). We
+    // don't go through the adapter's own onSessionEvent emit because the
+    // adapter itself doesn't track this transition — the daemon owns it.
+    const event: SessionEvent = {
+      type: "tool_call_awaiting_approval",
+      sessionId,
+      toolCall,
+    };
+    this.events.publishSessionEvent(event, "claude-code");
+    if (this.catalog) {
+      void this.enqueuePersist(sessionId, () =>
+        persistSessionEvent(this.catalog!, event).catch((err) => {
+          process.stderr.write(
+            `[spawntree-daemon] persist awaiting_approval failed: ${String(err)}\n`,
+          );
+        }),
+      );
+    }
+
+    return new Promise<ACPRequestPermissionResponse>((resolve) => {
+      const previous = this.pendingApprovals.get(toolCallId);
+      if (previous) {
+        // Stale resolver from an earlier (re-tried?) request — cancel it
+        // so its Promise unblocks instead of leaking.
+        previous.resolver({ outcome: { outcome: "cancelled" } });
+      }
+      this.pendingApprovals.set(toolCallId, { resolver: resolve, options, sessionId });
+    });
+  }
+
+  /**
+   * Resolve a pending approval prompt with the user's choice. Throws if
+   * the toolCallId has no pending entry — the request either already
+   * resolved (race), the daemon restarted, or the agent never asked.
+   */
+  async respondToToolCall(
+    sessionId: string,
+    toolCallId: string,
+    response: ACPRequestPermissionResponse,
+  ): Promise<void> {
+    const pending = this.pendingApprovals.get(toolCallId);
+    if (!pending) {
+      throw new Error(`No pending approval for tool call ${toolCallId}`);
+    }
+    if (pending.sessionId !== sessionId) {
+      throw new Error(`Tool call ${toolCallId} does not belong to session ${sessionId}`);
+    }
+    this.pendingApprovals.delete(toolCallId);
+    pending.resolver(response);
+  }
+
+  /**
+   * Patch any tool calls in a SessionDetail with their pending-approval
+   * state. The adapter's in-memory tracking does not know that a
+   * permission request is in flight — the daemon owns that — so without
+   * this overlay a fresh `GET /sessions/:id` would show the tool as
+   * `in_progress` instead of `awaiting_approval`.
+   */
+  private patchPendingApprovals(detail: ACPSessionDetail): ACPSessionDetail {
+    if (this.pendingApprovals.size === 0) return detail;
+    return {
+      ...detail,
+      toolCalls: detail.toolCalls.map((tc) => {
+        const pending = this.pendingApprovals.get(tc.id);
+        if (!pending) return tc;
+        return {
+          ...tc,
+          status: "awaiting_approval" as const,
+          approvalOptions: pending.options,
+        };
+      }),
+    };
   }
 
   /**
@@ -387,7 +526,8 @@ export class SessionManager {
    */
   async getSessionDetail(sessionId: string): Promise<ACPSessionDetail> {
     const [, adapter] = await this.findSession(sessionId);
-    return adapter.getSessionDetail(sessionId);
+    const detail = await adapter.getSessionDetail(sessionId);
+    return this.patchPendingApprovals(detail);
   }
 
   /**
@@ -658,7 +798,10 @@ export class SessionManager {
     const next = prev.then(op);
     // Swallow rejections in the stored reference so one failure doesn't
     // permanently break the chain. `op` itself already logs errors.
-    this.persistQueues.set(sessionId, next.catch(() => undefined));
+    this.persistQueues.set(
+      sessionId,
+      next.catch(() => undefined),
+    );
     return next;
   }
 
@@ -734,5 +877,48 @@ export class SessionManager {
         `[spawntree-daemon] turn hydration failed for ${sessionId}/${turnId}: ${String(err)}\n`,
       );
     }
+  }
+}
+
+/**
+ * Build a `SessionToolCallData` row from an ACP `request_permission` request.
+ * The adapter has already emitted a `tool_call_started` event for the same
+ * id — this transitional row carries the same identity but with status
+ * `awaiting_approval` and the agent's offered options attached.
+ */
+// Return type intentionally inferred: TypeScript infers a literal shape with
+// a mutable `approvalOptions` array, which is assignable to both the
+// adapter-side `SessionToolCallData` (mutable) and the Effect-derived schema
+// type (readonly). Annotating the return as `SessionToolCallData` would
+// pin to one or the other and break the SessionEvent assignment downstream.
+function approvalToolCallFromRequest(
+  params: ACPRequestPermissionRequest,
+  options: ToolCallApprovalOption[],
+) {
+  const tc = params.toolCall;
+  return {
+    id: tc.toolCallId,
+    turnId: null,
+    toolName: tc.title ?? "tool",
+    toolKind: mapAcpToolKind(tc.kind),
+    status: "awaiting_approval" as const,
+    arguments: tc.rawInput ?? null,
+    result: null,
+    durationMs: null,
+    createdAt: new Date().toISOString(),
+    approvalOptions: options,
+  };
+}
+
+function mapAcpToolKind(kind: string | undefined | null): SessionToolCallData["toolKind"] {
+  switch (kind) {
+    case "execute":
+      return "terminal";
+    case "edit":
+    case "move":
+    case "delete":
+      return "file_edit";
+    default:
+      return "other";
   }
 }
