@@ -5,7 +5,14 @@ import { LogViewer } from "../components/LogViewer";
 import { ServiceCard } from "../components/ServiceCard";
 import { StatusDot } from "../components/StatusDot";
 import type { Status } from "../components/StatusDot";
-import { deriveEnvStatus, type Service, useDeleteEnv, useEnvDetail, useStopEnv, useWebRepoTree } from "../lib/api";
+import {
+  deriveEnvStatus,
+  type Service,
+  useDeleteEnv,
+  useEnvDetail,
+  useStopEnv,
+  useWebRepoTree,
+} from "../lib/api";
 
 export const Route = createFileRoute("/repos/$slug/envs/$envId")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -67,7 +74,10 @@ function EnvDetail() {
         </div>
         <div className="px-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-28 rounded-lg bg-surface border border-border animate-pulse" />
+            <div
+              key={i}
+              className="h-28 rounded-lg bg-surface border border-border animate-pulse"
+            />
           ))}
         </div>
       </div>
@@ -86,7 +96,7 @@ function EnvDetail() {
   const isRunning = status === "running" || status === "starting";
   const previewServices = env.services
     .map((service) => ({ service, previewURL: previewURLFor(service) }))
-    .filter((item): item is { service: Service; previewURL: string; } => !!item.previewURL);
+    .filter((item): item is { service: Service; previewURL: string } => !!item.previewURL);
 
   async function handleCopy(url: string) {
     try {
@@ -186,8 +196,7 @@ function EnvDetail() {
                   </a>
                   <button
                     type="button"
-                    onClick={() =>
-                      handleCopy(previewURL)}
+                    onClick={() => handleCopy(previewURL)}
                     className="inline-flex items-center gap-1 text-blue hover:underline"
                   >
                     <Link2 className="w-3 h-3" />
@@ -237,7 +246,12 @@ function EnvDetail() {
           )}
         </div>
         <div className="h-full min-h-0 flex flex-col" style={{ height: "calc(100% - 36px)" }}>
-          <LogViewer repoID={slug} envID={envId} repoPath={repoPath} activeService={activeService} />
+          <LogViewer
+            repoID={slug}
+            envID={envId}
+            repoPath={repoPath}
+            activeService={activeService}
+          />
         </div>
       </div>
     </div>

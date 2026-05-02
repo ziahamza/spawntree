@@ -57,8 +57,14 @@ describe("HostBinding state file", () => {
   });
 
   it("save overwrites a previous binding (CLI args override persisted file)", () => {
-    saveHostBinding({ url: "http://old:7777", key: "dh_OLDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }, dir);
-    saveHostBinding({ url: "http://new:8888", key: "dh_NEWxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }, dir);
+    saveHostBinding(
+      { url: "http://old:7777", key: "dh_OLDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
+      dir,
+    );
+    saveHostBinding(
+      { url: "http://new:8888", key: "dh_NEWxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
+      dir,
+    );
     const loaded = loadHostBinding(dir);
     expect(loaded?.url).toBe("http://new:8888");
     expect(loaded?.key.startsWith("dh_NEW")).toBe(true);

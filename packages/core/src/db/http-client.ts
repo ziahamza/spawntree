@@ -70,9 +70,7 @@ export type CatalogHttpProxy = (
  * const db = drizzle(catalogHttpProxy({ url: "..." }), { schema });
  * ```
  */
-export function catalogHttpProxy(
-  options: CreateCatalogHttpDbOptions,
-): CatalogHttpProxy {
+export function catalogHttpProxy(options: CreateCatalogHttpDbOptions): CatalogHttpProxy {
   const base = options.url.replace(/\/+$/, "");
   const basePath = (options.basePath ?? "/api/v1/catalog").replace(/\/+$/, "");
   const endpoint = options.readOnly ? "/query-readonly" : "/query";
@@ -89,9 +87,7 @@ export function catalogHttpProxy(
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(
-        `spawntree catalog query failed: ${res.status} ${res.statusText} ${body}`,
-      );
+      throw new Error(`spawntree catalog query failed: ${res.status} ${res.statusText} ${body}`);
     }
     const json = (await res.json()) as { rows?: Array<Array<unknown>> | Array<unknown> };
     return { rows: json.rows ?? [] };
@@ -103,8 +99,6 @@ export function catalogHttpProxy(
  * daemon's catalog HTTP endpoint. Equivalent to
  * `drizzle(catalogHttpProxy(options), { schema })`.
  */
-export function createCatalogHttpDb(
-  options: CreateCatalogHttpDbOptions,
-): CatalogHttpDb {
+export function createCatalogHttpDb(options: CreateCatalogHttpDbOptions): CatalogHttpDb {
   return drizzle(catalogHttpProxy(options), { schema });
 }

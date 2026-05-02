@@ -7,16 +7,19 @@ describe("ApiClient", () => {
     const client = new ApiClient({
       fetchFn: async (_input, init) => {
         seenHeaders = new Headers(init?.headers);
-        return new Response(JSON.stringify({
-          version: "test",
-          pid: 1,
-          uptime: 0,
-          repos: 0,
-          activeEnvs: 0,
-        }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({
+            version: "test",
+            pid: 1,
+            uptime: 0,
+            repos: 0,
+            activeEnvs: 0,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
       },
     });
 

@@ -41,8 +41,7 @@ export class PortRegistry {
 
     if (slotIndex === -1) {
       throw new Error(
-        `All ${MAX_SLOTS} port slots are in use. `
-          + `Remove unused environments to free slots.`,
+        `All ${MAX_SLOTS} port slots are in use. ` + `Remove unused environments to free slots.`,
       );
     }
 
@@ -75,9 +74,7 @@ export class PortRegistry {
    */
   getPhysicalPort(basePort: number, serviceIndex: number): number {
     if (serviceIndex >= PORT_RANGE_SIZE) {
-      throw new Error(
-        `Service index ${serviceIndex} exceeds port range size ${PORT_RANGE_SIZE}`,
-      );
+      throw new Error(`Service index ${serviceIndex} exceeds port range size ${PORT_RANGE_SIZE}`);
     }
     return basePort + serviceIndex;
   }

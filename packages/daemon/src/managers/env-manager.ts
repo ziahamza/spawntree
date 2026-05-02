@@ -1,6 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { loadEnv, parseConfig, substituteVars, validateConfig, WorktreeManager } from "spawntree-core";
+import {
+  loadEnv,
+  parseConfig,
+  substituteVars,
+  validateConfig,
+  WorktreeManager,
+} from "spawntree-core";
 import type {
   CreateEnvRequest,
   EnvInfo,
@@ -13,7 +19,12 @@ import type {
 import { DockerRunner } from "../runners/docker-runner.ts";
 import { ExternalRunner } from "../runners/external-runner.ts";
 import { ProcessRunner } from "../runners/process-runner.ts";
-import { loadRepoState, type RepoEnvRecord, type RepoState, saveRepoState } from "../state/global-state.ts";
+import {
+  loadRepoState,
+  type RepoEnvRecord,
+  type RepoState,
+  saveRepoState,
+} from "../state/global-state.ts";
 import { InfraManager } from "./infra-manager.ts";
 import { LogStreamer } from "./log-streamer.ts";
 import { PortRegistry } from "./port-registry.ts";
@@ -121,9 +132,10 @@ export class EnvManager {
     const requestedRepoPath = resolve(repoPath);
 
     // Resolve config file path (absolute or relative to repoPath)
-    const configPath = configFile && configFile.startsWith("/")
-      ? configFile
-      : resolve(requestedRepoPath, configFile || "spawntree.yaml");
+    const configPath =
+      configFile && configFile.startsWith("/")
+        ? configFile
+        : resolve(requestedRepoPath, configFile || "spawntree.yaml");
     const configDir = resolve(configPath, "..");
 
     // Validate git repo
@@ -161,10 +173,9 @@ export class EnvManager {
     const validation = validateConfig(parsedConfig);
     if ("errors" in validation) {
       throw new Error(
-        `Config validation failed:\n${
-          validation.errors.map((error: { path: string; message: string; }) => `  ${error.path}: ${error.message}`)
-            .join("\n")
-        }`,
+        `Config validation failed:\n${validation.errors
+          .map((error: { path: string; message: string }) => `  ${error.path}: ${error.message}`)
+          .join("\n")}`,
       );
     }
 
@@ -192,9 +203,7 @@ export class EnvManager {
       const relativeConfigDir = baseServiceDir.startsWith(gitRoot)
         ? baseServiceDir.slice(gitRoot.length + 1)
         : "";
-      serviceCwd = relativeConfigDir
-        ? resolve(worktreePath, relativeConfigDir)
-        : worktreePath;
+      serviceCwd = relativeConfigDir ? resolve(worktreePath, relativeConfigDir) : worktreePath;
     }
 
     // Start services in dependency order
@@ -219,7 +228,7 @@ export class EnvManager {
       if (serviceConfig.type === "postgres") {
         // Skip if DATABASE_URL already provided externally
         if (!envVars.DATABASE_URL) {
-          const pgVersion = (serviceConfig as ServiceConfig & { version?: string; }).version ?? "17";
+          const pgVersion = (serviceConfig as ServiceConfig & { version?: string }).version ?? "17";
           const pgRunner = await this.infraManager.ensurePostgres(pgVersion);
           const dbName = `spawntree_${repoId}_${envId}_${name}`
             .toLowerCase()
@@ -233,7 +242,9 @@ export class EnvManager {
             ? substituteVars(serviceConfig.fork_from, { ...envVars, ...infraEnvVars })
             : undefined;
           if (resolvedForkFrom) {
-            console.log(`[spawntree-daemon]   Forking database "${dbName}" from ${resolvedForkFrom}...`);
+            console.log(
+              `[spawntree-daemon]   Forking database "${dbName}" from ${resolvedForkFrom}...`,
+            );
             await pgRunner.forkFrom(dbName, resolvedForkFrom);
           }
 
@@ -255,9 +266,13 @@ export class EnvManager {
           infraEnvVars[`${upperName}_PORT`] = String(pgRunner.port);
           infraEnvVars[`${upperName}_NAME`] = dbName;
 
-          console.log(`[spawntree-daemon]   Postgres db "${dbName}" ready at port ${pgRunner.port}`);
+          console.log(
+            `[spawntree-daemon]   Postgres db "${dbName}" ready at port ${pgRunner.port}`,
+          );
         } else {
-          console.log(`[spawntree-daemon]   Skipping Docker Postgres — DATABASE_URL already set externally`);
+          console.log(
+            `[spawntree-daemon]   Skipping Docker Postgres — DATABASE_URL already set externally`,
+          );
         }
       } else if (serviceConfig.type === "redis") {
         // Skip if REDIS_URL already provided externally
@@ -270,9 +285,13 @@ export class EnvManager {
           infraEnvVars.REDIS_HOST = "127.0.0.1";
           infraEnvVars.REDIS_PORT = String(redisRunner.port);
           infraEnvVars.REDIS_DB = String(dbIndex);
-          console.log(`[spawntree-daemon]   Redis db index ${dbIndex} ready at port ${redisRunner.port}`);
+          console.log(
+            `[spawntree-daemon]   Redis db index ${dbIndex} ready at port ${redisRunner.port}`,
+          );
         } else {
-          console.log(`[spawntree-daemon]   Skipping Docker Redis — REDIS_URL already set externally`);
+          console.log(
+            `[spawntree-daemon]   Skipping Docker Redis — REDIS_URL already set externally`,
+          );
         }
       }
     }
@@ -315,7 +334,13 @@ export class EnvManager {
       services.set(name, service);
 
       console.log(`[spawntree-daemon]   Starting ${name} on port ${port}...`);
-      this.logStreamer.addLine(repoId, envId, name, "system", `[spawntree] Starting ${name} on port ${port}`);
+      this.logStreamer.addLine(
+        repoId,
+        envId,
+        name,
+        "system",
+        `[spawntree] Starting ${name} on port ${port}`,
+      );
       try {
         await service.start();
 
@@ -349,9 +374,17 @@ export class EnvManager {
           if (proxyReady) {
             const cleanUrl = this.proxyManager.register(envId, name, port);
             console.log(`[spawntree-daemon]   ${name} started → ${cleanUrl}`);
-            this.logStreamer.addLine(repoId, envId, name, "system", `[spawntree] ${name} started → ${cleanUrl}`);
+            this.logStreamer.addLine(
+              repoId,
+              envId,
+              name,
+              "system",
+              `[spawntree] ${name} started → ${cleanUrl}`,
+            );
           } else {
-            console.log(`[spawntree-daemon]   ${name} started → http://127.0.0.1:${port} (proxy unavailable)`);
+            console.log(
+              `[spawntree-daemon]   ${name} started → http://127.0.0.1:${port} (proxy unavailable)`,
+            );
             this.logStreamer.addLine(
               repoId,
               envId,
@@ -386,7 +419,9 @@ export class EnvManager {
           try {
             const redisRunner = await this.infraManager.ensureRedis();
             await redisRunner.flushDb(dbIdx);
-          } catch { /* best-effort cleanup */ }
+          } catch {
+            /* best-effort cleanup */
+          }
           void svcName;
         }
         this.portRegistry.free(envKey);
@@ -476,7 +511,7 @@ export class EnvManager {
     // Drop Postgres databases
     for (const [svcName, dbName] of managed.postgresDatabases.entries()) {
       const serviceConfig = managed.config.services[svcName];
-      const pgVersion = (serviceConfig as ServiceConfig & { version?: string; }).version ?? "17";
+      const pgVersion = (serviceConfig as ServiceConfig & { version?: string }).version ?? "17";
       try {
         const pgRunner = await this.infraManager.ensurePostgres(pgVersion);
         await pgRunner.dropDatabase(dbName);
@@ -573,7 +608,9 @@ export class EnvManager {
 
     // Inject service discovery env vars for process services.
     // Postgres/Redis infra URLs are already in baseEnvVars (injected by the infra layer).
-    for (const [otherName, otherConfig] of Object.entries(config.services) as Array<[string, ServiceConfig]>) {
+    for (const [otherName, otherConfig] of Object.entries(config.services) as Array<
+      [string, ServiceConfig]
+    >) {
       // Skip infra-managed services — their URLs come from baseEnvVars
       if (otherConfig.type === "postgres" || otherConfig.type === "redis") continue;
 
@@ -585,18 +622,17 @@ export class EnvManager {
       vars[`${upperName}_PORT`] = String(otherPort);
       // Use proxy URL if proxy is running, otherwise fall back to raw port
       const proxyUrl = `http://${otherName}-${envId}.localhost:${this.proxyManager.proxyPort}`;
-      vars[`${upperName}_URL`] = this.proxyManager.isRunning ? proxyUrl : `http://127.0.0.1:${otherPort}`;
+      vars[`${upperName}_URL`] = this.proxyManager.isRunning
+        ? proxyUrl
+        : `http://127.0.0.1:${otherPort}`;
     }
 
     // Resolve per-service environment overrides using the now-computed vars
     const serviceConfig = config.services[name];
     const resolvedEnv: Record<string, string> | undefined = serviceConfig.environment
       ? Object.fromEntries(
-        Object.entries(serviceConfig.environment).map(([k, v]) => [
-          k,
-          substituteVars(v, vars),
-        ]),
-      )
+          Object.entries(serviceConfig.environment).map(([k, v]) => [k, substituteVars(v, vars)]),
+        )
       : undefined;
 
     if (resolvedEnv) {
@@ -612,17 +648,15 @@ export class EnvManager {
   ): ServiceConfig {
     return {
       ...serviceConfig,
-      url: serviceConfig.url
-        ? substituteVars(serviceConfig.url, envVars)
-        : serviceConfig.url,
+      url: serviceConfig.url ? substituteVars(serviceConfig.url, envVars) : serviceConfig.url,
       command: serviceConfig.command
         ? substituteVars(serviceConfig.command, envVars)
         : serviceConfig.command,
       healthcheck: serviceConfig.healthcheck
         ? {
-          ...serviceConfig.healthcheck,
-          url: substituteVars(serviceConfig.healthcheck.url, envVars),
-        }
+            ...serviceConfig.healthcheck,
+            url: substituteVars(serviceConfig.healthcheck.url, envVars),
+          }
         : serviceConfig.healthcheck,
       fork_from: serviceConfig.fork_from
         ? substituteVars(serviceConfig.fork_from, envVars)
@@ -675,10 +709,7 @@ export class EnvManager {
     }
   }
 
-  private async stopServices(
-    services: Map<string, Service>,
-    order: string[],
-  ): Promise<void> {
+  private async stopServices(services: Map<string, Service>, order: string[]): Promise<void> {
     for (const name of order) {
       const service = services.get(name);
       if (service && service.status() !== "stopped") {
@@ -686,9 +717,7 @@ export class EnvManager {
         try {
           await service.stop();
         } catch (err) {
-          console.error(
-            `[spawntree-daemon]   Failed to stop ${name}: ${formatUnknownError(err)}`,
-          );
+          console.error(`[spawntree-daemon]   Failed to stop ${name}: ${formatUnknownError(err)}`);
         }
       }
     }
@@ -724,28 +753,30 @@ export class EnvManager {
       // Use proxy URL for non-infra, non-external services
       const isInfra = serviceConfig.type === "postgres" || serviceConfig.type === "redis";
       const isExternal = serviceConfig.type === "external";
-      const proxyUrl = (isInfra || !this.proxyManager.isRunning)
-        ? undefined
-        : `http://${name}-${managed.envId}.localhost:${this.proxyManager.proxyPort}`;
+      const proxyUrl =
+        isInfra || !this.proxyManager.isRunning
+          ? undefined
+          : `http://${name}-${managed.envId}.localhost:${this.proxyManager.proxyPort}`;
       // External services show their upstream URL
       const externalUrl = isExternal ? serviceConfig.url : undefined;
 
-      const info: ServiceInfo = pid !== undefined
-        ? {
-          name,
-          type: serviceConfig.type,
-          status,
-          port,
-          pid,
-          url: externalUrl || proxyUrl || `http://127.0.0.1:${port}`,
-        }
-        : {
-          name,
-          type: serviceConfig.type,
-          status,
-          port,
-          url: externalUrl || proxyUrl || `http://127.0.0.1:${port}`,
-        };
+      const info: ServiceInfo =
+        pid !== undefined
+          ? {
+              name,
+              type: serviceConfig.type,
+              status,
+              port,
+              pid,
+              url: externalUrl || proxyUrl || `http://127.0.0.1:${port}`,
+            }
+          : {
+              name,
+              type: serviceConfig.type,
+              status,
+              port,
+              url: externalUrl || proxyUrl || `http://127.0.0.1:${port}`,
+            };
       return info;
     });
 
@@ -794,7 +825,7 @@ export class EnvManager {
     const state: RepoState = {
       repoId,
       repoPath: repoEnvs
-        ? [...repoEnvs.values()][0]?.repoPath ?? ""
+        ? ([...repoEnvs.values()][0]?.repoPath ?? "")
         : (loadRepoState(repoId)?.repoPath ?? ""),
       envs: envRecords,
     };

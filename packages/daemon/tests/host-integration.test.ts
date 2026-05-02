@@ -183,9 +183,7 @@ describe("HostConfigSync end-to-end against in-process spawntree-host", () => {
       body: JSON.stringify({
         config: {
           primary: { id: "local", config: {} },
-          replicators: [
-            { rid: "from-host", id: "recording", config: { tag: "alpha" } },
-          ],
+          replicators: [{ rid: "from-host", id: "recording", config: { tag: "alpha" } }],
         },
       }),
     });

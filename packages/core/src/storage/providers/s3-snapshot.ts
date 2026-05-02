@@ -90,9 +90,8 @@ function encodeCopySourceKey(key: string): string {
  */
 function classifyError(err: unknown): { message: string; fatal: boolean } {
   const message = err instanceof Error ? err.message : String(err);
-  const code = (err as { name?: string; Code?: string }).name
-    ?? (err as { Code?: string }).Code
-    ?? "";
+  const code =
+    (err as { name?: string; Code?: string }).name ?? (err as { Code?: string }).Code ?? "";
   const fatalCodes = new Set([
     "AccessDenied",
     "InvalidAccessKeyId",
@@ -109,11 +108,7 @@ export const s3SnapshotProvider: ReplicatorProvider<S3SnapshotConfigInput> = {
   kind: "replicator",
   configSchema: S3SnapshotConfig,
 
-  async start(
-    raw,
-    primary: PrimaryStorageHandle,
-    ctx: StorageContext,
-  ): Promise<ReplicatorHandle> {
+  async start(raw, primary: PrimaryStorageHandle, ctx: StorageContext): Promise<ReplicatorHandle> {
     const config = normalizeS3Config(raw);
     if (!primary.dbPath) {
       throw new Error(
@@ -199,19 +194,21 @@ export const s3SnapshotProvider: ReplicatorProvider<S3SnapshotConfigInput> = {
             }),
           );
 
-          await client.send(
-            new DeleteObjectCommand({
-              Bucket: config.bucket,
-              Key: tmpKey,
-            }),
-          ).catch((err) => {
-            // Non-fatal: leaving a tmp-key behind just means a dangling object.
-            // Log but don't fail the run.
-            ctx.logger("warn", "storage.s3-snapshot: tmp cleanup failed", {
-              tmpKey,
-              error: err instanceof Error ? err.message : String(err),
+          await client
+            .send(
+              new DeleteObjectCommand({
+                Bucket: config.bucket,
+                Key: tmpKey,
+              }),
+            )
+            .catch((err) => {
+              // Non-fatal: leaving a tmp-key behind just means a dangling object.
+              // Log but don't fail the run.
+              ctx.logger("warn", "storage.s3-snapshot: tmp cleanup failed", {
+                tmpKey,
+                error: err instanceof Error ? err.message : String(err),
+              });
             });
-          });
 
           const etag = copyResult.CopyObjectResult?.ETag?.replace(/"/g, "");
           lastOkAt = new Date().toISOString();
@@ -242,10 +239,14 @@ export const s3SnapshotProvider: ReplicatorProvider<S3SnapshotConfigInput> = {
             fatal,
           });
           // Best-effort tmp cleanup on error.
-          await client.send(new DeleteObjectCommand({
-            Bucket: config.bucket,
-            Key: tmpKey,
-          })).catch(() => undefined);
+          await client
+            .send(
+              new DeleteObjectCommand({
+                Bucket: config.bucket,
+                Key: tmpKey,
+              }),
+            )
+            .catch(() => undefined);
           return {
             healthy: false,
             error: lastError,

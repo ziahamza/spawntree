@@ -38,15 +38,13 @@ export function AddFolderDialog({ open, onOpenChange }: AddFolderDialogProps) {
   const [selectedRemote, setSelectedRemote] = useState("");
   const [scanChildren, setScanChildren] = useState(false);
   const [scanChildrenTouched, setScanChildrenTouched] = useState(false);
-  const [probe, setProbe] = useState<
-    {
-      path: string;
-      exists: boolean;
-      isGitRepo: boolean;
-      canScanChildren: boolean;
-      childRepoCount: number;
-    } | null
-  >(null);
+  const [probe, setProbe] = useState<{
+    path: string;
+    exists: boolean;
+    isGitRepo: boolean;
+    canScanChildren: boolean;
+    childRepoCount: number;
+  } | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const addFolder = useAddFolder();
@@ -180,7 +178,9 @@ export function AddFolderDialog({ open, onOpenChange }: AddFolderDialogProps) {
                   className="mt-0.5"
                 />
                 <span>
-                  <span className="block text-foreground mb-1">Watch one level deep for Git repos</span>
+                  <span className="block text-foreground mb-1">
+                    Watch one level deep for Git repos
+                  </span>
                   <span>
                     spawntree will keep scanning this folder and auto-import repos it finds.
                     {probe.childRepoCount > 0

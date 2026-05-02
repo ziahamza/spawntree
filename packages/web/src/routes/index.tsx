@@ -34,13 +34,15 @@ function repoOverallStatus(repo: WebRepo): Status {
   return "stopped";
 }
 
-function RightNowSection({ envs }: { envs: EnvListItem[]; }) {
+function RightNowSection({ envs }: { envs: EnvListItem[] }) {
   // Find most recently active/crashed env
   const candidates = [...envs].sort((a, b) => {
     const statusA = deriveEnvStatus(a);
     const statusB = deriveEnvStatus(b);
-    const priorityA = statusA === "running" || statusA === "starting" ? 0 : statusA === "crashed" ? 1 : 2;
-    const priorityB = statusB === "running" || statusB === "starting" ? 0 : statusB === "crashed" ? 1 : 2;
+    const priorityA =
+      statusA === "running" || statusA === "starting" ? 0 : statusA === "crashed" ? 1 : 2;
+    const priorityB =
+      statusB === "running" || statusB === "starting" ? 0 : statusB === "crashed" ? 1 : 2;
     if (priorityA !== priorityB) return priorityA - priorityB;
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
@@ -65,7 +67,9 @@ function RightNowSection({ envs }: { envs: EnvListItem[]; }) {
         </div>
         <div className="flex items-center gap-2 text-xs text-muted mb-4">
           <Server className="w-3 h-3" />
-          <span>{serviceCount} service{serviceCount !== 1 ? "s" : ""}</span>
+          <span>
+            {serviceCount} service{serviceCount !== 1 ? "s" : ""}
+          </span>
           <span className="font-mono ml-2 text-muted/70 truncate">{env.repoPath}</span>
         </div>
         <div className="flex gap-2">
@@ -83,7 +87,7 @@ function RightNowSection({ envs }: { envs: EnvListItem[]; }) {
   );
 }
 
-function RepoCard({ repo }: { repo: WebRepo; }) {
+function RepoCard({ repo }: { repo: WebRepo }) {
   const status = repoOverallStatus(repo);
 
   return (
@@ -97,8 +101,12 @@ function RepoCard({ repo }: { repo: WebRepo; }) {
         <span className="font-semibold text-sm text-foreground truncate flex-1">{repo.name}</span>
       </div>
       <div className="flex items-center gap-4 text-xs text-muted">
-        <span>{repo.cloneCount} clone{repo.cloneCount !== 1 ? "s" : ""}</span>
-        {repo.activeEnvCount > 0 && <span className="text-green">{repo.activeEnvCount} active</span>}
+        <span>
+          {repo.cloneCount} clone{repo.cloneCount !== 1 ? "s" : ""}
+        </span>
+        {repo.activeEnvCount > 0 && (
+          <span className="text-green">{repo.activeEnvCount} active</span>
+        )}
         <span className="ml-auto">{formatRelative(repo.updatedAt)}</span>
       </div>
     </Link>
@@ -118,7 +126,10 @@ function Dashboard() {
       <div className="p-6 max-w-4xl mx-auto">
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-20 rounded-lg bg-surface border border-border animate-pulse" />
+            <div
+              key={i}
+              className="h-20 rounded-lg bg-surface border border-border animate-pulse"
+            />
           ))}
         </div>
       </div>
@@ -149,10 +160,11 @@ function Dashboard() {
     );
   }
 
-  const activeEnvs = envs?.filter((e) => {
-    const s = deriveEnvStatus(e);
-    return s === "running" || s === "starting" || s === "crashed";
-  }) ?? [];
+  const activeEnvs =
+    envs?.filter((e) => {
+      const s = deriveEnvStatus(e);
+      return s === "running" || s === "starting" || s === "crashed";
+    }) ?? [];
 
   return (
     <div className="p-6 max-w-4xl mx-auto w-full">
@@ -172,7 +184,9 @@ function Dashboard() {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {repos!.map((repo) => <RepoCard key={repo.slug} repo={repo} />)}
+        {repos!.map((repo) => (
+          <RepoCard key={repo.slug} repo={repo} />
+        ))}
       </div>
 
       <AddFolderDialog open={addOpen} onOpenChange={setAddOpen} />

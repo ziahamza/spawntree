@@ -32,9 +32,7 @@ export interface ProbeDaemonOptions {
  * routing client treats this as a boolean signal, so an unreachable
  * daemon must look the same as a daemon that returned 500.
  */
-export async function probeDaemonReachable(
-  options: ProbeDaemonOptions,
-): Promise<boolean> {
+export async function probeDaemonReachable(options: ProbeDaemonOptions): Promise<boolean> {
   const base = options.url.replace(/\/+$/, "");
   const path = (options.path ?? "/health").replace(/^(?!\/)/, "/");
   const timeoutMs = options.timeoutMs ?? 800;

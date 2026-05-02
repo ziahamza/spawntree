@@ -2,9 +2,19 @@
   "name": "spawntree-host",
   "version": "0.4.0",
   "description": "Federation host for spawntree — aggregates multiple daemons behind one API and dashboard",
-  "type": "module",
-  "main": "./dist/server.js",
-  "types": "./dist/server.d.ts",
+  "keywords": [
+    "devtools",
+    "federation",
+    "orchestrator",
+    "proxy",
+    "spawntree"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ziahamza/spawntree.git",
+    "directory": "packages/host"
+  },
   "bin": {
     "spawntree-host": "./dist/server.js"
   },
@@ -12,25 +22,15 @@
     "dist",
     "README.md"
   ],
+  "type": "module",
+  "main": "./dist/server.js",
+  "types": "./dist/server.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "node --watch --experimental-strip-types src/server.ts",
     "start": "node dist/server.js",
     "start:src": "node --experimental-strip-types src/server.ts",
     "prepublishOnly": "pnpm build"
-  },
-  "keywords": [
-    "spawntree",
-    "federation",
-    "proxy",
-    "devtools",
-    "orchestrator"
-  ],
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/ziahamza/spawntree.git",
-    "directory": "packages/host"
   },
   "dependencies": {
     "better-sqlite3": "^12.4.1"

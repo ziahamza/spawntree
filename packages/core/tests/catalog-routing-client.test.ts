@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  createRoutingCatalogClient,
-  createRoutingCatalogProxy,
-  schema,
-} from "../src/db/index.ts";
+import { createRoutingCatalogClient, createRoutingCatalogProxy, schema } from "../src/db/index.ts";
 
 /**
  * Cover the routing catalog client's three guarantees:

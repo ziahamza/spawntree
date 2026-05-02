@@ -217,9 +217,10 @@ function StorageCard({ storage }: { storage: StorageStatus | undefined }) {
   // ONE-line host status. The detailed host-sync state lives in the
   // dedicated Host binding card (only rendered when actually bound),
   // so we don't show two timestamp rows on the same card.
-  const hostLine = storage.hostSync === null
-    ? sync.headline // "Standalone — no host binding"
-    : `${sync.pillLabel}${sync.headline ? ` ${sync.headline}` : ""}`;
+  const hostLine =
+    storage.hostSync === null
+      ? sync.headline // "Standalone — no host binding"
+      : `${sync.pillLabel}${sync.headline ? ` ${sync.headline}` : ""}`;
   return (
     <InfraCard
       title="Storage"
@@ -271,7 +272,12 @@ function InfraPage() {
       <div className="p-6 max-w-2xl mx-auto">
         <div className="h-6 w-40 bg-surface rounded animate-pulse mb-6" />
         <div className="grid gap-4 sm:grid-cols-2">
-          {[1, 2].map((i) => <div key={i} className="h-40 rounded-lg bg-surface border border-border animate-pulse" />)}
+          {[1, 2].map((i) => (
+            <div
+              key={i}
+              className="h-40 rounded-lg bg-surface border border-border animate-pulse"
+            />
+          ))}
         </div>
       </div>
     );
@@ -294,46 +300,42 @@ function InfraPage() {
       <h1 className="font-display text-2xl font-semibold text-foreground mb-6">Infrastructure</h1>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        {pgInstances.length > 0
-          ? (
-            pgInstances.map((pg, i: number) => (
-              <InfraCard
-                key={i}
-                title={`PostgreSQL ${pg.version || ""}`}
-                icon={<Database className="w-5 h-5" />}
-                status={pg.status === "running" ? "running" : "stopped"}
-                details={[
-                  { label: "Version", value: pg.version },
-                  { label: "Port", value: pg.port },
-                  { label: "Container", value: pg.containerId?.slice(0, 12) },
-                  { label: "Databases", value: pg.databases.join(", ") },
-                ]}
-              />
-            ))
-          )
-          : (
+        {pgInstances.length > 0 ? (
+          pgInstances.map((pg, i: number) => (
             <InfraCard
-              title="PostgreSQL"
+              key={i}
+              title={`PostgreSQL ${pg.version || ""}`}
               icon={<Database className="w-5 h-5" />}
-              status="stopped"
+              status={pg.status === "running" ? "running" : "stopped"}
               details={[
-                { label: "Status", value: "Not running" },
+                { label: "Version", value: pg.version },
+                { label: "Port", value: pg.port },
+                { label: "Container", value: pg.containerId?.slice(0, 12) },
+                { label: "Databases", value: pg.databases.join(", ") },
               ]}
             />
-          )}
+          ))
+        ) : (
+          <InfraCard
+            title="PostgreSQL"
+            icon={<Database className="w-5 h-5" />}
+            status="stopped"
+            details={[{ label: "Status", value: "Not running" }]}
+          />
+        )}
 
         <InfraCard
           title="Redis"
           icon={<Server className="w-5 h-5" />}
           status={redis?.status === "running" ? "running" : "stopped"}
-          details={redis
-            ? [
-              { label: "Port", value: redis.port },
-              { label: "Container", value: redis.containerId?.slice(0, 12) },
-            ]
-            : [
-              { label: "Status", value: "Not running" },
-            ]}
+          details={
+            redis
+              ? [
+                  { label: "Port", value: redis.port },
+                  { label: "Container", value: redis.containerId?.slice(0, 12) },
+                ]
+              : [{ label: "Status", value: "Not running" }]
+          }
         />
 
         <StorageCard storage={storage} />

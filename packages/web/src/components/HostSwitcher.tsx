@@ -173,8 +173,8 @@ export function HostSwitcher() {
                 </div>
                 <div className="text-[10px] text-muted leading-relaxed">
                   Run the federation server from{" "}
-                  <code className="text-foreground/70">spawntree-host</code> and register
-                  daemons. Stored in this browser only.
+                  <code className="text-foreground/70">spawntree-host</code> and register daemons.
+                  Stored in this browser only.
                 </div>
               </div>
             )}

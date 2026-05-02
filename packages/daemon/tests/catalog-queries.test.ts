@@ -40,10 +40,7 @@ describe("catalog/queries helpers", () => {
 
   beforeEach(async () => {
     tmp = mkdtempSync(resolve(tmpdir(), "spawntree-cat-q-"));
-    handle = await localStorageProvider.create(
-      {},
-      { dataDir: tmp, logger: () => undefined },
-    );
+    handle = await localStorageProvider.create({}, { dataDir: tmp, logger: () => undefined });
     await applyCatalogSchema(handle.client);
     db = drizzle(handle.client, { schema: catalogSchema });
   });

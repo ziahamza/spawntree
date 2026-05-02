@@ -95,8 +95,9 @@ export function createRoutingCatalogProxy(
 ): CatalogHttpProxy {
   const probeTtlMs = options.probeTtlMs ?? 30_000;
   const probeTimeoutMs = options.probeTimeoutMs ?? 800;
-  const probe = options.probe
-    ?? ((url: string) =>
+  const probe =
+    options.probe ??
+    ((url: string) =>
       probeDaemonReachable({
         url,
         timeoutMs: probeTimeoutMs,

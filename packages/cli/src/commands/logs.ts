@@ -28,44 +28,44 @@ export function registerLogsCommand(program: Command): void {
     .option("-f, --follow", "Follow log output (default: true when no service filter)", false)
     .option("--lines <count>", "Number of historical lines to replay before following", "50")
     .option("--prefix <name>", "Named prefix for the environment")
-    .action(async (service?: string, options?: { follow: boolean; prefix?: string; lines?: string; }) => {
-      let repoId: string;
-      let envId: string;
+    .action(
+      async (service?: string, options?: { follow: boolean; prefix?: string; lines?: string }) => {
+        let repoId: string;
+        let envId: string;
 
-      try {
-        repoId = getCurrentRepoId();
-        envId = getCurrentEnvId(options?.prefix);
-      } catch (err) {
-        console.error(err instanceof Error ? err.message : err);
-        process.exit(1);
-      }
+        try {
+          repoId = getCurrentRepoId();
+          envId = getCurrentEnvId(options?.prefix);
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : err);
+          process.exit(1);
+        }
 
-      let client;
-      try {
-        client = await getClient();
-      } catch (err) {
-        console.error("Failed to connect to daemon:", err instanceof Error ? err.message : err);
-        process.exit(1);
-      }
+        let client;
+        try {
+          client = await getClient();
+        } catch (err) {
+          console.error("Failed to connect to daemon:", err instanceof Error ? err.message : err);
+          process.exit(1);
+        }
 
-      const services = service ? [service] : undefined;
-      const follow = options?.follow || !service;
-      const lines = options?.lines ? Number.parseInt(options.lines, 10) : 50;
+        const services = service ? [service] : undefined;
+        const follow = options?.follow || !service;
+        const lines = options?.lines ? Number.parseInt(options.lines, 10) : 50;
 
-      try {
-        for await (
-          const line of client.streamLogs(repoId, envId, services, {
+        try {
+          for await (const line of client.streamLogs(repoId, envId, services, {
             follow,
             lines: Number.isFinite(lines) ? lines : 50,
-          })
-        ) {
-          printLogLine(line);
+          })) {
+            printLogLine(line);
+          }
+        } catch (err) {
+          console.error("Log stream error:", err instanceof Error ? err.message : err);
+          process.exit(1);
         }
-      } catch (err) {
-        console.error("Log stream error:", err instanceof Error ? err.message : err);
-        process.exit(1);
-      }
-    });
+      },
+    );
 }
 
 function printLogLine(line: LogLine): void {

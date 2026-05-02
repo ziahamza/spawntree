@@ -71,35 +71,31 @@ export function ServiceCard({ service, onServiceClick }: ServiceCardProps) {
         </div>
 
         <div className="flex items-center gap-4 flex-wrap">
-          {service.port != null && (
-            <span>
-              :{service.port}
-            </span>
+          {service.port != null && <span>:{service.port}</span>}
+          {previewURL ? (
+            <div className="flex items-center gap-2">
+              <a
+                href={previewURL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-blue hover:underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <ExternalLink className="w-3 h-3" />
+                Open
+              </a>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 text-blue hover:underline"
+                onClick={(e) => handleCopy(previewURL, e)}
+              >
+                <Link2 className="w-3 h-3" />
+                Copy
+              </button>
+            </div>
+          ) : (
+            <span className="text-muted/70">No HTTP preview</span>
           )}
-          {previewURL
-            ? (
-              <div className="flex items-center gap-2">
-                <a
-                  href={previewURL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-blue hover:underline"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  Open
-                </a>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 text-blue hover:underline"
-                  onClick={(e) => handleCopy(previewURL, e)}
-                >
-                  <Link2 className="w-3 h-3" />
-                  Copy
-                </button>
-              </div>
-            )
-            : <span className="text-muted/70">No HTTP preview</span>}
         </div>
       </div>
     </button>

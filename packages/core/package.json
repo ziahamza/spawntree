@@ -2,6 +2,15 @@
   "name": "spawntree-core",
   "version": "0.6.0",
   "description": "Core orchestration logic for spawntree",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ziahamza/spawntree.git",
+    "directory": "packages/core"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,19 +24,10 @@
       "types": "./dist/browser.d.ts"
     }
   },
-  "files": [
-    "dist"
-  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "prepublishOnly": "pnpm build"
-  },
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/ziahamza/spawntree.git",
-    "directory": "packages/core"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.670.0",

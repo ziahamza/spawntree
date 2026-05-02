@@ -126,7 +126,7 @@ describe("validateConfig", () => {
     });
     expect("errors" in result).toBe(true);
     if ("errors" in result) {
-      expect(result.errors[0].message).toContain("Unknown dependency \"missing\"");
+      expect(result.errors[0].message).toContain('Unknown dependency "missing"');
     }
   });
 

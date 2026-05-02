@@ -67,20 +67,14 @@ describe.skipIf(!SHOULD_RUN)("s3SnapshotProvider against MinIO", () => {
       },
     });
     primary = await localStorageProvider.create({}, ctx);
-    await primary.client.execute(
-      `CREATE TABLE sessions (id TEXT PRIMARY KEY, data TEXT)`,
-    );
-    await primary.client.execute(
-      `INSERT INTO sessions VALUES ('s1', 'hello'), ('s2', 'world')`,
-    );
+    await primary.client.execute(`CREATE TABLE sessions (id TEXT PRIMARY KEY, data TEXT)`);
+    await primary.client.execute(`INSERT INTO sessions VALUES ('s1', 'hello'), ('s2', 'world')`);
   });
 
   afterEach(async () => {
     await primary.shutdown().catch(() => undefined);
     try {
-      const list = await s3.send(
-        new ListObjectsV2Command({ Bucket: bucket!, Prefix: keyPrefix }),
-      );
+      const list = await s3.send(new ListObjectsV2Command({ Bucket: bucket!, Prefix: keyPrefix }));
       if (list.Contents?.length) {
         await s3.send(
           new DeleteObjectsCommand({
@@ -118,9 +112,7 @@ describe.skipIf(!SHOULD_RUN)("s3SnapshotProvider against MinIO", () => {
       expect(status.error).toBeUndefined();
 
       const finalKey = `${keyPrefix}/laptop/spawntree.db`;
-      const obj = await s3.send(
-        new GetObjectCommand({ Bucket: bucket!, Key: finalKey }),
-      );
+      const obj = await s3.send(new GetObjectCommand({ Bucket: bucket!, Key: finalKey }));
       expect(obj.ContentLength).toBeGreaterThan(0);
 
       // Tmp keys must be cleaned up.

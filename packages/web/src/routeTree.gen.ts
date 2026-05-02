@@ -8,163 +8,155 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from './routes/__root'
-import { Route as InfraRouteImport } from './routes/infra'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as SessionsIndexRouteImport } from './routes/sessions.index'
-import { Route as SessionsIdRouteImport } from './routes/sessions.$id'
-import { Route as ReposSlugRouteImport } from './routes/repos.$slug'
-import { Route as ReposSlugEnvsEnvIdRouteImport } from './routes/repos.$slug.envs.$envId'
+import { Route as rootRouteImport } from "./routes/__root";
+import { Route as InfraRouteImport } from "./routes/infra";
+import { Route as IndexRouteImport } from "./routes/index";
+import { Route as SessionsIndexRouteImport } from "./routes/sessions.index";
+import { Route as SessionsIdRouteImport } from "./routes/sessions.$id";
+import { Route as ReposSlugRouteImport } from "./routes/repos.$slug";
+import { Route as ReposSlugEnvsEnvIdRouteImport } from "./routes/repos.$slug.envs.$envId";
 
 const InfraRoute = InfraRouteImport.update({
-  id: '/infra',
-  path: '/infra',
+  id: "/infra",
+  path: "/infra",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+  id: "/",
+  path: "/",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const SessionsIndexRoute = SessionsIndexRouteImport.update({
-  id: '/sessions/',
-  path: '/sessions/',
+  id: "/sessions/",
+  path: "/sessions/",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const SessionsIdRoute = SessionsIdRouteImport.update({
-  id: '/sessions/$id',
-  path: '/sessions/$id',
+  id: "/sessions/$id",
+  path: "/sessions/$id",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const ReposSlugRoute = ReposSlugRouteImport.update({
-  id: '/repos/$slug',
-  path: '/repos/$slug',
+  id: "/repos/$slug",
+  path: "/repos/$slug",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const ReposSlugEnvsEnvIdRoute = ReposSlugEnvsEnvIdRouteImport.update({
-  id: '/envs/$envId',
-  path: '/envs/$envId',
+  id: "/envs/$envId",
+  path: "/envs/$envId",
   getParentRoute: () => ReposSlugRoute,
-} as any)
+} as any);
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/infra': typeof InfraRoute
-  '/repos/$slug': typeof ReposSlugRouteWithChildren
-  '/sessions/$id': typeof SessionsIdRoute
-  '/sessions/': typeof SessionsIndexRoute
-  '/repos/$slug/envs/$envId': typeof ReposSlugEnvsEnvIdRoute
+  "/": typeof IndexRoute;
+  "/infra": typeof InfraRoute;
+  "/repos/$slug": typeof ReposSlugRouteWithChildren;
+  "/sessions/$id": typeof SessionsIdRoute;
+  "/sessions/": typeof SessionsIndexRoute;
+  "/repos/$slug/envs/$envId": typeof ReposSlugEnvsEnvIdRoute;
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/infra': typeof InfraRoute
-  '/repos/$slug': typeof ReposSlugRouteWithChildren
-  '/sessions/$id': typeof SessionsIdRoute
-  '/sessions': typeof SessionsIndexRoute
-  '/repos/$slug/envs/$envId': typeof ReposSlugEnvsEnvIdRoute
+  "/": typeof IndexRoute;
+  "/infra": typeof InfraRoute;
+  "/repos/$slug": typeof ReposSlugRouteWithChildren;
+  "/sessions/$id": typeof SessionsIdRoute;
+  "/sessions": typeof SessionsIndexRoute;
+  "/repos/$slug/envs/$envId": typeof ReposSlugEnvsEnvIdRoute;
 }
 export interface FileRoutesById {
-  __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/infra': typeof InfraRoute
-  '/repos/$slug': typeof ReposSlugRouteWithChildren
-  '/sessions/$id': typeof SessionsIdRoute
-  '/sessions/': typeof SessionsIndexRoute
-  '/repos/$slug/envs/$envId': typeof ReposSlugEnvsEnvIdRoute
+  __root__: typeof rootRouteImport;
+  "/": typeof IndexRoute;
+  "/infra": typeof InfraRoute;
+  "/repos/$slug": typeof ReposSlugRouteWithChildren;
+  "/sessions/$id": typeof SessionsIdRoute;
+  "/sessions/": typeof SessionsIndexRoute;
+  "/repos/$slug/envs/$envId": typeof ReposSlugEnvsEnvIdRoute;
 }
 export interface FileRouteTypes {
-  fileRoutesByFullPath: FileRoutesByFullPath
+  fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
-    | '/'
-    | '/infra'
-    | '/repos/$slug'
-    | '/sessions/$id'
-    | '/sessions/'
-    | '/repos/$slug/envs/$envId'
-  fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/infra'
-    | '/repos/$slug'
-    | '/sessions/$id'
-    | '/sessions'
-    | '/repos/$slug/envs/$envId'
+    | "/"
+    | "/infra"
+    | "/repos/$slug"
+    | "/sessions/$id"
+    | "/sessions/"
+    | "/repos/$slug/envs/$envId";
+  fileRoutesByTo: FileRoutesByTo;
+  to: "/" | "/infra" | "/repos/$slug" | "/sessions/$id" | "/sessions" | "/repos/$slug/envs/$envId";
   id:
-    | '__root__'
-    | '/'
-    | '/infra'
-    | '/repos/$slug'
-    | '/sessions/$id'
-    | '/sessions/'
-    | '/repos/$slug/envs/$envId'
-  fileRoutesById: FileRoutesById
+    | "__root__"
+    | "/"
+    | "/infra"
+    | "/repos/$slug"
+    | "/sessions/$id"
+    | "/sessions/"
+    | "/repos/$slug/envs/$envId";
+  fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  InfraRoute: typeof InfraRoute
-  ReposSlugRoute: typeof ReposSlugRouteWithChildren
-  SessionsIdRoute: typeof SessionsIdRoute
-  SessionsIndexRoute: typeof SessionsIndexRoute
+  IndexRoute: typeof IndexRoute;
+  InfraRoute: typeof InfraRoute;
+  ReposSlugRoute: typeof ReposSlugRouteWithChildren;
+  SessionsIdRoute: typeof SessionsIdRoute;
+  SessionsIndexRoute: typeof SessionsIndexRoute;
 }
 
-declare module '@tanstack/react-router' {
+declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
-    '/infra': {
-      id: '/infra'
-      path: '/infra'
-      fullPath: '/infra'
-      preLoaderRoute: typeof InfraRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/sessions/': {
-      id: '/sessions/'
-      path: '/sessions'
-      fullPath: '/sessions/'
-      preLoaderRoute: typeof SessionsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/sessions/$id': {
-      id: '/sessions/$id'
-      path: '/sessions/$id'
-      fullPath: '/sessions/$id'
-      preLoaderRoute: typeof SessionsIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/repos/$slug': {
-      id: '/repos/$slug'
-      path: '/repos/$slug'
-      fullPath: '/repos/$slug'
-      preLoaderRoute: typeof ReposSlugRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/repos/$slug/envs/$envId': {
-      id: '/repos/$slug/envs/$envId'
-      path: '/envs/$envId'
-      fullPath: '/repos/$slug/envs/$envId'
-      preLoaderRoute: typeof ReposSlugEnvsEnvIdRouteImport
-      parentRoute: typeof ReposSlugRoute
-    }
+    "/infra": {
+      id: "/infra";
+      path: "/infra";
+      fullPath: "/infra";
+      preLoaderRoute: typeof InfraRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/": {
+      id: "/";
+      path: "/";
+      fullPath: "/";
+      preLoaderRoute: typeof IndexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/sessions/": {
+      id: "/sessions/";
+      path: "/sessions";
+      fullPath: "/sessions/";
+      preLoaderRoute: typeof SessionsIndexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/sessions/$id": {
+      id: "/sessions/$id";
+      path: "/sessions/$id";
+      fullPath: "/sessions/$id";
+      preLoaderRoute: typeof SessionsIdRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/repos/$slug": {
+      id: "/repos/$slug";
+      path: "/repos/$slug";
+      fullPath: "/repos/$slug";
+      preLoaderRoute: typeof ReposSlugRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/repos/$slug/envs/$envId": {
+      id: "/repos/$slug/envs/$envId";
+      path: "/envs/$envId";
+      fullPath: "/repos/$slug/envs/$envId";
+      preLoaderRoute: typeof ReposSlugEnvsEnvIdRouteImport;
+      parentRoute: typeof ReposSlugRoute;
+    };
   }
 }
 
 interface ReposSlugRouteChildren {
-  ReposSlugEnvsEnvIdRoute: typeof ReposSlugEnvsEnvIdRoute
+  ReposSlugEnvsEnvIdRoute: typeof ReposSlugEnvsEnvIdRoute;
 }
 
 const ReposSlugRouteChildren: ReposSlugRouteChildren = {
   ReposSlugEnvsEnvIdRoute: ReposSlugEnvsEnvIdRoute,
-}
+};
 
-const ReposSlugRouteWithChildren = ReposSlugRoute._addFileChildren(
-  ReposSlugRouteChildren,
-)
+const ReposSlugRouteWithChildren = ReposSlugRoute._addFileChildren(ReposSlugRouteChildren);
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -172,7 +164,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReposSlugRoute: ReposSlugRouteWithChildren,
   SessionsIdRoute: SessionsIdRoute,
   SessionsIndexRoute: SessionsIndexRoute,
-}
+};
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>()
+  ._addFileTypes<FileRouteTypes>();

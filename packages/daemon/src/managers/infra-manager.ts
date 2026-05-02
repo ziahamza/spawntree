@@ -63,10 +63,7 @@ export class InfraManager {
   // --------------------------------------------------------------------------
 
   async stopAll(): Promise<void> {
-    await Promise.all([
-      this.stopAllPostgres(),
-      this.stopRedis(),
-    ]);
+    await Promise.all([this.stopAllPostgres(), this.stopRedis()]);
   }
 
   async stopPostgres(version?: string): Promise<void> {
@@ -83,9 +80,7 @@ export class InfraManager {
   }
 
   private async stopAllPostgres(): Promise<void> {
-    await Promise.all(
-      [...this.postgresRunners.values()].map((r) => r.stop()),
-    );
+    await Promise.all([...this.postgresRunners.values()].map((r) => r.stop()));
   }
 
   // --------------------------------------------------------------------------

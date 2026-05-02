@@ -100,17 +100,19 @@ describe("Codex adapter turnId consistency", () => {
     const events: Array<{ type: string; turnId?: string }> = [];
     adapter.onSessionEvent((event) => {
       if (
-        event.type === "turn_started"
-        || event.type === "message_delta"
-        || event.type === "turn_completed"
+        event.type === "turn_started" ||
+        event.type === "message_delta" ||
+        event.type === "turn_completed"
       ) {
         events.push({ type: event.type, turnId: event.turnId });
       }
     });
 
-    const handle = (adapter as unknown as {
-      handleNotification: (method: string, params: unknown) => void;
-    }).handleNotification.bind(adapter);
+    const handle = (
+      adapter as unknown as {
+        handleNotification: (method: string, params: unknown) => void;
+      }
+    ).handleNotification.bind(adapter);
 
     handle("turn/started", { threadId: "sess-1", turn: { id: "turn-7" } });
     handle("item/agentMessage/delta", {

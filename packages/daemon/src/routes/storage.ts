@@ -44,15 +44,11 @@ export interface StorageRoutesOptions {
   hostSync?: HostConfigSync | null;
 }
 
-export function createStorageRoutes(
-  manager: StorageManager,
-  options: StorageRoutesOptions = {},
-) {
+export function createStorageRoutes(manager: StorageManager, options: StorageRoutesOptions = {}) {
   const app = new Hono();
   const policy: CorsPolicy = {
     ...corsPolicyFromEnv("SPAWNTREE_STORAGE_TRUST_REMOTE"),
-    trustRemote: options.trustRemoteOrigin
-      ?? process.env.SPAWNTREE_STORAGE_TRUST_REMOTE === "1",
+    trustRemote: options.trustRemoteOrigin ?? process.env.SPAWNTREE_STORAGE_TRUST_REMOTE === "1",
   };
   // Storage routes accept GET (read) plus PUT/POST/DELETE (admin writes).
   // The catalog default ("GET,POST,DELETE,OPTIONS") doesn't include PUT,
@@ -199,12 +195,7 @@ async function parseBody<T>(c: Context): Promise<T | null> {
   }
 }
 
-function errorResponse(
-  c: Context,
-  status: 400 | 404 | 500,
-  code: string,
-  err: unknown,
-) {
+function errorResponse(c: Context, status: 400 | 404 | 500, code: string, err: unknown) {
   return c.json(
     {
       error: err instanceof Error ? err.message : String(err),
@@ -225,9 +216,6 @@ function isLoopbackRequest(c: Context): boolean {
   const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } };
   const addr = env?.incoming?.socket?.remoteAddress ?? "";
   return (
-    addr === "127.0.0.1"
-    || addr === "::1"
-    || addr === "::ffff:127.0.0.1"
-    || addr.startsWith("127.")
+    addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1" || addr.startsWith("127.")
   );
 }

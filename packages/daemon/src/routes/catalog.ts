@@ -42,15 +42,11 @@ interface BatchBody {
   queries?: unknown;
 }
 
-export function createCatalogRoutes(
-  storage: StorageManager,
-  options: CatalogRoutesOptions = {},
-) {
+export function createCatalogRoutes(storage: StorageManager, options: CatalogRoutesOptions = {}) {
   const app = new Hono();
   const policy: CorsPolicy = {
     ...corsPolicyFromEnv("SPAWNTREE_CATALOG_TRUST_REMOTE"),
-    trustRemote: options.trustRemoteOrigin
-      ?? process.env.SPAWNTREE_CATALOG_TRUST_REMOTE === "1",
+    trustRemote: options.trustRemoteOrigin ?? process.env.SPAWNTREE_CATALOG_TRUST_REMOTE === "1",
   };
 
   app.use("*", async (c, next) => {
@@ -132,10 +128,7 @@ export function createCatalogRoutes(
     }
     const verdict = classifyReadOnlySql(sql);
     if (!verdict.ok) {
-      return c.json(
-        { error: verdict.reason, code: "READONLY_QUERY_REJECTED" },
-        400,
-      );
+      return c.json({ error: verdict.reason, code: "READONLY_QUERY_REJECTED" }, 400);
     }
     const params = Array.isArray(body?.params) ? (body.params as Array<unknown>) : [];
     const method = normalizeMethod(body?.method);
@@ -170,7 +163,11 @@ export function createCatalogRoutes(
       }));
       const resultSets = await storage.client.batch(statements, "write");
       const results = resultSets.map((rs, i) => ({
-        rows: projectRows(rs.rows as ReadonlyArray<Record<string, unknown>>, rs.columns, queries[i]!.method),
+        rows: projectRows(
+          rs.rows as ReadonlyArray<Record<string, unknown>>,
+          rs.columns,
+          queries[i]!.method,
+        ),
       }));
       return c.json({ results });
     } catch (err) {
@@ -304,8 +301,13 @@ function replaceStringsAndComments(sql: string): string {
       i++;
       while (i < n) {
         if (sql.charAt(i) === "'") {
-          if (sql.charAt(i + 1) === "'") { space(2); i += 2; continue; }
-          space(1); i++;
+          if (sql.charAt(i + 1) === "'") {
+            space(2);
+            i += 2;
+            continue;
+          }
+          space(1);
+          i++;
           break;
         }
         space(1);
@@ -318,8 +320,13 @@ function replaceStringsAndComments(sql: string): string {
       i++;
       while (i < n) {
         if (sql.charAt(i) === '"') {
-          if (sql.charAt(i + 1) === '"') { space(2); i += 2; continue; }
-          space(1); i++;
+          if (sql.charAt(i + 1) === '"') {
+            space(2);
+            i += 2;
+            continue;
+          }
+          space(1);
+          i++;
           break;
         }
         space(1);
@@ -330,8 +337,14 @@ function replaceStringsAndComments(sql: string): string {
     if (c === "`") {
       space(1);
       i++;
-      while (i < n && sql.charAt(i) !== "`") { space(1); i++; }
-      if (i < n) { space(1); i++; }
+      while (i < n && sql.charAt(i) !== "`") {
+        space(1);
+        i++;
+      }
+      if (i < n) {
+        space(1);
+        i++;
+      }
       continue;
     }
     out.push(c);
@@ -420,9 +433,7 @@ function classifyPragma(raw: string): { ok: true } | { ok: false; reason: string
   }
   // `main.cache_size` → `cache_size`. Anything before the last dot is
   // a schema identifier and doesn't change the pragma's effect.
-  const baseName = fullName.includes(".")
-    ? fullName.split(".").pop()!
-    : fullName;
+  const baseName = fullName.includes(".") ? fullName.split(".").pop()! : fullName;
 
   const allowedForm = ALLOWED_PRAGMAS.get(baseName);
   if (!allowedForm) {
@@ -507,8 +518,14 @@ function hasMultipleStatements(raw: string): boolean {
     if (ch === "'") {
       i++;
       while (i < raw.length) {
-        if (raw[i] === "'" && raw[i + 1] === "'") { i += 2; continue; }
-        if (raw[i] === "'") { i++; break; }
+        if (raw[i] === "'" && raw[i + 1] === "'") {
+          i += 2;
+          continue;
+        }
+        if (raw[i] === "'") {
+          i++;
+          break;
+        }
         i++;
       }
       continue;
@@ -517,8 +534,14 @@ function hasMultipleStatements(raw: string): boolean {
     if (ch === '"') {
       i++;
       while (i < raw.length) {
-        if (raw[i] === '"' && raw[i + 1] === '"') { i += 2; continue; }
-        if (raw[i] === '"') { i++; break; }
+        if (raw[i] === '"' && raw[i + 1] === '"') {
+          i += 2;
+          continue;
+        }
+        if (raw[i] === '"') {
+          i++;
+          break;
+        }
         i++;
       }
       continue;
@@ -630,12 +653,7 @@ async function parseBody<T>(c: Context): Promise<T | null> {
   }
 }
 
-function errorResponse(
-  c: Context,
-  status: 400 | 403 | 404 | 500,
-  code: string,
-  err: unknown,
-) {
+function errorResponse(c: Context, status: 400 | 403 | 404 | 500, code: string, err: unknown) {
   return c.json(
     {
       error: err instanceof Error ? err.message : String(err),
@@ -649,10 +667,7 @@ function isLoopbackRequest(c: Context): boolean {
   const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } };
   const addr = env?.incoming?.socket?.remoteAddress ?? "";
   return (
-    addr === "127.0.0.1"
-    || addr === "::1"
-    || addr === "::ffff:127.0.0.1"
-    || addr.startsWith("127.")
+    addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1" || addr.startsWith("127.")
   );
 }
 

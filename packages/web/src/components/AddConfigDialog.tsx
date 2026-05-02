@@ -1,5 +1,16 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { CheckCircle2, ExternalLink, Link2, Loader2, Play, Settings2, Square, Wand2, X, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  ExternalLink,
+  Link2,
+  Loader2,
+  Play,
+  Settings2,
+  Square,
+  Wand2,
+  X,
+  XCircle,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { debugLog } from "../lib/debug";
 import {
@@ -100,7 +111,7 @@ function requiresHealthcheck(service: ServiceDraft) {
   return service.selected && (service.type === "process" || service.type === "container");
 }
 
-function previewURLForService(service: { url?: string; type?: string; }) {
+function previewURLForService(service: { url?: string; type?: string }) {
   if (service.type === "postgres" || service.type === "redis") return null;
   if (!service.url) return null;
   return /^https?:\/\//.test(service.url) ? service.url : null;
@@ -149,7 +160,7 @@ function LivePreviewLogs({
 
   return (
     <pre className="text-[11px] font-mono text-foreground bg-background rounded-md p-2 overflow-auto max-h-56 whitespace-pre-wrap">
-      {lines.length > 0 ? lines.join('\n') : 'Waiting for logs…'}
+      {lines.length > 0 ? lines.join("\n") : "Waiting for logs…"}
     </pre>
   );
 }
@@ -243,11 +254,14 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     const previewId = preview.previewId;
     stoppingPreviewIdRef.current = previewId;
     setPreview(null);
-    void stopPreview.mutateAsync({ previewId }).catch(() => {}).finally(() => {
-      if (stoppingPreviewIdRef.current === previewId) {
-        stoppingPreviewIdRef.current = null;
-      }
-    });
+    void stopPreview
+      .mutateAsync({ previewId })
+      .catch(() => {})
+      .finally(() => {
+        if (stoppingPreviewIdRef.current === previewId) {
+          stoppingPreviewIdRef.current = null;
+        }
+      });
   }, [open, preview?.previewId, stopPreview]);
 
   const verificationSummary = useMemo(() => {
@@ -276,17 +290,21 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     visit(serviceName);
 
     return services
-      .filter((service) =>
-        required.has(service.name) && requiresHealthcheck(service) && !service.healthcheckUrl?.trim()
+      .filter(
+        (service) =>
+          required.has(service.name) &&
+          requiresHealthcheck(service) &&
+          !service.healthcheckUrl?.trim(),
       )
       .map((service) => service.name);
   }
 
-  const canSave = !!repoPath
-    && lastVerifiedContent === currentContent
-    && !!testConfig.data?.ok
-    && !saveConfig.isPending
-    && missingHealthchecks.length === 0;
+  const canSave =
+    !!repoPath &&
+    lastVerifiedContent === currentContent &&
+    !!testConfig.data?.ok &&
+    !saveConfig.isPending &&
+    missingHealthchecks.length === 0;
 
   async function stopActivePreview() {
     if (!preview?.previewId) return;
@@ -295,16 +313,21 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     debugLog("config", "stop active preview", { previewId });
     stoppingPreviewIdRef.current = previewId;
     setPreview(null);
-    await stopPreview.mutateAsync({ previewId }).catch(() => {}).finally(() => {
-      if (stoppingPreviewIdRef.current === previewId) {
-        stoppingPreviewIdRef.current = null;
-      }
-    });
+    await stopPreview
+      .mutateAsync({ previewId })
+      .catch(() => {})
+      .finally(() => {
+        if (stoppingPreviewIdRef.current === previewId) {
+          stoppingPreviewIdRef.current = null;
+        }
+      });
   }
 
   function updateService(id: string, patch: Partial<ServiceDraft>) {
     void stopActivePreview();
-    setServices((prev) => prev.map((service) => (service.id === id ? { ...service, ...patch } : service)));
+    setServices((prev) =>
+      prev.map((service) => (service.id === id ? { ...service, ...patch } : service)),
+    );
     setRawDirty(false);
     setLastVerifiedContent(null);
   }
@@ -326,7 +349,11 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
     await stopActivePreview();
     debugLog("config", "preview start", { repoPath, serviceName: serviceName ?? "all" });
     try {
-      const result = await startPreview.mutateAsync({ repoPath, content: currentContent, serviceName });
+      const result = await startPreview.mutateAsync({
+        repoPath,
+        content: currentContent,
+        serviceName,
+      });
       debugLog("config", "preview started", result);
       setPreview({
         previewId: result.previewId,
@@ -375,12 +402,15 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
           </div>
 
           <Dialog.Description className="text-xs text-muted mb-4 flex-shrink-0">
-            Suggestions are preloaded from workspace files, version files, package scripts, and compose files. Run
-            services here and debug them in place before saving.
+            Suggestions are preloaded from workspace files, version files, package scripts, and
+            compose files. Run services here and debug them in place before saving.
           </Dialog.Description>
 
           {repoPath && (
-            <p className="text-[11px] font-mono text-muted mb-4 truncate flex-shrink-0" title={repoPath}>
+            <p
+              className="text-[11px] font-mono text-muted mb-4 truncate flex-shrink-0"
+              title={repoPath}
+            >
               {repoPath}
             </p>
           )}
@@ -393,10 +423,12 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
               className="mt-0.5"
             />
             <span>
-              <span className="block text-foreground mb-1">Save into the default branch worktree</span>
+              <span className="block text-foreground mb-1">
+                Save into the default branch worktree
+              </span>
               <span>
-                Uncheck this to save a global fallback config instead. That fallback is used when the repo path does not
-                have a local `spawntree.yaml`.
+                Uncheck this to save a global fallback config instead. That fallback is used when
+                the repo path does not have a local `spawntree.yaml`.
               </span>
             </span>
           </label>
@@ -454,8 +486,12 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
               <button
                 type="button"
                 onClick={() => handlePreview()}
-                disabled={!repoPath || startPreview.isPending || stopPreview.isPending
-                  || missingHealthchecks.length > 0}
+                disabled={
+                  !repoPath ||
+                  startPreview.isPending ||
+                  stopPreview.isPending ||
+                  missingHealthchecks.length > 0
+                }
                 className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground hover:border-foreground/30 disabled:opacity-50"
               >
                 <Play className="w-3 h-3" />
@@ -465,277 +501,305 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
           </div>
 
           <div className="flex-1 min-h-0 overflow-auto">
-            {tab === "suggested"
-              ? (
-                !suggestionsReady
-                  ? (
-                    <div className="space-y-3 pr-1">
-                      {[1, 2, 3].map((index) => (
-                        <div key={index} className="rounded-lg border border-border bg-background p-4 animate-pulse">
-                          <div className="h-4 w-32 bg-surface rounded mb-3" />
-                          <div className="h-10 bg-surface rounded mb-2" />
-                          <div className="grid sm:grid-cols-2 gap-2">
-                            <div className="h-9 bg-surface rounded" />
-                            <div className="h-9 bg-surface rounded" />
-                            <div className="sm:col-span-2 h-9 bg-surface rounded" />
-                          </div>
-                        </div>
-                      ))}
+            {tab === "suggested" ? (
+              !suggestionsReady ? (
+                <div className="space-y-3 pr-1">
+                  {[1, 2, 3].map((index) => (
+                    <div
+                      key={index}
+                      className="rounded-lg border border-border bg-background p-4 animate-pulse"
+                    >
+                      <div className="h-4 w-32 bg-surface rounded mb-3" />
+                      <div className="h-10 bg-surface rounded mb-2" />
+                      <div className="grid sm:grid-cols-2 gap-2">
+                        <div className="h-9 bg-surface rounded" />
+                        <div className="h-9 bg-surface rounded" />
+                        <div className="sm:col-span-2 h-9 bg-surface rounded" />
+                      </div>
                     </div>
-                  )
-                  : (
-                    <div className="space-y-3 pr-1">
-                      {services.map((service) => {
-                        const activePreview = preview?.serviceName === service.name;
-                        const liveService = activePreview
-                          ? (livePreviewEnv?.services.find((item) => item.name === service.name)
-                            ?? preview?.env.services.find((item) => item.name === service.name) ?? null)
-                          : null;
-                        const previewURL = previewURLForService(liveService ?? {});
-                        const testService = testConfig.data?.services?.find((item) => item.name === service.name)
-                          ?? null;
-                        const serviceMissingHealthchecks = missingHealthchecksFor(service.name);
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-3 pr-1">
+                  {services.map((service) => {
+                    const activePreview = preview?.serviceName === service.name;
+                    const liveService = activePreview
+                      ? (livePreviewEnv?.services.find((item) => item.name === service.name) ??
+                        preview?.env.services.find((item) => item.name === service.name) ??
+                        null)
+                      : null;
+                    const previewURL = previewURLForService(liveService ?? {});
+                    const testService =
+                      testConfig.data?.services?.find((item) => item.name === service.name) ?? null;
+                    const serviceMissingHealthchecks = missingHealthchecksFor(service.name);
 
-                        return (
-                          <div key={service.id} className="rounded-lg border border-border bg-background p-4">
-                            <div className="flex items-start gap-3 mb-3">
+                    return (
+                      <div
+                        key={service.id}
+                        className="rounded-lg border border-border bg-background p-4"
+                      >
+                        <div className="flex items-start gap-3 mb-3">
+                          <input
+                            type="checkbox"
+                            checked={service.selected}
+                            onChange={(e) =>
+                              updateService(service.id, { selected: e.target.checked })
+                            }
+                            className="mt-1"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
                               <input
-                                type="checkbox"
-                                checked={service.selected}
-                                onChange={(e) => updateService(service.id, { selected: e.target.checked })}
-                                className="mt-1"
+                                value={service.name}
+                                onChange={(e) =>
+                                  updateService(service.id, { name: e.target.value })
+                                }
+                                className="px-2 py-1 rounded-md border border-border bg-surface text-sm text-foreground min-w-[180px]"
                               />
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <select
+                                value={service.type}
+                                onChange={(e) =>
+                                  updateService(service.id, {
+                                    type: e.target.value as ServiceDraft["type"],
+                                  })
+                                }
+                                className="px-2 py-1 rounded-md border border-border bg-surface text-xs text-foreground"
+                              >
+                                <option value="process">process</option>
+                                <option value="container">container</option>
+                                <option value="postgres">postgres</option>
+                                <option value="redis">redis</option>
+                              </select>
+                              <span className="text-[11px] text-muted">
+                                {sourceLabel(service.source)}
+                              </span>
+                            </div>
+
+                            {service.reason && (
+                              <p className="text-[11px] text-muted mb-2 flex items-center gap-1">
+                                <Wand2 className="w-3 h-3" />
+                                {service.reason}
+                              </p>
+                            )}
+
+                            {(service.type === "process" || service.type === "container") && (
+                              <div className="mb-2 flex items-stretch gap-2">
+                                <div className="flex items-center gap-2 flex-1 rounded-md border border-border bg-surface px-2">
+                                  <span className="text-muted font-mono text-xs">$</span>
                                   <input
-                                    value={service.name}
-                                    onChange={(e) => updateService(service.id, { name: e.target.value })}
-                                    className="px-2 py-1 rounded-md border border-border bg-surface text-sm text-foreground min-w-[180px]"
-                                  />
-                                  <select
-                                    value={service.type}
+                                    value={
+                                      service.type === "process"
+                                        ? (service.command ?? "")
+                                        : (service.image ?? "")
+                                    }
                                     onChange={(e) =>
-                                      updateService(service.id, { type: e.target.value as ServiceDraft["type"] })}
-                                    className="px-2 py-1 rounded-md border border-border bg-surface text-xs text-foreground"
-                                  >
-                                    <option value="process">process</option>
-                                    <option value="container">container</option>
-                                    <option value="postgres">postgres</option>
-                                    <option value="redis">redis</option>
-                                  </select>
-                                  <span className="text-[11px] text-muted">{sourceLabel(service.source)}</span>
+                                      updateService(
+                                        service.id,
+                                        service.type === "process"
+                                          ? { command: e.target.value }
+                                          : { image: e.target.value },
+                                      )
+                                    }
+                                    placeholder={service.type === "process" ? "command" : "image"}
+                                    className="w-full bg-transparent py-1.5 text-xs font-mono text-foreground focus:outline-none"
+                                  />
                                 </div>
 
-                                {service.reason && (
-                                  <p className="text-[11px] text-muted mb-2 flex items-center gap-1">
-                                    <Wand2 className="w-3 h-3" />
-                                    {service.reason}
-                                  </p>
-                                )}
-
-                                {(service.type === "process" || service.type === "container") && (
-                                  <div className="mb-2 flex items-stretch gap-2">
-                                    <div className="flex items-center gap-2 flex-1 rounded-md border border-border bg-surface px-2">
-                                      <span className="text-muted font-mono text-xs">$</span>
-                                      <input
-                                        value={service.type === "process"
-                                          ? (service.command ?? "")
-                                          : (service.image ?? "")}
-                                        onChange={(e) =>
-                                          updateService(
-                                            service.id,
-                                            service.type === "process"
-                                              ? { command: e.target.value }
-                                              : { image: e.target.value },
-                                          )}
-                                        placeholder={service.type === "process" ? "command" : "image"}
-                                        className="w-full bg-transparent py-1.5 text-xs font-mono text-foreground focus:outline-none"
-                                      />
-                                    </div>
-
-                                    {activePreview
-                                      ? (
+                                {activePreview ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={stopActivePreview}
+                                      disabled={stopPreview.isPending}
+                                      className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground hover:border-foreground/30 disabled:opacity-50"
+                                    >
+                                      <Square className="w-3 h-3" />
+                                      Stop
+                                    </button>
+                                    <div className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs">
+                                      {previewURL ? (
                                         <>
+                                          <a
+                                            href={previewURL}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1 text-blue hover:underline"
+                                          >
+                                            <ExternalLink className="w-3 h-3" />
+                                            Open
+                                          </a>
                                           <button
                                             type="button"
-                                            onClick={stopActivePreview}
-                                            disabled={stopPreview.isPending}
-                                            className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground hover:border-foreground/30 disabled:opacity-50"
+                                            className="inline-flex items-center gap-1 text-blue hover:underline"
+                                            onClick={async () => {
+                                              try {
+                                                await navigator.clipboard.writeText(previewURL);
+                                              } catch {
+                                                window.prompt("Copy preview URL", previewURL);
+                                              }
+                                            }}
                                           >
-                                            <Square className="w-3 h-3" />
-                                            Stop
+                                            <Link2 className="w-3 h-3" />
+                                            Copy
                                           </button>
-                                          <div className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs">
-                                            {previewURL
-                                              ? (
-                                                <>
-                                                  <a
-                                                    href={previewURL}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="inline-flex items-center gap-1 text-blue hover:underline"
-                                                  >
-                                                    <ExternalLink className="w-3 h-3" />
-                                                    Open
-                                                  </a>
-                                                  <button
-                                                    type="button"
-                                                    className="inline-flex items-center gap-1 text-blue hover:underline"
-                                                    onClick={async () => {
-                                                      try {
-                                                        await navigator.clipboard.writeText(previewURL);
-                                                      } catch {
-                                                        window.prompt("Copy preview URL", previewURL);
-                                                      }
-                                                    }}
-                                                  >
-                                                    <Link2 className="w-3 h-3" />
-                                                    Copy
-                                                  </button>
-                                                </>
-                                              )
-                                              : <span className="text-muted">Link pending…</span>}
-                                          </div>
                                         </>
-                                      )
-                                      : (
-                                        <button
-                                          type="button"
-                                          onClick={() => handlePreview(service.name)}
-                                          disabled={!service.selected || startPreview.isPending || stopPreview.isPending
-                                            || serviceMissingHealthchecks.length > 0}
-                                          className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground hover:border-foreground/30 disabled:opacity-50"
-                                        >
-                                          <Play className="w-3 h-3" />
-                                          Run {service.name}
-                                        </button>
+                                      ) : (
+                                        <span className="text-muted">Link pending…</span>
                                       )}
-                                  </div>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handlePreview(service.name)}
+                                    disabled={
+                                      !service.selected ||
+                                      startPreview.isPending ||
+                                      stopPreview.isPending ||
+                                      serviceMissingHealthchecks.length > 0
+                                    }
+                                    className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground hover:border-foreground/30 disabled:opacity-50"
+                                  >
+                                    <Play className="w-3 h-3" />
+                                    Run {service.name}
+                                  </button>
+                                )}
+                              </div>
+                            )}
+
+                            {(service.type === "process" || service.type === "container") && (
+                              <div className="grid sm:grid-cols-2 gap-2">
+                                <input
+                                  type="number"
+                                  value={service.port ?? ""}
+                                  onChange={(e) =>
+                                    updateService(service.id, {
+                                      port: e.target.value ? Number(e.target.value) : undefined,
+                                    })
+                                  }
+                                  placeholder="port"
+                                  className="px-2 py-1.5 rounded-md border border-border bg-surface text-xs text-foreground"
+                                />
+                                <input
+                                  value={service.dependsOn?.join(", ") ?? ""}
+                                  onChange={(e) =>
+                                    updateService(service.id, {
+                                      dependsOn: e.target.value
+                                        .split(",")
+                                        .map((value) => value.trim())
+                                        .filter(Boolean),
+                                    })
+                                  }
+                                  placeholder="depends_on (comma separated)"
+                                  className="px-2 py-1.5 rounded-md border border-border bg-surface text-xs text-foreground"
+                                />
+                                <input
+                                  value={service.healthcheckUrl ?? ""}
+                                  onChange={(e) =>
+                                    updateService(service.id, { healthcheckUrl: e.target.value })
+                                  }
+                                  placeholder="healthcheck URL"
+                                  className="sm:col-span-2 px-2 py-1.5 rounded-md border border-border bg-surface text-xs font-mono text-foreground"
+                                />
+                              </div>
+                            )}
+
+                            {serviceMissingHealthchecks.length > 0 && (
+                              <p className="mt-2 text-[11px] text-orange">
+                                Add healthchecks before running this service. Missing:{" "}
+                                {serviceMissingHealthchecks.join(", ")}
+                              </p>
+                            )}
+
+                            {activePreview && (
+                              <div className="mt-3 rounded-md border border-border bg-surface p-3 space-y-2">
+                                <div className="flex items-center gap-2 flex-wrap text-xs">
+                                  <span
+                                    className={`inline-flex items-center gap-1 ${
+                                      liveService?.status === "running"
+                                        ? "text-green"
+                                        : "text-orange"
+                                    }`}
+                                  >
+                                    {liveService?.status === "running" ? (
+                                      <CheckCircle2 className="w-3 h-3" />
+                                    ) : (
+                                      <XCircle className="w-3 h-3" />
+                                    )}
+                                    {liveService?.status ?? "starting"}
+                                  </span>
+                                  {testService && (
+                                    <span
+                                      className={`inline-flex items-center gap-1 ${
+                                        testService.probeOk ? "text-green" : "text-orange"
+                                      }`}
+                                    >
+                                      {testService.probeOk ? (
+                                        <CheckCircle2 className="w-3 h-3" />
+                                      ) : (
+                                        <XCircle className="w-3 h-3" />
+                                      )}
+                                      {testService.probeError
+                                        ? "GET / failed"
+                                        : testService.probeStatusCode
+                                          ? `GET / -> ${testService.probeStatusCode}`
+                                          : "GET / not run"}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {testService?.probeBodyPreview && (
+                                  <pre className="text-[11px] font-mono text-muted bg-background rounded-md p-2 overflow-auto whitespace-pre-wrap">
+                                    {testService.probeBodyPreview}
+                                  </pre>
                                 )}
 
-                                {(service.type === "process" || service.type === "container") && (
-                                  <div className="grid sm:grid-cols-2 gap-2">
-                                    <input
-                                      type="number"
-                                      value={service.port ?? ""}
-                                      onChange={(e) =>
-                                        updateService(service.id, {
-                                          port: e.target.value ? Number(e.target.value) : undefined,
-                                        })}
-                                      placeholder="port"
-                                      className="px-2 py-1.5 rounded-md border border-border bg-surface text-xs text-foreground"
-                                    />
-                                    <input
-                                      value={service.dependsOn?.join(", ") ?? ""}
-                                      onChange={(e) =>
-                                        updateService(service.id, {
-                                          dependsOn: e.target.value
-                                            .split(",")
-                                            .map((value) => value.trim())
-                                            .filter(Boolean),
-                                        })}
-                                      placeholder="depends_on (comma separated)"
-                                      className="px-2 py-1.5 rounded-md border border-border bg-surface text-xs text-foreground"
-                                    />
-                                    <input
-                                      value={service.healthcheckUrl ?? ""}
-                                      onChange={(e) => updateService(service.id, { healthcheckUrl: e.target.value })}
-                                      placeholder="healthcheck URL"
-                                      className="sm:col-span-2 px-2 py-1.5 rounded-md border border-border bg-surface text-xs font-mono text-foreground"
-                                    />
-                                  </div>
-                                )}
-
-                                {serviceMissingHealthchecks.length > 0 && (
-                                  <p className="mt-2 text-[11px] text-orange">
-                                    Add healthchecks before running this service. Missing:{" "}
-                                    {serviceMissingHealthchecks.join(", ")}
+                                {testService?.probeError && (
+                                  <p className="text-[11px] text-orange">
+                                    {testService.probeError}
                                   </p>
                                 )}
 
-                                {activePreview && (
-                                  <div className="mt-3 rounded-md border border-border bg-surface p-3 space-y-2">
-                                    <div className="flex items-center gap-2 flex-wrap text-xs">
-                                      <span
-                                        className={`inline-flex items-center gap-1 ${
-                                          liveService?.status === "running" ? "text-green" : "text-orange"
-                                        }`}
-                                      >
-                                        {liveService?.status === "running"
-                                          ? <CheckCircle2 className="w-3 h-3" />
-                                          : <XCircle className="w-3 h-3" />}
-                                        {liveService?.status ?? "starting"}
-                                      </span>
-                                      {testService && (
-                                        <span
-                                          className={`inline-flex items-center gap-1 ${
-                                            testService.probeOk ? "text-green" : "text-orange"
-                                          }`}
-                                        >
-                                          {testService.probeOk
-                                            ? <CheckCircle2 className="w-3 h-3" />
-                                            : <XCircle className="w-3 h-3" />}
-                                          {testService.probeError
-                                            ? "GET / failed"
-                                            : testService.probeStatusCode
-                                            ? `GET / -> ${testService.probeStatusCode}`
-                                            : "GET / not run"}
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    {testService?.probeBodyPreview && (
-                                      <pre className="text-[11px] font-mono text-muted bg-background rounded-md p-2 overflow-auto whitespace-pre-wrap">
-                                  {testService.probeBodyPreview}
-                                      </pre>
-                                    )}
-
-                                    {testService?.probeError && (
-                                      <p className="text-[11px] text-orange">{testService.probeError}</p>
-                                    )}
-
-                                    <div>
-                                      <p className="text-[11px] text-muted mb-1">Live logs</p>
-                                      <LivePreviewLogs
-                                        repoID={preview.repoID}
-                                        envID={preview.envID}
-                                        repoPath={preview.repoPath}
-                                        service={service.name}
-                                      />
-                                    </div>
-                                  </div>
-                                )}
+                                <div>
+                                  <p className="text-[11px] text-muted mb-1">Live logs</p>
+                                  <LivePreviewLogs
+                                    repoID={preview.repoID}
+                                    envID={preview.envID}
+                                    repoPath={preview.repoPath}
+                                    service={service.name}
+                                  />
+                                </div>
                               </div>
-                            </div>
+                            )}
                           </div>
-                        );
-                      })}
-                    </div>
-                  )
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )
-              : (
-                <textarea
-                  value={rawContent}
-                  onChange={(e) => {
-                    void stopActivePreview();
-                    setRawContent(e.target.value);
-                    setRawDirty(true);
-                    setLastVerifiedContent(null);
-                  }}
-                  spellCheck={false}
-                  className="w-full min-h-[420px] px-3 py-3 text-sm font-mono bg-background border border-border rounded-md text-foreground placeholder:text-muted focus:outline-none focus:border-blue/50 focus:ring-1 focus:ring-blue/30"
-                />
-              )}
+            ) : (
+              <textarea
+                value={rawContent}
+                onChange={(e) => {
+                  void stopActivePreview();
+                  setRawContent(e.target.value);
+                  setRawDirty(true);
+                  setLastVerifiedContent(null);
+                }}
+                spellCheck={false}
+                className="w-full min-h-[420px] px-3 py-3 text-sm font-mono bg-background border border-border rounded-md text-foreground placeholder:text-muted focus:outline-none focus:border-blue/50 focus:ring-1 focus:ring-blue/30"
+              />
+            )}
           </div>
 
           {(testConfig.error || saveConfig.error || startPreview.error || stopPreview.error) && (
             <p className="mt-3 text-xs text-red bg-red/10 border border-red/30 rounded-md px-3 py-2 whitespace-pre-wrap flex-shrink-0">
-              {(
-                testConfig.error?.message
-                  ?? saveConfig.error?.message
-                  ?? startPreview.error?.message
-                  ?? stopPreview.error?.message
-              ) || "Request failed"}
+              {(testConfig.error?.message ??
+                saveConfig.error?.message ??
+                startPreview.error?.message ??
+                stopPreview.error?.message) ||
+                "Request failed"}
             </p>
           )}
 
@@ -756,7 +820,12 @@ export function AddConfigDialog({ open, repoPath, onOpenChange }: AddConfigDialo
             <button
               type="button"
               onClick={handleTest}
-              disabled={!repoPath || testConfig.isPending || saveConfig.isPending || missingHealthchecks.length > 0}
+              disabled={
+                !repoPath ||
+                testConfig.isPending ||
+                saveConfig.isPending ||
+                missingHealthchecks.length > 0
+              }
               className="flex items-center gap-2 px-4 py-2 text-xs rounded-md border border-border text-muted hover:text-foreground hover:border-foreground/30 transition-colors disabled:opacity-50 min-h-[36px]"
             >
               {testConfig.isPending && <Loader2 className="w-3 h-3 animate-spin" />}

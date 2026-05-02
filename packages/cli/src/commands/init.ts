@@ -23,8 +23,8 @@ export function registerInitCommand(program: Command): void {
         const actualPath = existsSync(composePath)
           ? composePath
           : existsSync(composeAltPath)
-          ? composeAltPath
-          : null;
+            ? composeAltPath
+            : null;
 
         if (!actualPath) {
           console.error("No docker-compose.yml or docker-compose.yaml found.");
@@ -55,7 +55,7 @@ export function registerInitCommand(program: Command): void {
       const template = generateTemplate();
       writeFileSync(configFile, template);
       console.log("Created spawntree.yaml with example template.");
-      console.log("Edit it to match your project, then run \"spawntree up\".");
+      console.log('Edit it to match your project, then run "spawntree up".');
     });
 }
 

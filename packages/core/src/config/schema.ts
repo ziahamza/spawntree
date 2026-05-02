@@ -7,7 +7,7 @@ export interface ValidationError {
 
 export function validateConfig(
   raw: unknown,
-): { config: SpawntreeConfig; } | { errors: ValidationError[]; } {
+): { config: SpawntreeConfig } | { errors: ValidationError[] } {
   const errors: ValidationError[] = [];
 
   if (raw === null || typeof raw !== "object") {
@@ -102,7 +102,7 @@ export function validateConfig(
           if (vol.mode !== undefined && vol.mode !== "ro" && vol.mode !== "rw") {
             errors.push({
               path: `services.${name}.volumes[${i}].mode`,
-              message: "mode must be \"ro\" or \"rw\"",
+              message: 'mode must be "ro" or "rw"',
             });
           }
         }

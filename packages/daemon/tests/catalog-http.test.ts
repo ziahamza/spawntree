@@ -6,18 +6,10 @@ import { resolve } from "node:path";
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  catalogHttpProxy,
-  createCatalogHttpDb,
-  schema,
-} from "spawntree-core";
+import { catalogHttpProxy, createCatalogHttpDb, schema } from "spawntree-core";
 import { StorageManager } from "../src/storage/manager.ts";
 import { createCatalogRoutes } from "../src/routes/catalog.ts";
-import {
-  applyCatalogSchema,
-  upsertClone,
-  upsertRepo,
-} from "../src/catalog/queries.ts";
+import { applyCatalogSchema, upsertClone, upsertRepo } from "../src/catalog/queries.ts";
 import { drizzle } from "drizzle-orm/libsql";
 
 /**
@@ -114,10 +106,7 @@ describe("catalog HTTP proxy + external Drizzle client", () => {
 
   it("typed where clause runs over HTTP", async () => {
     const db = createCatalogHttpDb({ url: `http://127.0.0.1:${port}` });
-    const github = await db
-      .select()
-      .from(schema.repos)
-      .where(eq(schema.repos.provider, "github"));
+    const github = await db.select().from(schema.repos).where(eq(schema.repos.provider, "github"));
     expect(github).toHaveLength(1);
     expect(github[0]?.id).toBe("github/acme/widgets");
   });
@@ -150,10 +139,7 @@ describe("catalog HTTP proxy + external Drizzle client", () => {
   it("catalogHttpProxy callback can be plugged into drizzle() directly", async () => {
     // Users who want to assemble their own Drizzle can use the raw proxy.
     const { drizzle } = await import("drizzle-orm/sqlite-proxy");
-    const db = drizzle(
-      catalogHttpProxy({ url: `http://127.0.0.1:${port}` }),
-      { schema },
-    );
+    const db = drizzle(catalogHttpProxy({ url: `http://127.0.0.1:${port}` }), { schema });
     const rows = await db.select().from(schema.repos);
     expect(rows).toHaveLength(2);
   });

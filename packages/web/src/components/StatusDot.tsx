@@ -16,11 +16,12 @@ export function StatusDot({ status, className = "" }: StatusDotProps) {
     );
   }
 
-  const colorClass = status === "running"
-    ? "bg-green"
-    : status === "starting"
-    ? "bg-orange animate-pulse"
-    : "bg-red"; // crashed
+  const colorClass =
+    status === "running"
+      ? "bg-green"
+      : status === "starting"
+        ? "bg-orange animate-pulse"
+        : "bg-red"; // crashed
 
   return (
     <span

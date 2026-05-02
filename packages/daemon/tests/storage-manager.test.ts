@@ -88,9 +88,18 @@ describe("StorageManager", () => {
         await m.client.execute(`CREATE INDEX widgets_name_idx ON widgets(name)`);
         await m.client.batch(
           [
-            { sql: `INSERT INTO widgets (id, name, count) VALUES (?, ?, ?)`, args: [1, "alpha", 10] },
-            { sql: `INSERT INTO widgets (id, name, count) VALUES (?, ?, ?)`, args: [2, "beta", 20] },
-            { sql: `INSERT INTO widgets (id, name, count) VALUES (?, ?, ?)`, args: [3, "gamma", 30] },
+            {
+              sql: `INSERT INTO widgets (id, name, count) VALUES (?, ?, ?)`,
+              args: [1, "alpha", 10],
+            },
+            {
+              sql: `INSERT INTO widgets (id, name, count) VALUES (?, ?, ?)`,
+              args: [2, "beta", 20],
+            },
+            {
+              sql: `INSERT INTO widgets (id, name, count) VALUES (?, ?, ?)`,
+              args: [3, "gamma", 30],
+            },
           ],
           "write",
         );
@@ -154,9 +163,9 @@ describe("StorageManager", () => {
         await m.client.execute(`INSERT INTO t VALUES (99)`);
 
         const clientBefore = m.client;
-        await expect(
-          m.setPrimary({ id: "failing-primary", config: {} }),
-        ).rejects.toThrow(/simulated provider failure/);
+        await expect(m.setPrimary({ id: "failing-primary", config: {} })).rejects.toThrow(
+          /simulated provider failure/,
+        );
 
         // Old primary must still be the active one — data intact.
         expect(m.client).toBe(clientBefore);
@@ -188,11 +197,7 @@ describe("StorageManager", () => {
         await m.client.execute(`INSERT INTO nums VALUES (1)`);
 
         // Kick off three swaps simultaneously, each to a distinct file.
-        const paths = [
-          resolve(tmp, "a.db"),
-          resolve(tmp, "b.db"),
-          resolve(tmp, "c.db"),
-        ];
+        const paths = [resolve(tmp, "a.db"), resolve(tmp, "b.db"), resolve(tmp, "c.db")];
         const results = await Promise.allSettled(
           paths.map((p) => m.setPrimary({ id: "local", config: { path: p } })),
         );
@@ -224,10 +229,7 @@ describe("StorageManager", () => {
         async create(_config, ctx) {
           await blocker;
           // Fall through to a real local handle so migration can finish.
-          return localStorageProvider.create(
-            { path: resolve(ctx.dataDir, "slow.db") },
-            ctx,
-          );
+          return localStorageProvider.create({ path: resolve(ctx.dataDir, "slow.db") }, ctx);
         },
       };
       const registry = new StorageRegistry();
