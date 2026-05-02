@@ -1,0 +1,27 @@
+# CODEOWNERS for the spawntree repo
+#
+# Why this exists: the repo accepts automated PRs from the gitenv-upstream
+# subtree-sync flow ("Sync from gitenv main"). Those PRs land changes that
+# were already merged into a downstream consumer; they're pre-vetted by
+# CI + Devin Review on each side, but the surface area is wide and a
+# silent regression could land without a human ever looking.
+#
+# Combined with a branch protection rule on `main` that requires "Review
+# from Code Owners," this file forces a human ack on every PR — automated
+# or not — before it merges. See `.github/SETUP.md` for the protection
+# rule that makes this enforceable.
+
+# Default owner for everything. Without a `*` line, GitHub treats files
+# with no rule as having no owner, and the "Require review from Code
+# Owners" branch protection happily lets them through.
+* @ziahamza
+
+# Subtree-sync flows touch every package; explicit listings here would
+# duplicate the wildcard above. Keep it simple.
+
+# Workflow + repo-config files: only the maintainer touches these,
+# regardless of which automated flow opened the PR.
+/.github/                @ziahamza
+/.changeset/             @ziahamza
+/package.json            @ziahamza
+/pnpm-workspace.yaml     @ziahamza
