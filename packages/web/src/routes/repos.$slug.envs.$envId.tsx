@@ -198,9 +198,13 @@ function EnvDetail() {
                   </a>
                   <button
                     type="button"
+<<<<<<< HEAD
                     onClick={() => {
                       void handleCopy(previewURL);
                     }}
+=======
+                    onClick={() => handleCopy(previewURL)}
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
                     className="inline-flex items-center gap-1 text-blue hover:underline"
                   >
                     <Link2 className="w-3 h-3" />

@@ -63,7 +63,11 @@ export function registerInitCommand(program: Command): void {
       const template = generateTemplate();
       mkdirSync(resolve(configFile, ".."), { recursive: true });
       writeFileSync(configFile, template);
+<<<<<<< HEAD
       console.log(`Created ${configFile} with example template.`);
+=======
+      console.log("Created spawntree.yaml with example template.");
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
       console.log('Edit it to match your project, then run "spawntree up".');
     });
 }

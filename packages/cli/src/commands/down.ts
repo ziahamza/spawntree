@@ -7,8 +7,12 @@ export function registerDownCommand(program: Command): void {
     .description("Stop the environment")
     .argument("[env-id]", "Environment ID (default: current branch)")
     .option("--prefix <name>", "Named prefix for the environment")
+<<<<<<< HEAD
     .option("--profile <name>", "Config profile", "default")
     .action(async (envIdArg?: string, options?: { prefix?: string; profile?: string }) => {
+=======
+    .action(async (envIdArg?: string, options?: { prefix?: string }) => {
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
       let repoId: string;
       let envId: string;
 

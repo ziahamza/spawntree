@@ -127,6 +127,7 @@ export function createApp(
       DaemonService.use((service) => service.createEnv(body)),
       201,
     );
+<<<<<<< HEAD
   });
 
   app.get("/api/v1/prepare/status", (context) =>
@@ -150,6 +151,8 @@ export function createApp(
       context,
       DaemonService.use((service) => service.prepare(body)),
     );
+=======
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
   });
 
   app.get("/api/v1/repos/:repoId/envs", (context) =>

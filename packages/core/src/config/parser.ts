@@ -47,6 +47,7 @@ export interface SpawntreeConfig {
   services: Record<string, ServiceConfig>;
 }
 
+<<<<<<< HEAD
 export interface ParseConfigOptions {
   profile?: string;
 }
@@ -56,6 +57,9 @@ export function parseConfig(
   envVars: Record<string, string>,
   options: ParseConfigOptions = {},
 ): SpawntreeConfig {
+=======
+export function parseConfig(yamlContent: string, envVars: Record<string, string>): SpawntreeConfig {
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
   const raw = parseYaml(yamlContent) as Record<string, unknown>;
   const resolvedProfile = resolveProfile(raw, options.profile);
   const profileEnvVars = stringRecord(resolvedProfile.environment);
@@ -67,6 +71,7 @@ export function parseConfig(
   return substituted as SpawntreeConfig;
 }
 
+<<<<<<< HEAD
 function resolveProfile(
   raw: Record<string, unknown>,
   requestedProfile?: string,
@@ -188,6 +193,8 @@ function stringRecord(value: unknown): Record<string, string> {
   return result;
 }
 
+=======
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
 function substituteVarsInObject(obj: unknown, vars: Record<string, string>): unknown {
   if (typeof obj === "string") {
     return substituteVars(obj, vars);

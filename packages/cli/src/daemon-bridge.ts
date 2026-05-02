@@ -71,11 +71,25 @@ export async function ensureDaemon(): Promise<void> {
       waitForDaemon(10_000).then(resolve).catch(reject);
     });
 
+<<<<<<< HEAD
     if (!started) {
       throw new Error("Daemon did not start within 10 seconds");
     }
   } finally {
     releaseLock();
+=======
+    child.once("error", (err) => {
+      reject(new Error(`Failed to start daemon: ${err.message}`));
+    });
+
+    child.unref();
+
+    waitForDaemon(10_000).then(resolve).catch(reject);
+  });
+
+  if (!started) {
+    throw new Error("Daemon did not start within 10 seconds");
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
   }
 }
 

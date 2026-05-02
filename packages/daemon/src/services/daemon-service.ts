@@ -124,8 +124,11 @@ export class DaemonService extends ServiceMap.Service<
     /** Expose the raw DomainEvents bus for direct publication (e.g. SessionManager). */
     readonly domainEvents: Effect.Effect<DomainEvents>;
     listEnvs(repoId?: string): Effect.Effect<ListEnvsResponse, DaemonError>;
+<<<<<<< HEAD
     prepareStatus(request: PrepareRunRequest): Effect.Effect<PrepareStatusResponse, DaemonError>;
     prepare(request: PrepareRunRequest): Effect.Effect<PrepareRunResponse, DaemonError>;
+=======
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
     createEnv(request: CreateEnvRequest): Effect.Effect<CreateEnvResponse, DaemonError>;
     getEnv(
       repoRef: string,
@@ -185,7 +188,10 @@ export class DaemonService extends ServiceMap.Service<
         const logStreamer = new LogStreamer();
         const infraManager = new InfraManager();
         const proxyManager = new ProxyManager();
+<<<<<<< HEAD
         const prepareManager = new PrepareManager();
+=======
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
         const envManager = new EnvManager(portRegistry, logStreamer, infraManager, proxyManager);
         // Catalog talks to the active storage primary via Drizzle directly —
         // no wrapper class, no domain-type mappers. Drizzle's $inferSelect
@@ -247,6 +253,7 @@ export class DaemonService extends ServiceMap.Service<
           return yield* Effect.succeed({ envs: envManager.listEnvs(repoId) });
         });
 
+<<<<<<< HEAD
         const prepareStatus = Effect.fn("DaemonService.prepareStatus")(function* (
           request: PrepareRunRequest,
         ) {
@@ -263,6 +270,8 @@ export class DaemonService extends ServiceMap.Service<
           });
         });
 
+=======
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
         const createEnv = Effect.fn("DaemonService.createEnv")(function* (
           request: CreateEnvRequest,
         ) {
@@ -270,6 +279,7 @@ export class DaemonService extends ServiceMap.Service<
             repoPath: request.repoPath,
             envId: request.envId,
             configFile: request.configFile,
+<<<<<<< HEAD
             profile: request.profile,
           });
           if (request.runPrepare !== false) {
@@ -296,6 +306,9 @@ export class DaemonService extends ServiceMap.Service<
               });
             }
           }
+=======
+          });
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
           const env = yield* Effect.tryPromise({
             try: () => envManager.createEnv(request),
             catch: mapCreateEnvError,
@@ -1027,8 +1040,11 @@ export class DaemonService extends ServiceMap.Service<
           daemonInfo,
           domainEvents: Effect.succeed(events),
           listEnvs,
+<<<<<<< HEAD
           prepareStatus,
           prepare,
+=======
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
           createEnv,
           getEnv,
           downEnv,

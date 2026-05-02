@@ -1,4 +1,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+<<<<<<< HEAD
+=======
+import { homedir } from "node:os";
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
 import { resolve } from "node:path";
 import { spawntreeHome as resolveSpawntreeHome } from "spawntree-core";
 
@@ -169,7 +173,11 @@ export function loadHostBinding(dataDir: string = spawntreeHome()): HostBinding 
  * `storage.json` since the file contents are equally sensitive (the bearer
  * token is the daemon's identity to the host).
  */
+<<<<<<< HEAD
 export function saveHostBinding(binding: HostBinding, dataDir: string = spawntreeHome()): void {
+=======
+export function saveHostBinding(binding: HostBinding, dataDir: string = SPAWNTREE_HOME): void {
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
   mkdirSync(dataDir, { recursive: true });
   const path = hostBindingPath(dataDir);
   writeFileSync(path, JSON.stringify(binding, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });

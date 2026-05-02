@@ -2,8 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   loadEnv,
+<<<<<<< HEAD
   localConfigPathForRepo,
   findVarRefs,
+=======
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
   parseConfig,
   substituteVars,
   validateConfig,
@@ -216,8 +219,16 @@ export class EnvManager {
     const { repoPath, envOverrides = {}, configFile } = req;
     const requestedRepoPath = resolve(repoPath);
 
+<<<<<<< HEAD
     // Resolve config file path (absolute, repo-relative, or per-user fallback)
     const configPath = resolveConfigPath(requestedRepoPath, configFile);
+=======
+    // Resolve config file path (absolute or relative to repoPath)
+    const configPath =
+      configFile && configFile.startsWith("/")
+        ? configFile
+        : resolve(requestedRepoPath, configFile || "spawntree.yaml");
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
     const configDir = resolve(configPath, "..");
 
     // Validate git repo
@@ -427,6 +438,29 @@ export class EnvManager {
         serviceNames,
       );
 
+<<<<<<< HEAD
+=======
+      const resolvedConfig = this.resolveServiceConfig(serviceConfig, serviceEnvVars);
+
+      const service = this.createService(
+        name,
+        resolvedConfig,
+        serviceEnvVars,
+        serviceCwd,
+        repoId,
+        envId,
+      );
+      services.set(name, service);
+
+      console.log(`[spawntree-daemon]   Starting ${name} on port ${port}...`);
+      this.logStreamer.addLine(
+        repoId,
+        envId,
+        name,
+        "system",
+        `[spawntree] Starting ${name} on port ${port}`,
+      );
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
       try {
         const resolvedConfig = this.resolveServiceConfig(serviceConfig, serviceEnvVars);
         assertNoUnresolvedServiceVars(name, resolvedConfig);
@@ -757,6 +791,7 @@ export class EnvManager {
     serviceConfig: ServiceConfig,
     envVars: Record<string, string>,
   ): ServiceConfig {
+<<<<<<< HEAD
     const resolvedUrl = serviceConfig.url ? substituteVars(serviceConfig.url, envVars) : undefined;
     const resolvedHealthcheck = serviceConfig.healthcheck
       ? {
@@ -780,6 +815,20 @@ export class EnvManager {
             ]),
           )
         : serviceConfig.environment,
+=======
+    return {
+      ...serviceConfig,
+      url: serviceConfig.url ? substituteVars(serviceConfig.url, envVars) : serviceConfig.url,
+      command: serviceConfig.command
+        ? substituteVars(serviceConfig.command, envVars)
+        : serviceConfig.command,
+      healthcheck: serviceConfig.healthcheck
+        ? {
+            ...serviceConfig.healthcheck,
+            url: substituteVars(serviceConfig.healthcheck.url, envVars),
+          }
+        : serviceConfig.healthcheck,
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
       fork_from: serviceConfig.fork_from
         ? substituteVars(serviceConfig.fork_from, envVars)
         : serviceConfig.fork_from,
@@ -918,16 +967,24 @@ export class EnvManager {
               status,
               port,
               pid,
+<<<<<<< HEAD
               url,
               routes,
+=======
+              url: externalUrl || proxyUrl || `http://127.0.0.1:${port}`,
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
             }
           : {
               name,
               type: serviceConfig.type,
               status,
               port,
+<<<<<<< HEAD
               url,
               routes,
+=======
+              url: externalUrl || proxyUrl || `http://127.0.0.1:${port}`,
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
             };
       return info;
     });

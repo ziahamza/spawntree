@@ -40,6 +40,17 @@ export function registerUpCommand(program: Command): void {
     .option("--no-prepare", "Skip automatic prepare")
     .option("--env <vars...>", "Override environment variables (KEY=VALUE)")
     .action(async (options) => {
+<<<<<<< HEAD
+=======
+      const configFile = resolve(process.cwd(), program.opts().configFile ?? "spawntree.yaml");
+
+      if (!existsSync(configFile)) {
+        console.error(`Config file not found: ${configFile}`);
+        console.error('Run "spawntree init" to create one.');
+        process.exit(1);
+      }
+
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
       let repoId: string;
       let repoPath: string;
       let envId: string;
