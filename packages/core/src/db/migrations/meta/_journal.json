@@ -8,6 +8,13 @@
       "when": 1776462117815,
       "tag": "0000_baseline_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1777736864824,
+      "tag": "0001_add_picked_folders",
+      "breakpoints": true
     }
   ]
 }

@@ -39,13 +39,54 @@ export const clones = sqliteTable(
     repoId: text("repo_id")
       .notNull()
       .references(() => repos.id, { onDelete: "cascade" }),
+    /**
+     * Unique path identifier. For daemon-managed clones this is the
+     * absolute filesystem path. For browser-mode (File System Access
+     * API) clones, where there is no real absolute path, the browser
+     * synthesises a stable unique identifier of the form
+     * `fsa://<pickedFolderId>/<relativePath>`. The pair
+     * (`pickedFolderId`, `relativePath`) carries the structured
+     * filesystem location for FSA rows.
+     */
     path: text("path").notNull().unique(),
     status: text("status").notNull().default("active"),
     lastSeenAt: text("last_seen_at").notNull(),
     registeredAt: text("registered_at").notNull(),
+    /**
+     * Browser-mode only — points at the `picked_folders` row that
+     * granted access. Always `null` for daemon-managed clones (the
+     * daemon does not use this table).
+     */
+    pickedFolderId: text("picked_folder_id"),
+    /**
+     * Browser-mode only — path relative to the picked folder root,
+     * forward-slash separated. The pair (`pickedFolderId`,
+     * `relativePath`) uniquely identifies an FSA-mode clone.
+     */
+    relativePath: text("relative_path"),
   },
   (table) => [index("clones_repo_id_idx").on(table.repoId)],
 );
+
+/**
+ * Folders the user has explicitly picked via the File System Access API.
+ * Browser-mode only. The daemon never reads or writes this table — it
+ * enumerates filesystem state via `watched_paths` directly.
+ *
+ * Each row corresponds to one `FileSystemDirectoryHandle` persisted in
+ * IndexedDB by spawntree-browser. The `id` is also the IDB key the
+ * browser package uses to load the handle back.
+ *
+ * Timestamps use the same ISO-8601 text convention as the rest of the
+ * catalog so cross-table queries can compare timestamps directly.
+ */
+export const pickedFolders = sqliteTable("picked_folders", {
+  id: text("id").primaryKey(),
+  displayName: text("display_name").notNull(),
+  pickedAt: text("picked_at").notNull(),
+  lastScannedAt: text("last_scanned_at"),
+  scanError: text("scan_error"),
+});
 
 export const worktrees = sqliteTable(
   "worktrees",
@@ -183,6 +224,7 @@ export const schema = {
   worktrees,
   watchedPaths,
   registeredRepos,
+  pickedFolders,
   sessions,
   sessionTurns,
   sessionToolCalls,
@@ -201,6 +243,8 @@ export type WatchedPathRow = typeof watchedPaths.$inferSelect;
 export type NewWatchedPathRow = typeof watchedPaths.$inferInsert;
 export type RegisteredRepoRow = typeof registeredRepos.$inferSelect;
 export type NewRegisteredRepoRow = typeof registeredRepos.$inferInsert;
+export type PickedFolderRow = typeof pickedFolders.$inferSelect;
+export type NewPickedFolderRow = typeof pickedFolders.$inferInsert;
 export type SessionRow = typeof sessions.$inferSelect;
 export type NewSessionRow = typeof sessions.$inferInsert;
 export type SessionTurnRow = typeof sessionTurns.$inferSelect;
@@ -241,9 +285,18 @@ export const BASELINE_DDL: ReadonlyArray<string> = [
     path TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL DEFAULT 'active',
     last_seen_at TEXT NOT NULL,
-    registered_at TEXT NOT NULL
+    registered_at TEXT NOT NULL,
+    picked_folder_id TEXT,
+    relative_path TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS clones_repo_id_idx ON clones(repo_id)`,
+  `CREATE TABLE IF NOT EXISTS picked_folders (
+    id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    picked_at TEXT NOT NULL,
+    last_scanned_at TEXT,
+    scan_error TEXT
+  )`,
   `CREATE TABLE IF NOT EXISTS worktrees (
     path TEXT PRIMARY KEY,
     clone_id TEXT NOT NULL REFERENCES clones(id) ON DELETE CASCADE,
