@@ -74,3 +74,4 @@
 - [ ] Homebrew tap
 - [ ] Plugin system
 - [ ] Document the git-subtree workflow for downstream vendors
+- [ ] Add `spawntree --version` flag (currently only via `spawntree help`)
