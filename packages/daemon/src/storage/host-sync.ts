@@ -162,12 +162,23 @@ export class HostConfigSync {
       return this.cachedFingerprint;
     }
     // Lazy import: keeps tests that supply `fingerprintOverride` from
-    // requiring `node-machine-id` to be installed. In production the
-    // package is a hard dep, so the import always resolves.
-    const machineIdMod = (await import("node-machine-id")) as {
-      machineId: (original?: boolean) => Promise<string>;
-    };
-    const raw = await machineIdMod.machineId(true);
+    // requiring `node-machine-id` to be installed. The package is a CJS
+    // module so dynamic `import()` puts named exports on `.default` —
+    // accept both forms so it works regardless of how Node's interop
+    // resolves it on a given runtime version.
+    const machineIdMod = (await import("node-machine-id")) as
+      | { machineId?: (original?: boolean) => Promise<string> }
+      | { default: { machineId: (original?: boolean) => Promise<string> } };
+    const machineIdFn =
+      "machineId" in machineIdMod && typeof machineIdMod.machineId === "function"
+        ? machineIdMod.machineId
+        : "default" in machineIdMod
+          ? machineIdMod.default.machineId
+          : null;
+    if (!machineIdFn) {
+      throw new Error("node-machine-id module missing `machineId` export");
+    }
+    const raw = await machineIdFn(true);
     this.cachedFingerprint = await sha256Hex32(raw);
     return this.cachedFingerprint;
   }
