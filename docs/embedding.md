@@ -140,6 +140,86 @@ The client is fully typed against `packages/core/src/api/types.ts`. It returns
 `Result` shapes, not throwing for HTTP errors — same pattern as the existing
 daemon dashboard.
 
+## 5. Two consumption modes — npm or git subtree
+
+The import paths above are identical in both modes. What differs is how
+the source resolves on disk.
+
+### Mode A: npm dependency (default for most embedders)
+
+```jsonc
+// package.json
+{
+  "dependencies": {
+    "spawntree-core": "^0.7.0"
+  }
+}
+```
+
+You get whatever's been published to npm. Upgrades are a `pnpm up` away.
+This is the right default for tools that just want to consume.
+
+### Mode B: git subtree (gitenv's pattern)
+
+If you also want to **contribute back** without forking — and want
+upstream changes mirrored into your repo as commits, not as a version
+bump — vendor spawntree as a git subtree. gitenv runs this setup:
+
+```yaml
+# pnpm-workspace.yaml
+packages:
+  - packages/*
+  - vendor/spawntree
+  - vendor/spawntree/packages/*
+```
+
+```jsonc
+// package.json
+{
+  "scripts": {
+    "postinstall": "(cd vendor/spawntree && pnpm --filter spawntree-core --filter spawntree-daemon --filter spawntree-host run build)"
+  }
+}
+```
+
+What happens:
+
+- `vendor/spawntree` is the spawntree repo, mounted as a subtree at the
+  current main commit. Real source files, not a tarball.
+- `pnpm install` workspace-links `spawntree-core` from
+  `vendor/spawntree/packages/core`. Your imports resolve to local source
+  with full type inference and no npm publish gating.
+- `postinstall` builds the spawntree subset so the daemon is ready to
+  run from the embedder's clone, no extra step required.
+- New spawntree releases land in your repo via `git subtree pull`. Your
+  fixes go upstream via `git subtree push` — or a PR opened by an
+  automated workflow watching the subtree for changes.
+
+The key promise of this mode: **the embedder's source tree always
+matches a real upstream commit.** If schema drift ever appears, it's a
+merge conflict the next subtree pull surfaces, not a silent shape
+mismatch three months later.
+
+Tradeoffs:
+
+- Heavier `git clone` (~MB-scale subtree).
+- Build step on every `pnpm install` if you don't ship prebuilt artifacts.
+- The embedder has to wire up a sync mechanism (subtree pull/push, or a
+  GitHub Action that opens "Sync from $repo main" PRs both ways — see
+  spawntree's `.github/workflows/` for one implementation).
+
+### Which to pick
+
+| Situation | Use |
+|---|---|
+| Building a CLI / dashboard that consumes spawntree | npm |
+| Building a product that depends on spawntree behavior changes you also want to ship | npm |
+| Building a product that **co-evolves with spawntree** and contributes patches frequently | subtree |
+| You need a private fork with bespoke patches | subtree (with internal upstream) |
+
+Most embedders should start with npm. Switch to subtree once the
+contribution rate justifies the setup overhead.
+
 ## When to redeclare vs. when to import
 
 A simple rule: if it's already in `spawntree-core/browser`, importing wins.
