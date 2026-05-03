@@ -85,10 +85,16 @@ async function main() {
       process.exit(2);
     }
 
+    // SPAWNTREE_FINGERPRINT_OVERRIDE: test-only escape hatch for the
+    // wrong-fingerprint hard-error E2E. Production NEVER sets this — the
+    // daemon reads its OS machine id via `node-machine-id`. Documented in
+    // host-sync.ts.
+    const fingerprintOverride = process.env.SPAWNTREE_FINGERPRINT_OVERRIDE;
     hostSync = new HostConfigSync({
       binding: hostBinding,
       manager: storage,
       ...(pollIntervalMs !== undefined ? { pollIntervalMs } : {}),
+      ...(fingerprintOverride ? { fingerprintOverride } : {}),
     });
     hostSync.start();
     process.stderr.write(
