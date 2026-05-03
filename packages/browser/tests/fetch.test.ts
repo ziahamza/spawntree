@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+<<<<<<< HEAD
 import { findPackStart, tryFetchPack } from "../src/git/fetch.ts";
+=======
+import { tryFetchPack } from "../src/git/fetch.ts";
+>>>>>>> 8ad3dcd0 (fix(spawntree-browser): refNames-based fetch mode for missing base refs)
 import type { FetchPackInput, FetchPackResult } from "../src/types.ts";
 
 /**
@@ -237,6 +241,7 @@ describe("tryFetchPack input validation", () => {
     }
   });
 });
+<<<<<<< HEAD
 
 describe("findPackStart (PR #51 review: off-by-one)", () => {
   // The old loop bound was `i < buf.length - 4`. The last valid start
@@ -279,3 +284,5 @@ describe("findPackStart (PR #51 review: off-by-one)", () => {
     expect(findPackStart(new Uint8Array([0x50, 0x41, 0x43]))).toBe(-1);
   });
 });
+=======
+>>>>>>> 8ad3dcd0 (fix(spawntree-browser): refNames-based fetch mode for missing base refs)
