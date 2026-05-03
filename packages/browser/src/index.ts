@@ -12,6 +12,7 @@ export type {
   SpawntreeBrowserOptions,
   FetchPackInput,
   FetchPackFn,
+  FetchPackResult,
   GitDiffOk,
   GitDiffErr,
   GitDiffResult,

@@ -378,6 +378,13 @@ export class SpawntreeBrowser {
     const gitdir = repoRel ? `/${repoRel}/.git` : `/.git`;
 
     // Resolve the base ref → sha. Try local refs first; fetch on miss.
+    //
+    // The fetch path uses `refNames` (not `wants`) because we don't yet
+    // have the SHA — that's precisely what the consumer's proxy needs
+    // to resolve via `ls-refs`. The proxy returns the resolved SHA in
+    // the `{ pack, refs }` response shape; `tryFetchPack` writes it
+    // into `refs/remotes/origin/<baseRef>` so the next
+    // `resolveRefSha` call below succeeds.
     let baseSha = await resolveRefSha({ fs, gitdir }, input.baseRef);
     if (!baseSha && this.#options.fetchPack) {
       const fetched = await tryFetchPack({
@@ -387,11 +394,18 @@ export class SpawntreeBrowser {
         remoteUrl: input.remoteUrl ?? "",
         wants: [],
         haves: [],
-        headRef: input.baseRef,
+        refNames: [input.baseRef],
         fetchPack: this.#options.fetchPack,
       });
       if (fetched.ok) {
         baseSha = await resolveRefSha({ fs, gitdir }, input.baseRef);
+        // If the proxy returned the SHA in `resolvedRefs` but the
+        // local ref-write didn't take (fs adapter refused, racy
+        // mkdir, etc.), trust the resolved SHA directly. The objects
+        // are in the loose store either way.
+        if (!baseSha && fetched.resolvedRefs?.[input.baseRef]) {
+          baseSha = fetched.resolvedRefs[input.baseRef];
+        }
       }
     }
     if (!baseSha) {
