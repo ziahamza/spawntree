@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   loadEnv,
+  localConfigPathForRepo,
+  findVarRefs,
   parseConfig,
   substituteVars,
   validateConfig,
@@ -41,6 +43,8 @@ export interface ManagedEnv {
   services: Map<string, Service>;
   serviceOrder: string[];
   worktreePath: string;
+  profile: string;
+  worktreeStrategy: "current" | "isolated";
   /** Redis db indices allocated for this env, keyed by service name */
   redisDbIndices: Map<string, number>;
   /** Postgres databases created for this env, keyed by service name */
@@ -61,8 +65,89 @@ function repoIdFromPath(repoPath: string): string {
   return "unknown";
 }
 
+function resolveConfigPath(repoPath: string, configFile?: string): string {
+  if (configFile) {
+    return configFile.startsWith("/") ? configFile : resolve(repoPath, configFile);
+  }
+  const repoConfig = resolve(repoPath, "spawntree.yaml");
+  if (existsSync(repoConfig)) return repoConfig;
+  const localConfig = localConfigPathForRepo(repoPath);
+  if (existsSync(localConfig)) return localConfig;
+  return repoConfig;
+}
+
+function safeSlug(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-|-$/g, "") || "env"
+  );
+}
+
+function detachedEnvId(repoPath: string): string {
+  const name = repoPath.split("/").filter(Boolean).at(-1) ?? "worktree";
+  return `${safeSlug(name)}-${WorktreeManager.currentHead(repoPath)}`;
+}
+
+function hostnameFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
 function formatUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function serviceIsActive(status: ServiceStatus): boolean {
+  return status === "running" || status === "starting";
+}
+
+function defaultHealthcheckFor(
+  serviceConfig: ServiceConfig,
+  envVars: Record<string, string>,
+  resolvedUrl?: string,
+): ServiceConfig["healthcheck"] {
+  if (serviceConfig.type === "external" && resolvedUrl) {
+    return { url: resolvedUrl, timeout: 30 };
+  }
+
+  if (
+    (serviceConfig.type === "process" || serviceConfig.type === "container") &&
+    serviceConfig.port &&
+    envVars.PORT
+  ) {
+    return { url: `tcp://127.0.0.1:${envVars.PORT}`, timeout: 30 };
+  }
+
+  return undefined;
+}
+
+function assertNoUnresolvedServiceVars(name: string, config: ServiceConfig): void {
+  const refs = new Set<string>();
+  collectRefs(config.command, refs);
+  collectRefs(config.url, refs);
+  collectRefs(config.fork_from, refs);
+  collectRefs(config.healthcheck?.url, refs);
+  for (const value of Object.values(config.environment ?? {})) {
+    collectRefs(value, refs);
+  }
+
+  if (refs.size > 0) {
+    throw new Error(
+      `Service "${name}" has unresolved config variable(s): ${[...refs].sort().join(", ")}. Define them in .env, shell env, profile environment, or --env KEY=VALUE.`,
+    );
+  }
+}
+
+function collectRefs(value: string | undefined, refs: Set<string>): void {
+  if (!value) return;
+  for (const ref of findVarRefs(value)) {
+    refs.add(ref);
+  }
 }
 
 /**
@@ -131,11 +216,8 @@ export class EnvManager {
     const { repoPath, envOverrides = {}, configFile } = req;
     const requestedRepoPath = resolve(repoPath);
 
-    // Resolve config file path (absolute or relative to repoPath)
-    const configPath =
-      configFile && configFile.startsWith("/")
-        ? configFile
-        : resolve(requestedRepoPath, configFile || "spawntree.yaml");
+    // Resolve config file path (absolute, repo-relative, or per-user fallback)
+    const configPath = resolveConfigPath(requestedRepoPath, configFile);
     const configDir = resolve(configPath, "..");
 
     // Validate git repo
@@ -144,15 +226,31 @@ export class EnvManager {
     const repoId = repoIdFromPath(gitRoot);
     const baseServiceDir = configDir.startsWith(gitRoot) ? configDir : requestedRepoPath;
 
-    // Derive envId from branch name (sanitize slashes)
-    const safeBranch = branch.replace(/\//g, "-");
-    const envId = req.envId ?? (req.prefix ? `${safeBranch}-${req.prefix}` : safeBranch);
+    const profile = req.profile || "default";
+    if (branch === "detached" && !req.envId && !req.prefix) {
+      throw new Error(
+        "Detached HEAD detected. Create or switch to a branch before running SpawnTree, or pass an explicit envId for advanced detached-commit runs.",
+      );
+    }
+    const safeBranch = branch === "detached" ? detachedEnvId(gitRoot) : safeSlug(branch);
+    const profileSuffix = profile === "default" ? "" : `-${safeSlug(profile)}`;
+    const envId =
+      req.envId ?? (req.prefix ? `${safeBranch}-${req.prefix}` : `${safeBranch}${profileSuffix}`);
     const envKey = `${repoId}:${envId}`;
 
     // Check if already running
     const existingRepoEnvs = this.envs.get(repoId);
     if (existingRepoEnvs?.has(envId)) {
-      return this.getEnv(repoId, envId);
+      const existing = this.getManaged(repoId, envId);
+      const hasActiveService = [...existing.services.values()].some((service) =>
+        serviceIsActive(service.status()),
+      );
+      if (hasActiveService) {
+        return this.getEnv(repoId, envId);
+      }
+
+      console.log(`[spawntree-daemon] Recreating stopped env ${envId} for repo ${repoId}`);
+      await this.deleteEnv(repoId, envId);
     }
 
     console.log(`[spawntree-daemon] Creating env ${envId} for repo ${repoId} (${gitRoot})`);
@@ -168,7 +266,7 @@ export class EnvManager {
     });
 
     const rawYaml = readFileSync(configPath, "utf-8");
-    const parsedConfig = parseConfig(rawYaml, envVars);
+    const parsedConfig = parseConfig(rawYaml, envVars, { profile });
 
     const validation = validateConfig(parsedConfig);
     if ("errors" in validation) {
@@ -191,8 +289,10 @@ export class EnvManager {
     let serviceCwd: string;
     let worktreePath: string;
 
-    const isDefaultBranchEnv = envId === safeBranch && !req.prefix;
-    if (isDefaultBranchEnv) {
+    const requestedStrategy = req.worktreeStrategy ?? (req.prefix ? "isolated" : "current");
+    const worktreeStrategy =
+      requestedStrategy === "auto" ? (req.prefix ? "isolated" : "current") : requestedStrategy;
+    if (worktreeStrategy === "current") {
       // Run from the actual project directory (has node_modules, deps installed)
       worktreePath = gitRoot;
       serviceCwd = baseServiceDir;
@@ -310,10 +410,16 @@ export class EnvManager {
       const serviceIndex = serviceNames.indexOf(name);
       const port = this.portRegistry.getPhysicalPort(basePort, serviceIndex);
 
+      const baseServiceEnvVars = {
+        ...envVars,
+        ...infraEnvVars,
+      };
+      Object.assign(baseServiceEnvVars, config.environment);
+
       const serviceEnvVars = this.buildServiceEnvVars(
         name,
         serviceConfig,
-        { ...envVars, ...infraEnvVars },
+        baseServiceEnvVars,
         envId,
         serviceCwd,
         basePort,
@@ -321,31 +427,33 @@ export class EnvManager {
         serviceNames,
       );
 
-      const resolvedConfig = this.resolveServiceConfig(serviceConfig, serviceEnvVars);
-
-      const service = this.createService(
-        name,
-        resolvedConfig,
-        serviceEnvVars,
-        serviceCwd,
-        repoId,
-        envId,
-      );
-      services.set(name, service);
-
-      console.log(`[spawntree-daemon]   Starting ${name} on port ${port}...`);
-      this.logStreamer.addLine(
-        repoId,
-        envId,
-        name,
-        "system",
-        `[spawntree] Starting ${name} on port ${port}`,
-      );
       try {
+        const resolvedConfig = this.resolveServiceConfig(serviceConfig, serviceEnvVars);
+        assertNoUnresolvedServiceVars(name, resolvedConfig);
+
+        const service = this.createService(
+          name,
+          resolvedConfig,
+          serviceEnvVars,
+          serviceCwd,
+          repoId,
+          envId,
+        );
+        services.set(name, service);
+
+        console.log(`[spawntree-daemon]   Starting ${name} on port ${port}...`);
+        this.logStreamer.addLine(
+          repoId,
+          envId,
+          name,
+          "system",
+          `[spawntree] Starting ${name} on port ${port}`,
+        );
+
         await service.start();
 
         if (service.healthcheck && !req.skipHealthcheckWait) {
-          const timeout = serviceConfig.healthcheck?.timeout ?? 30;
+          const timeout = resolvedConfig.healthcheck?.timeout ?? 30;
           this.logStreamer.addLine(
             repoId,
             envId,
@@ -425,10 +533,11 @@ export class EnvManager {
           void svcName;
         }
         this.portRegistry.free(envKey);
-        if (!isDefaultBranchEnv) {
+        if (worktreeStrategy === "isolated") {
           const wm = new WorktreeManager(gitRoot);
           wm.remove(envId);
         }
+        this.logStreamer.closeEnv(repoId, envId);
         throw err;
       }
     }
@@ -444,6 +553,8 @@ export class EnvManager {
       services,
       serviceOrder,
       worktreePath,
+      profile,
+      worktreeStrategy,
       redisDbIndices,
       postgresDatabases,
     };
@@ -646,18 +757,29 @@ export class EnvManager {
     serviceConfig: ServiceConfig,
     envVars: Record<string, string>,
   ): ServiceConfig {
+    const resolvedUrl = serviceConfig.url ? substituteVars(serviceConfig.url, envVars) : undefined;
+    const resolvedHealthcheck = serviceConfig.healthcheck
+      ? {
+          ...serviceConfig.healthcheck,
+          url: substituteVars(serviceConfig.healthcheck.url, envVars),
+        }
+      : defaultHealthcheckFor(serviceConfig, envVars, resolvedUrl);
+
     return {
       ...serviceConfig,
-      url: serviceConfig.url ? substituteVars(serviceConfig.url, envVars) : serviceConfig.url,
+      url: resolvedUrl ?? serviceConfig.url,
       command: serviceConfig.command
         ? substituteVars(serviceConfig.command, envVars)
         : serviceConfig.command,
-      healthcheck: serviceConfig.healthcheck
-        ? {
-            ...serviceConfig.healthcheck,
-            url: substituteVars(serviceConfig.healthcheck.url, envVars),
-          }
-        : serviceConfig.healthcheck,
+      healthcheck: resolvedHealthcheck,
+      environment: serviceConfig.environment
+        ? Object.fromEntries(
+            Object.entries(serviceConfig.environment).map(([key, value]) => [
+              key,
+              substituteVars(value, envVars),
+            ]),
+          )
+        : serviceConfig.environment,
       fork_from: serviceConfig.fork_from
         ? substituteVars(serviceConfig.fork_from, envVars)
         : serviceConfig.fork_from,
@@ -759,6 +881,34 @@ export class EnvManager {
           : `http://${name}-${managed.envId}.localhost:${this.proxyManager.proxyPort}`;
       // External services show their upstream URL
       const externalUrl = isExternal ? serviceConfig.url : undefined;
+      const url = externalUrl || proxyUrl || `http://127.0.0.1:${port}`;
+      const routes = isExternal
+        ? [
+            {
+              url,
+              hostname: hostnameFromUrl(url),
+              targetPort: port,
+              kind: "external" as const,
+            },
+          ]
+        : [
+            ...(proxyUrl
+              ? [
+                  {
+                    url: proxyUrl,
+                    hostname: `${name}-${managed.envId}.localhost`,
+                    targetPort: port,
+                    kind: "proxy" as const,
+                  },
+                ]
+              : []),
+            {
+              url: `http://127.0.0.1:${port}`,
+              hostname: "127.0.0.1",
+              targetPort: port,
+              kind: "direct" as const,
+            },
+          ];
 
       const info: ServiceInfo =
         pid !== undefined
@@ -768,14 +918,16 @@ export class EnvManager {
               status,
               port,
               pid,
-              url: externalUrl || proxyUrl || `http://127.0.0.1:${port}`,
+              url,
+              routes,
             }
           : {
               name,
               type: serviceConfig.type,
               status,
               port,
-              url: externalUrl || proxyUrl || `http://127.0.0.1:${port}`,
+              url,
+              routes,
             };
       return info;
     });
@@ -785,6 +937,8 @@ export class EnvManager {
       repoId: managed.repoId,
       repoPath: managed.repoPath,
       branch: managed.branch,
+      profile: managed.profile,
+      worktreePath: managed.worktreePath,
       basePort: managed.basePort,
       createdAt: managed.createdAt,
       services,

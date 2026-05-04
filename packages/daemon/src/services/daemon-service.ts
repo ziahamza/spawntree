@@ -32,6 +32,9 @@ import {
   type GitPathInfo,
   type InfraStatusResponse,
   type ListEnvsResponse,
+  type PrepareRunRequest,
+  type PrepareRunResponse,
+  type PrepareStatusResponse,
   loadEnv,
   parseConfig,
   type RegisteredRepo,
@@ -96,6 +99,7 @@ import { EnvManager, NotFoundError as EnvManagerNotFoundError } from "../manager
 import { InfraManager } from "../managers/infra-manager.ts";
 import { LogStreamer } from "../managers/log-streamer.ts";
 import { PortRegistry } from "../managers/port-registry.ts";
+import { PrepareManager } from "../managers/prepare-manager.ts";
 import { ProxyManager } from "../managers/proxy-manager.ts";
 import { spawntreeHome } from "../state/global-state.ts";
 import type { StorageManager } from "../storage/manager.ts";
@@ -120,6 +124,8 @@ export class DaemonService extends ServiceMap.Service<
     /** Expose the raw DomainEvents bus for direct publication (e.g. SessionManager). */
     readonly domainEvents: Effect.Effect<DomainEvents>;
     listEnvs(repoId?: string): Effect.Effect<ListEnvsResponse, DaemonError>;
+    prepareStatus(request: PrepareRunRequest): Effect.Effect<PrepareStatusResponse, DaemonError>;
+    prepare(request: PrepareRunRequest): Effect.Effect<PrepareRunResponse, DaemonError>;
     createEnv(request: CreateEnvRequest): Effect.Effect<CreateEnvResponse, DaemonError>;
     getEnv(
       repoRef: string,
@@ -179,6 +185,7 @@ export class DaemonService extends ServiceMap.Service<
         const logStreamer = new LogStreamer();
         const infraManager = new InfraManager();
         const proxyManager = new ProxyManager();
+        const prepareManager = new PrepareManager();
         const envManager = new EnvManager(portRegistry, logStreamer, infraManager, proxyManager);
         // Catalog talks to the active storage primary via Drizzle directly —
         // no wrapper class, no domain-type mappers. Drizzle's $inferSelect
@@ -240,6 +247,22 @@ export class DaemonService extends ServiceMap.Service<
           return yield* Effect.succeed({ envs: envManager.listEnvs(repoId) });
         });
 
+        const prepareStatus = Effect.fn("DaemonService.prepareStatus")(function* (
+          request: PrepareRunRequest,
+        ) {
+          return yield* Effect.try({
+            try: () => ({ status: prepareManager.getStatus(request) }),
+            catch: mapPrepareError,
+          });
+        });
+
+        const prepare = Effect.fn("DaemonService.prepare")(function* (request: PrepareRunRequest) {
+          return yield* Effect.tryPromise({
+            try: () => prepareManager.run(request),
+            catch: mapPrepareError,
+          });
+        });
+
         const createEnv = Effect.fn("DaemonService.createEnv")(function* (
           request: CreateEnvRequest,
         ) {
@@ -247,7 +270,32 @@ export class DaemonService extends ServiceMap.Service<
             repoPath: request.repoPath,
             envId: request.envId,
             configFile: request.configFile,
+            profile: request.profile,
           });
+          if (request.runPrepare !== false) {
+            const result = yield* Effect.tryPromise({
+              try: () =>
+                prepareManager.run({
+                  repoPath: request.repoPath,
+                  configFile: request.configFile,
+                  profile: request.profile,
+                }),
+              catch: mapPrepareError,
+            });
+            if (result.ran) {
+              logDaemonMessage("prepare complete", {
+                repoPath: request.repoPath,
+                profile: request.profile ?? "default",
+                exitCode: result.exitCode ?? 0,
+              });
+            }
+            if (result.exitCode !== undefined && result.exitCode !== 0) {
+              return yield* new BadRequestError({
+                code: "PREPARE_FAILED",
+                message: result.output || `prepare exited with code ${result.exitCode}`,
+              });
+            }
+          }
           const env = yield* Effect.tryPromise({
             try: () => envManager.createEnv(request),
             catch: mapCreateEnvError,
@@ -979,6 +1027,8 @@ export class DaemonService extends ServiceMap.Service<
           daemonInfo,
           domainEvents: Effect.succeed(events),
           listEnvs,
+          prepareStatus,
+          prepare,
           createEnv,
           getEnv,
           downEnv,
@@ -1138,6 +1188,13 @@ function mapCreateEnvError(error: unknown) {
     return new NotFoundError({ code: "ENV_NOT_FOUND", message: error.message });
   }
   return new BadRequestError({ code: "CREATE_ENV_FAILED", message: toMessage(error) });
+}
+
+function mapPrepareError(error: unknown) {
+  if (error instanceof BadRequestError || error instanceof InternalError) {
+    return error;
+  }
+  return new BadRequestError({ code: "PREPARE_FAILED", message: toMessage(error) });
 }
 
 function mapInternalError(code: string, error: unknown) {

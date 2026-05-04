@@ -16,9 +16,45 @@ export function validateConfig(
 
   const obj = raw as Record<string, unknown>;
 
+  if (obj.prepare !== undefined) {
+    if (obj.prepare === null || typeof obj.prepare !== "object") {
+      errors.push({ path: "prepare", message: "prepare must be an object" });
+    } else {
+      const prepare = obj.prepare as Record<string, unknown>;
+      if (typeof prepare.command !== "string" || !prepare.command.trim()) {
+        errors.push({ path: "prepare.command", message: "command is required" });
+      }
+      if (prepare.inputs !== undefined) {
+        if (!Array.isArray(prepare.inputs)) {
+          errors.push({ path: "prepare.inputs", message: "inputs must be an array" });
+        } else if (prepare.inputs.some((input) => typeof input !== "string")) {
+          errors.push({ path: "prepare.inputs", message: "inputs entries must be strings" });
+        }
+      }
+    }
+  }
+
+  if (obj.environment !== undefined) {
+    if (obj.environment === null || typeof obj.environment !== "object") {
+      errors.push({ path: "environment", message: "environment must be an object" });
+    } else {
+      for (const [key, value] of Object.entries(obj.environment as Record<string, unknown>)) {
+        if (typeof value !== "string") {
+          errors.push({
+            path: `environment.${key}`,
+            message: "environment values must be strings",
+          });
+        }
+      }
+    }
+  }
+
   if (!obj.services || typeof obj.services !== "object") {
     return {
-      errors: [{ path: "services", message: "services is required and must be an object" }],
+      errors: [
+        ...errors,
+        { path: "services", message: "services is required and must be an object" },
+      ],
     };
   }
 

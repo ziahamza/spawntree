@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { spawntreeHome as resolveSpawntreeHome } from "spawntree-core";
 
 export interface PortSlot {
   envKey: string;
@@ -39,13 +39,12 @@ export interface RuntimeMetadata {
   httpPort: number;
 }
 
-const SPAWNTREE_HOME = resolve(homedir(), ".spawntree");
-
 export function spawntreeHome(): string {
-  return SPAWNTREE_HOME;
+  return resolveSpawntreeHome();
 }
 
 export function ensureDir(): void {
+  const SPAWNTREE_HOME = spawntreeHome();
   const subdirs = [
     SPAWNTREE_HOME,
     resolve(SPAWNTREE_HOME, "repos"),
@@ -57,6 +56,7 @@ export function ensureDir(): void {
 }
 
 export function ensureRepoDir(repoId: string): void {
+  const SPAWNTREE_HOME = spawntreeHome();
   const repoDir = resolve(SPAWNTREE_HOME, "repos", repoId);
   mkdirSync(repoDir, { recursive: true });
   mkdirSync(resolve(repoDir, "logs"), { recursive: true });
@@ -64,11 +64,11 @@ export function ensureRepoDir(repoId: string): void {
 
 export function saveDaemonPid(pid: number): void {
   ensureDir();
-  writeFileSync(resolve(SPAWNTREE_HOME, "daemon.pid"), String(pid));
+  writeFileSync(resolve(spawntreeHome(), "daemon.pid"), String(pid));
 }
 
 export function loadPortRegistry(): PortRegistryState {
-  const file = resolve(SPAWNTREE_HOME, "port-registry.json");
+  const file = resolve(spawntreeHome(), "port-registry.json");
   try {
     return JSON.parse(readFileSync(file, "utf-8")) as PortRegistryState;
   } catch {
@@ -79,13 +79,13 @@ export function loadPortRegistry(): PortRegistryState {
 export function savePortRegistry(state: PortRegistryState): void {
   ensureDir();
   writeFileSync(
-    resolve(SPAWNTREE_HOME, "port-registry.json"),
+    resolve(spawntreeHome(), "port-registry.json"),
     JSON.stringify(state, null, 2) + "\n",
   );
 }
 
 export function loadRepoState(repoId: string): RepoState | null {
-  const file = resolve(SPAWNTREE_HOME, "repos", repoId, "state.json");
+  const file = resolve(spawntreeHome(), "repos", repoId, "state.json");
   try {
     return JSON.parse(readFileSync(file, "utf-8")) as RepoState;
   } catch {
@@ -96,19 +96,19 @@ export function loadRepoState(repoId: string): RepoState | null {
 export function saveRepoState(repoId: string, state: RepoState): void {
   ensureRepoDir(repoId);
   writeFileSync(
-    resolve(SPAWNTREE_HOME, "repos", repoId, "state.json"),
+    resolve(spawntreeHome(), "repos", repoId, "state.json"),
     JSON.stringify(state, null, 2) + "\n",
   );
 }
 
 export function logDir(repoId: string, envId: string): string {
-  const dir = resolve(SPAWNTREE_HOME, "repos", repoId, "logs", envId);
+  const dir = resolve(spawntreeHome(), "repos", repoId, "logs", envId);
   mkdirSync(dir, { recursive: true });
   return dir;
 }
 
 export function runtimeMetadataPath(): string {
-  return resolve(SPAWNTREE_HOME, "runtime", "daemon.json");
+  return resolve(spawntreeHome(), "runtime", "daemon.json");
 }
 
 export function saveRuntimeMetadata(metadata: RuntimeMetadata): void {
@@ -139,7 +139,7 @@ export interface HostBinding {
  * `~/.spawntree/host.json`. Tests pass an explicit dir so they don't
  * touch the real home directory.
  */
-export function hostBindingPath(dataDir: string = SPAWNTREE_HOME): string {
+export function hostBindingPath(dataDir: string = spawntreeHome()): string {
   return resolve(dataDir, "host.json");
 }
 
@@ -148,7 +148,7 @@ export function hostBindingPath(dataDir: string = SPAWNTREE_HOME): string {
  * throw) on a corrupt file so the daemon can boot in standalone mode and
  * surface the issue via logs rather than crash.
  */
-export function loadHostBinding(dataDir: string = SPAWNTREE_HOME): HostBinding | null {
+export function loadHostBinding(dataDir: string = spawntreeHome()): HostBinding | null {
   const path = hostBindingPath(dataDir);
   if (!existsSync(path)) return null;
   try {
@@ -169,7 +169,7 @@ export function loadHostBinding(dataDir: string = SPAWNTREE_HOME): HostBinding |
  * `storage.json` since the file contents are equally sensitive (the bearer
  * token is the daemon's identity to the host).
  */
-export function saveHostBinding(binding: HostBinding, dataDir: string = SPAWNTREE_HOME): void {
+export function saveHostBinding(binding: HostBinding, dataDir: string = spawntreeHome()): void {
   mkdirSync(dataDir, { recursive: true });
   const path = hostBindingPath(dataDir);
   writeFileSync(path, JSON.stringify(binding, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
@@ -181,7 +181,7 @@ export function saveHostBinding(binding: HostBinding, dataDir: string = SPAWNTRE
 }
 
 /** `rm <dataDir>/host.json`. Used by future `spawntree host unbind`. */
-export function clearHostBinding(dataDir: string = SPAWNTREE_HOME): void {
+export function clearHostBinding(dataDir: string = spawntreeHome()): void {
   const path = hostBindingPath(dataDir);
   if (existsSync(path)) {
     unlinkSync(path);
