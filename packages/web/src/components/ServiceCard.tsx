@@ -90,12 +90,18 @@ export function ServiceCard({ service, onServiceClick }: ServiceCardProps) {
                 type="button"
                 className="inline-flex items-center gap-1 text-blue hover:underline"
 <<<<<<< HEAD
+<<<<<<< HEAD
                 onClick={(e) => {
                   void handleCopy(previewURL, e);
                 }}
 =======
                 onClick={(e) => handleCopy(previewURL, e)}
 >>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
+=======
+                onClick={(e) => {
+                  void handleCopy(previewURL, e);
+                }}
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
               >
                 <Link2 className="w-3 h-3" />
                 Copy

@@ -29,6 +29,7 @@ export function registerLogsCommand(program: Command): void {
     .option("--lines <count>", "Number of historical lines to replay before following", "50")
     .option("--prefix <name>", "Named prefix for the environment")
 <<<<<<< HEAD
+<<<<<<< HEAD
     .option("--profile <name>", "Config profile", "default")
     .action(
       async (
@@ -39,16 +40,28 @@ export function registerLogsCommand(program: Command): void {
     .action(
       async (service?: string, options?: { follow: boolean; prefix?: string; lines?: string }) => {
 >>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
+=======
+    .option("--profile <name>", "Config profile", "default")
+    .action(
+      async (
+        service?: string,
+        options?: { follow: boolean; prefix?: string; profile?: string; lines?: string },
+      ) => {
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
         let repoId: string;
         let envId: string;
 
         try {
           repoId = getCurrentRepoId();
 <<<<<<< HEAD
+<<<<<<< HEAD
           envId = getCurrentProfileEnvId(options?.prefix, options?.profile);
 =======
           envId = getCurrentEnvId(options?.prefix);
 >>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
+=======
+          envId = getCurrentProfileEnvId(options?.prefix, options?.profile);
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
         } catch (err) {
           console.error(err instanceof Error ? err.message : err);
           process.exit(1);

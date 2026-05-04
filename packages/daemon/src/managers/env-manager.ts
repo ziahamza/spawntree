@@ -3,10 +3,15 @@ import { resolve } from "node:path";
 import {
   loadEnv,
 <<<<<<< HEAD
+<<<<<<< HEAD
   localConfigPathForRepo,
   findVarRefs,
 =======
 >>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
+=======
+  localConfigPathForRepo,
+  findVarRefs,
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
   parseConfig,
   substituteVars,
   validateConfig,
@@ -220,6 +225,7 @@ export class EnvManager {
     const requestedRepoPath = resolve(repoPath);
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     // Resolve config file path (absolute, repo-relative, or per-user fallback)
     const configPath = resolveConfigPath(requestedRepoPath, configFile);
 =======
@@ -229,6 +235,10 @@ export class EnvManager {
         ? configFile
         : resolve(requestedRepoPath, configFile || "spawntree.yaml");
 >>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
+=======
+    // Resolve config file path (absolute, repo-relative, or per-user fallback)
+    const configPath = resolveConfigPath(requestedRepoPath, configFile);
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
     const configDir = resolve(configPath, "..");
 
     // Validate git repo
@@ -439,6 +449,7 @@ export class EnvManager {
       );
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
       const resolvedConfig = this.resolveServiceConfig(serviceConfig, serviceEnvVars);
 
@@ -461,6 +472,8 @@ export class EnvManager {
         `[spawntree] Starting ${name} on port ${port}`,
       );
 >>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
+=======
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
       try {
         const resolvedConfig = this.resolveServiceConfig(serviceConfig, serviceEnvVars);
         assertNoUnresolvedServiceVars(name, resolvedConfig);
@@ -792,6 +805,9 @@ export class EnvManager {
     envVars: Record<string, string>,
   ): ServiceConfig {
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
     const resolvedUrl = serviceConfig.url ? substituteVars(serviceConfig.url, envVars) : undefined;
     const resolvedHealthcheck = serviceConfig.healthcheck
       ? {
@@ -800,6 +816,7 @@ export class EnvManager {
         }
       : defaultHealthcheckFor(serviceConfig, envVars, resolvedUrl);
 
+<<<<<<< HEAD
     return {
       ...serviceConfig,
       url: resolvedUrl ?? serviceConfig.url,
@@ -816,12 +833,15 @@ export class EnvManager {
           )
         : serviceConfig.environment,
 =======
+=======
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
     return {
       ...serviceConfig,
-      url: serviceConfig.url ? substituteVars(serviceConfig.url, envVars) : serviceConfig.url,
+      url: resolvedUrl ?? serviceConfig.url,
       command: serviceConfig.command
         ? substituteVars(serviceConfig.command, envVars)
         : serviceConfig.command,
+<<<<<<< HEAD
       healthcheck: serviceConfig.healthcheck
         ? {
             ...serviceConfig.healthcheck,
@@ -829,6 +849,17 @@ export class EnvManager {
           }
         : serviceConfig.healthcheck,
 >>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
+=======
+      healthcheck: resolvedHealthcheck,
+      environment: serviceConfig.environment
+        ? Object.fromEntries(
+            Object.entries(serviceConfig.environment).map(([key, value]) => [
+              key,
+              substituteVars(value, envVars),
+            ]),
+          )
+        : serviceConfig.environment,
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
       fork_from: serviceConfig.fork_from
         ? substituteVars(serviceConfig.fork_from, envVars)
         : serviceConfig.fork_from,
@@ -968,11 +999,16 @@ export class EnvManager {
               port,
               pid,
 <<<<<<< HEAD
+<<<<<<< HEAD
               url,
               routes,
 =======
               url: externalUrl || proxyUrl || `http://127.0.0.1:${port}`,
 >>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
+=======
+              url,
+              routes,
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
             }
           : {
               name,
@@ -980,11 +1016,16 @@ export class EnvManager {
               status,
               port,
 <<<<<<< HEAD
+<<<<<<< HEAD
               url,
               routes,
 =======
               url: externalUrl || proxyUrl || `http://127.0.0.1:${port}`,
 >>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
+=======
+              url,
+              routes,
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
             };
       return info;
     });
