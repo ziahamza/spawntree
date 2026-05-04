@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { tryFetchPack } from "../src/git/fetch.ts";
+import { findPackStart, tryFetchPack } from "../src/git/fetch.ts";
 import type { FetchPackInput, FetchPackResult } from "../src/types.ts";
 
 /**
@@ -235,5 +235,47 @@ describe("tryFetchPack input validation", () => {
       expect(result.reason).toBe("unknown");
       expect(result.details).toMatch(/Uint8Array|pack/);
     }
+  });
+});
+
+describe("findPackStart (PR #51 review: off-by-one)", () => {
+  // The old loop bound was `i < buf.length - 4`. The last valid start
+  // position for a 4-byte sequence in a length-N buffer is N-4, so
+  // the bound must be `<=`. The strict-less-than version skipped the
+  // final position entirely.
+
+  it("finds PACK at offset 0 (typical raw-pack response)", () => {
+    expect(findPackStart(new Uint8Array([0x50, 0x41, 0x43, 0x4b, 0x00, 0x00, 0x00]))).toBe(0);
+  });
+
+  it("finds PACK at offset 5 (pkt-line wrapped)", () => {
+    expect(
+      findPackStart(new Uint8Array([0x30, 0x30, 0x30, 0x30, 0x01, 0x50, 0x41, 0x43, 0x4b, 0x00])),
+    ).toBe(5);
+  });
+
+  it("finds PACK at the LAST valid position (regression for off-by-one)", () => {
+    // 4-byte buffer of pure PACK magic — the last valid start index
+    // is `buf.length - 4 === 0`. With the old `<` bound, this loop
+    // never executed at all. With `<=`, position 0 is checked.
+    expect(findPackStart(new Uint8Array([0x50, 0x41, 0x43, 0x4b]))).toBe(0);
+  });
+
+  it("finds PACK when exactly 4 bytes from the end", () => {
+    // Match at position `length - 4`. Old code missed this position.
+    const buf = new Uint8Array([0xff, 0xff, 0xff, 0x50, 0x41, 0x43, 0x4b]);
+    expect(findPackStart(buf)).toBe(3);
+  });
+
+  it("returns -1 when no PACK magic is present", () => {
+    expect(findPackStart(new Uint8Array([0x00, 0x01, 0x02, 0x03]))).toBe(-1);
+  });
+
+  it("returns -1 for empty buffer", () => {
+    expect(findPackStart(new Uint8Array(0))).toBe(-1);
+  });
+
+  it("returns -1 for buffer shorter than 4 bytes", () => {
+    expect(findPackStart(new Uint8Array([0x50, 0x41, 0x43]))).toBe(-1);
   });
 });

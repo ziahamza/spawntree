@@ -393,6 +393,22 @@ export async function scanFolder(
  *   2. As a weaker fallback: same `originUrl` and the worktree's path
  *      is a sibling/child of the repo's path.
  */
+
+/**
+ * Path-boundary aware suffix match. `hint.endsWith(repoGit)` alone
+ * permits a substring tail match, e.g. `/abs/other-main-repo/.git`
+ * vs `main-repo/.git`. We require that the character immediately
+ * before the matched suffix is either the start-of-string or a path
+ * separator, so the suffix aligns with a real path component.
+ *
+ * Exported only for test access.
+ */
+export function hintMatchesRepoGit(hint: string, repoGit: string): boolean {
+  if (!hint.endsWith(repoGit)) return false;
+  const startIdx = hint.length - repoGit.length;
+  return startIdx === 0 || hint[startIdx - 1] === "/";
+}
+
 export function stitchWorktrees(
   entries: ScannedEntry[],
 ): Map<string, string /* main repo relativePath */> {
@@ -406,12 +422,22 @@ export function stitchWorktrees(
     if (e.kind !== "worktree") continue;
     let matched: string | null = null;
 
-    // Strategy 1: hint suffix match
+    // Strategy 1: hint suffix match.
+    //
+    // We want the hint's path to END at a path-boundary aligned with
+    // the repo's relative path — NOT a substring suffix. Plain
+    // `.endsWith(repoGit)` would falsely match `/abs/other-main-repo/.git`
+    // against the repo `main-repo` (because `other-main-repo/.git` ends
+    // with `main-repo/.git`). Caught in PR #51 review.
+    //
+    // `hintMatchesRepoGit` enforces that the position immediately
+    // before the matched suffix is either the start of the hint or a
+    // path separator.
     if (e.mainGitDirHint) {
       const hint = e.mainGitDirHint;
       for (const [rel] of repoByRel) {
         const repoGit = rel ? `${rel}/.git` : ".git";
-        if (hint.endsWith(repoGit) || hint.endsWith(`/${repoGit}`)) {
+        if (hintMatchesRepoGit(hint, repoGit)) {
           matched = rel;
           break;
         }

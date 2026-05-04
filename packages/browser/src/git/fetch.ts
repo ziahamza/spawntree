@@ -240,9 +240,22 @@ async function writeRemoteTrackingRef(
   }
 }
 
-function findPackStart(buf: Uint8Array): number {
-  // ASCII "PACK" = 0x50 0x41 0x43 0x4B
-  for (let i = 0; i < buf.length - 4; i++) {
+/**
+ * Find the offset of the `PACK` magic in a buffer. Used to strip
+ * pkt-line side-band wrapping before handing the body to `indexPack`.
+ * Returns -1 if no PACK magic is present.
+ *
+ * Exported for unit-test access — not part of the public API.
+ */
+export function findPackStart(buf: Uint8Array): number {
+  // ASCII "PACK" = 0x50 0x41 0x43 0x4B. The last valid start position
+  // for a 4-byte sequence in a length-N buffer is `N - 4`, so the
+  // loop bound is `<=`, not `<`. The strict inequality skipped the
+  // final position — caught in PR #51 review. In practice
+  // upload-pack always wraps with side-band so the pack body lands
+  // a few bytes in, but the off-by-one would matter for callers that
+  // hand us a tightly-cropped pack.
+  for (let i = 0; i <= buf.length - 4; i++) {
     if (buf[i] === 0x50 && buf[i + 1] === 0x41 && buf[i + 2] === 0x43 && buf[i + 3] === 0x4b) {
       return i;
     }

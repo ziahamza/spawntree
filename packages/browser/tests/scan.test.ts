@@ -14,7 +14,12 @@
  * worktree-stitching pass without hitting any real disk.
  */
 import { describe, expect, it } from "vitest";
-import { scanFolder, stitchWorktrees, type ScannedEntry } from "../src/fsa/scan.ts";
+import {
+  hintMatchesRepoGit,
+  scanFolder,
+  stitchWorktrees,
+  type ScannedEntry,
+} from "../src/fsa/scan.ts";
 
 type MockNode = { kind: "dir"; entries: Record<string, MockNode> } | { kind: "file"; text: string };
 
@@ -266,5 +271,77 @@ describe("stitchWorktrees", () => {
     // No-op assertion that ensures HEAD_FEATURE is referenced — keeps the
     // import alive for future test cases.
     expect(HEAD_FEATURE.length).toBeGreaterThan(0);
+  });
+
+  describe("path-boundary suffix match (regression for PR #51 review)", () => {
+    // The old `hint.endsWith(repoGit) || hint.endsWith('/' + repoGit)`
+    // permitted a SUBSTRING tail match: `/abs/other-main-repo/.git`
+    // would match `main-repo/.git` because the latter is a literal
+    // tail of the former. The fix requires a path-separator (or
+    // start-of-string) immediately before the matched suffix.
+    it("matches when hint ends at a path boundary", () => {
+      expect(hintMatchesRepoGit("/abs/main-repo/.git", "main-repo/.git")).toBe(true);
+    });
+
+    it("rejects when the suffix is a literal tail but not at a path boundary", () => {
+      // The bug: `other-main-repo/.git` ends with `main-repo/.git` literally,
+      // but they're different repos.
+      expect(hintMatchesRepoGit("/abs/other-main-repo/.git", "main-repo/.git")).toBe(false);
+    });
+
+    it("matches when the entire hint is the repoGit (start-of-string boundary)", () => {
+      expect(hintMatchesRepoGit("main-repo/.git", "main-repo/.git")).toBe(true);
+      expect(hintMatchesRepoGit(".git", ".git")).toBe(true);
+    });
+
+    it("matches root-level repo (.git only) at any path boundary", () => {
+      expect(hintMatchesRepoGit("/abs/clone/.git", ".git")).toBe(true);
+      expect(hintMatchesRepoGit("/.git", ".git")).toBe(true);
+    });
+
+    it("rejects when .git is part of a filename, not a directory name", () => {
+      // `foo.git` ends with `.git` literally but isn't a path
+      // boundary. Old check would have falsely matched.
+      expect(hintMatchesRepoGit("/abs/foo.git", ".git")).toBe(false);
+    });
+
+    it("rejects when hint is shorter than repoGit", () => {
+      expect(hintMatchesRepoGit(".git", "main-repo/.git")).toBe(false);
+    });
+
+    it("via stitchWorktrees: does NOT mis-stitch worktree to similarly-named repo", () => {
+      const entries: ScannedEntry[] = [
+        {
+          kind: "repo",
+          relativePath: "main-repo",
+          gitDirRelativePath: "main-repo/.git",
+          originUrl: null,
+          head: null,
+        },
+        {
+          kind: "worktree",
+          relativePath: "other-main-repo-feat",
+          // Hint points at `other-main-repo`'s gitdir which doesn't
+          // appear in this scan (worktree is in the picked folder
+          // but its parent repo isn't). The substring-match bug
+          // would falsely stitch this to `main-repo` because
+          // `/abs/other-main-repo/.git/worktrees/feat` ends with
+          // `main-repo/.git/worktrees/feat`. Wait — actually the
+          // old check tested `hint.endsWith(repoGit)` where
+          // repoGit is `main-repo/.git` — and our hint ends in
+          // `/worktrees/feat`, not `/.git`. So the bug requires
+          // a hint that ends EXACTLY at .git. Let's craft that:
+          gitFileTarget: "/abs/other-main-repo/.git",
+          mainGitDirHint: "/abs/other-main-repo/.git",
+          originUrl: null,
+          head: null,
+        },
+      ];
+      const stitched = stitchWorktrees(entries);
+      // With the bug, this would have returned `"main-repo"` —
+      // a false stitch. With the fix, no main-repo entry exists,
+      // so the worktree is unmatched.
+      expect(stitched.has("other-main-repo-feat")).toBe(false);
+    });
   });
 });
