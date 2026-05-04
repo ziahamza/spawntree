@@ -19,3 +19,19 @@ export * from "./db/schema.ts";
 export * from "./db/http-client.ts";
 export * from "./db/probe.ts";
 export * from "./db/routing-client.ts";
+
+// ─── Config (browser-safe) ─────────────────────────────────────────────
+//
+// spawntree.yaml parsing + validation. Both run as pure functions on
+// strings + plain objects, with no runtime filesystem dependency, so
+// they're safe to ship in a browser bundle. spawntree-browser uses
+// these to back its `readConfig` / `writeConfig` API.
+export {
+  parseConfig,
+  type PrepareConfig,
+  type ProfileConfig,
+  type ServiceConfig,
+  type SpawntreeConfig,
+} from "./config/parser.ts";
+export { validateConfig } from "./config/schema.ts";
+export { substituteVars } from "./config/substitution.ts";

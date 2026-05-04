@@ -70,9 +70,32 @@ async function main() {
   // If a host binding is in effect, kick off the background config sync.
   // Daemon boot does NOT wait on the host being reachable — the loop
   // retries with backoff and reconciles when the host comes online.
+  //
+  // SPAWNTREE_HOST_POLL_INTERVAL_MS: internal/test debugging knob — overrides
+  // the default 5-minute poll interval. No CLI flag; env-only on purpose so
+  // it stays an off-the-beaten-path debugging affordance.
   let hostSync: HostConfigSync | null = null;
   if (hostBinding) {
-    hostSync = new HostConfigSync({ binding: hostBinding, manager: storage });
+    const pollIntervalMsRaw = process.env.SPAWNTREE_HOST_POLL_INTERVAL_MS;
+    const pollIntervalMs = pollIntervalMsRaw ? Number.parseInt(pollIntervalMsRaw, 10) : undefined;
+    if (pollIntervalMsRaw && (Number.isNaN(pollIntervalMs) || (pollIntervalMs ?? 0) <= 0)) {
+      process.stderr.write(
+        `[spawntree-daemon] invalid SPAWNTREE_HOST_POLL_INTERVAL_MS: ${pollIntervalMsRaw}\n`,
+      );
+      process.exit(2);
+    }
+
+    // SPAWNTREE_FINGERPRINT_OVERRIDE: test-only escape hatch for the
+    // wrong-fingerprint hard-error E2E. Production NEVER sets this — the
+    // daemon reads its OS machine id via `node-machine-id`. Documented in
+    // host-sync.ts.
+    const fingerprintOverride = process.env.SPAWNTREE_FINGERPRINT_OVERRIDE;
+    hostSync = new HostConfigSync({
+      binding: hostBinding,
+      manager: storage,
+      ...(pollIntervalMs !== undefined ? { pollIntervalMs } : {}),
+      ...(fingerprintOverride ? { fingerprintOverride } : {}),
+    });
     hostSync.start();
     process.stderr.write(
       `[spawntree-daemon] host: bound to ${hostBinding.url} (key dh_…${hostBinding.key.slice(-6)})\n`,
@@ -81,7 +104,13 @@ async function main() {
 
   const app = createApp(runtime, { storage, sessionManager, hostSync });
   const listener = getRequestListener(app.fetch);
-  const server = createServer(listener);
+  // Wrap the listener so node:http sees a void-returning callback. The
+  // underlying `listener` returns Promise<void> (Hono's async fetch), which
+  // trips no-misused-promises. The wrapper has no behavioural effect — the
+  // server still only cares that `res.end()` is eventually called.
+  const server = createServer((req, res) => {
+    void listener(req, res);
+  });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);

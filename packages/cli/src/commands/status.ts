@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import type { EnvInfo, ServiceInfo } from "spawntree-core";
-import { getClient, getCurrentEnvId, getCurrentRepoId } from "../daemon-bridge.ts";
+import { getClient, getCurrentProfileEnvId, getCurrentRepoId } from "../daemon-bridge.ts";
 
 export function registerStatusCommand(program: Command): void {
   program
@@ -8,13 +8,14 @@ export function registerStatusCommand(program: Command): void {
     .description("Show environment status")
     .option("--all", "Show all environments")
     .option("--prefix <name>", "Named prefix for the environment")
+    .option("--profile <name>", "Config profile", "default")
     .action(async (options) => {
       let repoId: string;
       let envId: string;
 
       try {
         repoId = getCurrentRepoId();
-        envId = getCurrentEnvId(options.prefix);
+        envId = getCurrentProfileEnvId(options.prefix, options.profile);
       } catch (err) {
         console.error(err instanceof Error ? err.message : err);
         process.exit(1);
@@ -53,6 +54,8 @@ function printEnvStatus(env: EnvInfo): void {
   console.log(`\n  Environment: ${env.envId}`);
   console.log(`  Repo:        ${env.repoId}`);
   console.log(`  Branch:      ${env.branch}`);
+  if (env.profile) console.log(`  Profile:     ${env.profile}`);
+  if (env.worktreePath) console.log(`  Worktree:    ${env.worktreePath}`);
   console.log(`  Port range:  ${env.basePort}-${env.basePort + 99}`);
   console.log(`  Created:     ${env.createdAt}`);
   console.log(`  Services:`);

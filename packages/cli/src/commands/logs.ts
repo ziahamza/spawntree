@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import type { LogLine } from "spawntree-core";
-import { getClient, getCurrentEnvId, getCurrentRepoId } from "../daemon-bridge.ts";
+import { getClient, getCurrentProfileEnvId, getCurrentRepoId } from "../daemon-bridge.ts";
 
 const SERVICE_COLORS: Record<string, string> = {};
 const COLOR_PALETTE = [
@@ -28,14 +28,18 @@ export function registerLogsCommand(program: Command): void {
     .option("-f, --follow", "Follow log output (default: true when no service filter)", false)
     .option("--lines <count>", "Number of historical lines to replay before following", "50")
     .option("--prefix <name>", "Named prefix for the environment")
+    .option("--profile <name>", "Config profile", "default")
     .action(
-      async (service?: string, options?: { follow: boolean; prefix?: string; lines?: string }) => {
+      async (
+        service?: string,
+        options?: { follow: boolean; prefix?: string; profile?: string; lines?: string },
+      ) => {
         let repoId: string;
         let envId: string;
 
         try {
           repoId = getCurrentRepoId();
-          envId = getCurrentEnvId(options?.prefix);
+          envId = getCurrentProfileEnvId(options?.prefix, options?.profile);
         } catch (err) {
           console.error(err instanceof Error ? err.message : err);
           process.exit(1);

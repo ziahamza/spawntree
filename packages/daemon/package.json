@@ -28,6 +28,7 @@
     "drizzle-orm": "^0.45.2",
     "effect": "4.0.0-beta.43",
     "hono": "^4.7.11",
+    "node-machine-id": "^1.1.12",
     "spawntree-core": "workspace:*",
     "yaml": "^2.7.0"
   },

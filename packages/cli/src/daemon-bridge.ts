@@ -1,11 +1,13 @@
 import { execSync, spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-import { ApiClient, deriveRepoId } from "spawntree-core";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
+import { ApiClient, deriveRepoId, localConfigPathForRepo, spawntreeHome } from "spawntree-core";
 
-const SPAWNTREE_DIR = join(homedir(), ".spawntree");
+const SPAWNTREE_DIR = spawntreeHome();
 const RUNTIME_METADATA_PATH = join(SPAWNTREE_DIR, "runtime", "daemon.json");
+const DAEMON_START_LOCK_DIR = join(SPAWNTREE_DIR, "runtime", "daemon-start.lock");
+const DAEMON_START_LOCK_TIMEOUT_MS = 20_000;
+const DAEMON_START_LOCK_STALE_MS = 30_000;
 
 interface RuntimeMetadata {
   pid: number;
@@ -46,27 +48,34 @@ export async function isDaemonRunning(): Promise<boolean> {
 export async function ensureDaemon(): Promise<void> {
   if (await isDaemonRunning()) return;
 
-  const { resolveServerEntry } = await import("spawntree-daemon");
-  const daemonEntry = resolveServerEntry();
+  const releaseLock = await acquireDaemonStartLock();
+  try {
+    if (await isDaemonRunning()) return;
 
-  const started = await new Promise<boolean>((resolve, reject) => {
-    const child = spawn(process.execPath, [daemonEntry], {
-      detached: true,
-      stdio: ["ignore", "ignore", "inherit"],
-      env: { ...process.env },
+    const { resolveServerEntry } = await import("spawntree-daemon");
+    const daemonEntry = resolveServerEntry();
+
+    const started = await new Promise<boolean>((resolve, reject) => {
+      const child = spawn(process.execPath, [daemonEntry], {
+        detached: true,
+        stdio: ["ignore", "ignore", "inherit"],
+        env: { ...process.env },
+      });
+
+      child.once("error", (err) => {
+        reject(new Error(`Failed to start daemon: ${err.message}`));
+      });
+
+      child.unref();
+
+      waitForDaemon(10_000).then(resolve).catch(reject);
     });
 
-    child.once("error", (err) => {
-      reject(new Error(`Failed to start daemon: ${err.message}`));
-    });
-
-    child.unref();
-
-    waitForDaemon(10_000).then(resolve).catch(reject);
-  });
-
-  if (!started) {
-    throw new Error("Daemon did not start within 10 seconds");
+    if (!started) {
+      throw new Error("Daemon did not start within 10 seconds");
+    }
+  } finally {
+    releaseLock();
   }
 }
 
@@ -116,6 +125,12 @@ export function getRepoPath(): string {
   }
 }
 
+export function resolveConfigFileForRepo(repoPath: string, configFile = "spawntree.yaml"): string {
+  if (isAbsolute(configFile)) return configFile;
+  if (configFile === "spawntree.yaml") return resolve(repoPath, configFile);
+  return resolve(process.cwd(), configFile);
+}
+
 /**
  * Get the current environment ID (branch name, sanitized: / → -).
  * If a prefix is provided, appends it as `${branch}-${prefix}`.
@@ -129,11 +144,30 @@ export function getCurrentEnvId(prefix?: string): string {
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
   } catch {
-    branch = "detached";
+    branch = "";
   }
 
-  const safeBranch = branch.replace(/\//g, "-") || "detached";
+  const safeBranch = branch ? safeSlug(branch) : detachedWorktreeSlug();
   return prefix ? `${safeBranch}-${prefix}` : safeBranch;
+}
+
+export function isCurrentHeadDetached(): boolean {
+  try {
+    return (
+      execSync("git branch --show-current", {
+        cwd: process.cwd(),
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim() === ""
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function getCurrentProfileEnvId(prefix?: string, profile?: string): string {
+  const envId = getCurrentEnvId(prefix);
+  return !prefix && profile && profile !== "default" ? `${envId}-${safeSlug(profile)}` : envId;
 }
 
 function readRuntimeMetadata(): RuntimeMetadata | null {
@@ -157,10 +191,52 @@ async function waitForDaemon(timeoutMs: number): Promise<boolean> {
   return false;
 }
 
+async function acquireDaemonStartLock(): Promise<() => void> {
+  mkdirSync(join(SPAWNTREE_DIR, "runtime"), { recursive: true });
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < DAEMON_START_LOCK_TIMEOUT_MS) {
+    if (await isDaemonRunning()) {
+      return () => undefined;
+    }
+
+    try {
+      mkdirSync(DAEMON_START_LOCK_DIR);
+      return () => {
+        rmSync(DAEMON_START_LOCK_DIR, { recursive: true, force: true });
+      };
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") {
+        throw error;
+      }
+
+      if (isStaleDaemonStartLock()) {
+        rmSync(DAEMON_START_LOCK_DIR, { recursive: true, force: true });
+        continue;
+      }
+
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+    }
+  }
+
+  throw new Error("Timed out waiting for another spawntree CLI to finish starting the daemon");
+}
+
+function isStaleDaemonStartLock(): boolean {
+  try {
+    return Date.now() - statSync(DAEMON_START_LOCK_DIR).mtimeMs > DAEMON_START_LOCK_STALE_MS;
+  } catch {
+    return true;
+  }
+}
+
 async function autoRegisterRepo(client: ApiClient): Promise<void> {
   try {
     const repoPath = getRepoPath();
-    const configPath = resolve(repoPath, "spawntree.yaml");
+    const repoConfigPath = resolve(repoPath, "spawntree.yaml");
+    const localConfigPath = localConfigPathForRepo(repoPath);
+    const configPath = existsSync(repoConfigPath) ? repoConfigPath : localConfigPath;
     if (!existsSync(configPath)) {
       return;
     }
@@ -168,4 +244,24 @@ async function autoRegisterRepo(client: ApiClient): Promise<void> {
   } catch {
     // Not every command runs in a git repository. Ignore silently.
   }
+}
+
+function detachedWorktreeSlug(): string {
+  const repoPath = getRepoPath();
+  const name = repoPath.split("/").filter(Boolean).at(-1) ?? "worktree";
+  const hash = execSync("git rev-parse --short=8 HEAD", {
+    cwd: repoPath,
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+  }).trim();
+  return `${safeSlug(name)}-${hash}`;
+}
+
+function safeSlug(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-|-$/g, "") || "env"
+  );
 }

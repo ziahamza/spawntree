@@ -1,4 +1,5 @@
 import type { InfraStatusResponse, PostgresInstanceInfo, RedisInstanceInfo } from "spawntree-core";
+import { spawntreeHome } from "spawntree-core";
 import { PostgresRunner } from "../runners/postgres-runner.ts";
 import { RedisRunner } from "../runners/redis-runner.ts";
 
@@ -104,7 +105,7 @@ export class InfraManager {
         version,
         status: runner.status(),
         port: runner.port,
-        dataDir: `${process.env.HOME ?? "~"}/.spawntree/postgres/${version}/data`,
+        dataDir: `${spawntreeHome()}/postgres/${version}/data`,
         databases,
       });
     }

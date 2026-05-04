@@ -25,8 +25,10 @@ const TYPE_COLORS: Record<Service["type"], string> = {
 
 function previewURLFor(service: Service) {
   if (service.type === "postgres" || service.type === "redis") return null;
-  if (!service.url) return null;
-  return /^https?:\/\//.test(service.url) ? service.url : null;
+  const route = service.routes?.find((item) => item.kind === "proxy") ?? service.routes?.[0];
+  const url = route?.url ?? service.url;
+  if (!url) return null;
+  return /^https?:\/\//.test(url) ? url : null;
 }
 
 function statusForDisplay(status: Service["status"]) {
@@ -87,7 +89,9 @@ export function ServiceCard({ service, onServiceClick }: ServiceCardProps) {
               <button
                 type="button"
                 className="inline-flex items-center gap-1 text-blue hover:underline"
-                onClick={(e) => handleCopy(previewURL, e)}
+                onClick={(e) => {
+                  void handleCopy(previewURL, e);
+                }}
               >
                 <Link2 className="w-3 h-3" />
                 Copy
