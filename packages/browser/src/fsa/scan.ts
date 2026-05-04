@@ -394,6 +394,9 @@ export async function scanFolder(
  *      is a sibling/child of the repo's path.
  */
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 
 /**
  * Path-boundary aware suffix match. `hint.endsWith(repoGit)` alone
@@ -410,8 +413,11 @@ export function hintMatchesRepoGit(hint: string, repoGit: string): boolean {
   return startIdx === 0 || hint[startIdx - 1] === "/";
 }
 
+<<<<<<< HEAD
 =======
 >>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 export function stitchWorktrees(
   entries: ScannedEntry[],
 ): Map<string, string /* main repo relativePath */> {
@@ -426,6 +432,9 @@ export function stitchWorktrees(
     let matched: string | null = null;
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
     // Strategy 1: hint suffix match.
     //
     // We want the hint's path to END at a path-boundary aligned with
@@ -437,18 +446,25 @@ export function stitchWorktrees(
     // `hintMatchesRepoGit` enforces that the position immediately
     // before the matched suffix is either the start of the hint or a
     // path separator.
+<<<<<<< HEAD
 =======
     // Strategy 1: hint suffix match
 >>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
     if (e.mainGitDirHint) {
       const hint = e.mainGitDirHint;
       for (const [rel] of repoByRel) {
         const repoGit = rel ? `${rel}/.git` : ".git";
 <<<<<<< HEAD
+<<<<<<< HEAD
         if (hintMatchesRepoGit(hint, repoGit)) {
 =======
         if (hint.endsWith(repoGit) || hint.endsWith(`/${repoGit}`)) {
 >>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
+=======
+        if (hintMatchesRepoGit(hint, repoGit)) {
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
           matched = rel;
           break;
         }
