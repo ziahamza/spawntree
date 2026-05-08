@@ -62,13 +62,55 @@ interface JsonlMessageEvent {
 }
 
 /**
- * Parse a Claude CLI `.jsonl` transcript into a list of `SessionTurnData`.
+ * Shape of a parsed turn. Identical to `SessionTurnData` from
+ * `spawntree-core` but defined inline here to preserve mutable arrays —
+ * the public type resolves through the Effect Schema variant which has
+ * `readonly` everything, and that doesn't flow into `AdoptedSession.turns`.
+ */
+type ParsedTurn = {
+  id: string;
+  turnIndex: number;
+  role: SessionTurnData["role"];
+  content: ContentBlock[];
+  modelId: string | null;
+  durationMs: number | null;
+  stopReason: string | null;
+  status: SessionTurnData["status"];
+  errorMessage: string | null;
+  createdAt: string;
+};
+
+const TITLE_MAX_CHARS = 60;
+
+/**
+ * Reduce a turn's content blocks to a flat string suitable for use as a
+ * title — joins all `text` blocks with spaces, collapses whitespace. Tool
+ * blocks are already filtered out at parse time, so this is just a safe
+ * accessor on the surviving text content.
+ */
+function flattenTextContent(content: ContentBlock[]): string {
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block.type === "text" && typeof block.text === "string") {
+      parts.push(block.text);
+    }
+  }
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Parse a Claude CLI `.jsonl` transcript.
  *
- * Each user/assistant message line becomes one turn. Lines whose only content
- * blocks are `tool_use` / `tool_result` (no `text`) are skipped — they would
- * render as empty bubbles in the Studio and add noise without information.
+ * Returns:
+ *   - `turns`: each user/assistant message line as one `SessionTurnData`-
+ *     shaped object. Lines whose only content blocks are `tool_use` /
+ *     `tool_result` (no `text`) are skipped — they would render as empty
+ *     bubbles in the Studio and add noise.
+ *   - `title`: the first user message's text, truncated, suitable as a
+ *     human-friendly thread title. `null` when the transcript has no
+ *     user message with text content.
  *
- * Returns an empty array on file read errors or fully unparseable input
+ * Returns empty values on file read errors or fully unparseable input
  * rather than throwing, so a corrupt transcript can't abort daemon boot.
  */
 export function parseClaudeJsonl(jsonlPath: string, sessionId: string) {
@@ -81,22 +123,11 @@ export function parseClaudeJsonl(jsonlPath: string, sessionId: string) {
   try {
     raw = readFileSync(jsonlPath, "utf8");
   } catch {
-    return [];
+    return { turns: [] as ParsedTurn[], title: null as string | null };
   }
 
   const lines = raw.split("\n");
-  const turns = [] as Array<{
-    id: string;
-    turnIndex: number;
-    role: SessionTurnData["role"];
-    content: ContentBlock[];
-    modelId: string | null;
-    durationMs: number | null;
-    stopReason: string | null;
-    status: SessionTurnData["status"];
-    errorMessage: string | null;
-    createdAt: string;
-  }>;
+  const turns = [] as ParsedTurn[];
   let turnIndex = 0;
 
   for (const line of lines) {
@@ -140,7 +171,29 @@ export function parseClaudeJsonl(jsonlPath: string, sessionId: string) {
     turnIndex += 1;
   }
 
-  return turns;
+  // Title = first user message, flattened to a single line and clipped
+  // to TITLE_MAX_CHARS. This matches the convention every other AI chat
+  // UI uses (Claude.ai, ChatGPT, Cursor) and avoids forcing the user to
+  // see "Untitled · Untitled · Untitled · …" everywhere when their own
+  // first message is a perfectly serviceable label.
+  let title: string | null = null;
+  for (const turn of turns) {
+    if (turn.role !== "user") continue;
+    const flat = flattenTextContent(turn.content);
+    if (flat.length === 0) continue;
+    title = flat.length > TITLE_MAX_CHARS ? `${flat.slice(0, TITLE_MAX_CHARS - 1)}…` : flat;
+    break;
+  }
+
+  // Activity bookends — used by hydration to backfill `started_at` and
+  // `updated_at` on the catalog row. Without this, sessions adopted from
+  // the catalog inherit whatever timestamp was there (often "boot time"
+  // due to legacy upsertSession behavior that bumped on every discovery
+  // tick), making them all appear simultaneous in the UI.
+  const startedAt = turns[0]?.createdAt ?? null;
+  const lastActivityAt = turns[turns.length - 1]?.createdAt ?? null;
+
+  return { turns, title, startedAt, lastActivityAt };
 }
 
 function isMessageEvent(value: unknown): value is JsonlMessageEvent {

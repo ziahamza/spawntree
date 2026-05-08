@@ -50,9 +50,19 @@ export async function upsertSession(
     gitRemoteUrl?: string | null;
     totalTurns?: number;
     startedAt?: string | null;
+    /**
+     * The session's true "last activity" timestamp. Pass when the caller
+     * already knows this (e.g., the discovery loop reading from the
+     * adapter's TrackedSession.updatedAt). Without this, the discovery
+     * loop's mirror-into-catalog pass would stamp every row with `now()`
+     * on each tick, which makes the column useless for sorting by
+     * recency. Falls back to nowIso() for callers that genuinely
+     * represent "this just happened" (createSession, real events).
+     */
+    updatedAt?: string;
   },
 ): Promise<void> {
-  const updatedAt = nowIso();
+  const updatedAt = input.updatedAt ?? nowIso();
   await db
     .insert(sessions)
     .values({

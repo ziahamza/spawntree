@@ -215,17 +215,58 @@ export class SessionManager {
         const jsonlPath = resolveClaudeJsonlPath(snapshot.cwd, sessionId);
         if (jsonlPath) {
           const parsed = parseClaudeJsonl(jsonlPath, sessionId);
-          if (parsed.length > 0) {
-            snapshot.turns = parsed;
+          if (parsed.turns.length > 0) {
+            snapshot.turns = parsed.turns;
+            // Derive title from the first user message when the catalog
+            // doesn't already have one. Without this, every adopted
+            // session shows "Untitled" forever — the adapter never
+            // generates a title server-side and there's no UX to set
+            // one. The .jsonl already has the user's own first message,
+            // which is the natural label.
+            if (parsed.title && !snapshot.title) {
+              snapshot.title = parsed.title;
+            }
+            // Repair `startedAt` / `updatedAt` from real turn timestamps
+            // when available. The previous `upsertSession` implementation
+            // stamped `now()` on every discovery tick, so legacy rows
+            // carry "boot time" timestamps that lie about activity.
+            // Replacing them with the .jsonl's first/last turn times
+            // makes the Threads tab show the truth (sessions days apart,
+            // not all 26 simultaneous).
+            if (parsed.startedAt) snapshot.startedAt = parsed.startedAt;
+            if (parsed.lastActivityAt) snapshot.updatedAt = parsed.lastActivityAt;
             // Backfill the catalog so external Drizzle clients (Studio
             // offline, Turso replicas) also see the real content. Using
             // replaceSessionTurns rather than a per-row upsert because the
             // ids differ between the legacy `${sid}-turn-N` rows and the
             // new `${sid}-jsonl-N` rows — coexistence would duplicate.
             if (this.catalog) {
-              await replaceSessionTurns(this.catalog, sessionId, parsed).catch((err) => {
+              await replaceSessionTurns(this.catalog, sessionId, parsed.turns).catch(
+                (err) => {
+                  process.stderr.write(
+                    `[spawntree-daemon] backfill failed for session ${sessionId}: ${String(err)}\n`,
+                  );
+                },
+              );
+              // Always upsert when we hydrated turns, not only when a
+              // title was derived — the row may need its `started_at` /
+              // `updated_at` reset even when title resolution failed
+              // (e.g., conversation only has tool calls and no text).
+              await upsertSession(this.catalog, {
+                sessionId,
+                provider: "claude-code",
+                status: snapshot.status,
+                workingDirectory: snapshot.cwd,
+                title: snapshot.title,
+                gitBranch: snapshot.gitBranch,
+                gitHeadCommit: snapshot.gitHeadCommit,
+                gitRemoteUrl: snapshot.gitRemoteUrl,
+                totalTurns: parsed.turns.length,
+                startedAt: snapshot.startedAt,
+                updatedAt: snapshot.updatedAt,
+              }).catch((err) => {
                 process.stderr.write(
-                  `[spawntree-daemon] backfill failed for session ${sessionId}: ${String(err)}\n`,
+                  `[spawntree-daemon] hydration upsert failed for session ${sessionId}: ${String(err)}\n`,
                 );
               });
               backfilled += 1;
@@ -490,6 +531,11 @@ export class SessionManager {
               gitRemoteUrl: git.remoteUrl,
               totalTurns: s.totalTurns,
               startedAt: s.startedAt,
+              // Preserve the adapter's real `updatedAt` rather than
+              // stamping `now()` on every discovery tick. Without this
+              // the catalog column collapses to "boot time" right after
+              // a daemon restart and is useless for sorting by recency.
+              updatedAt: s.updatedAt,
             }).catch((err) => {
               process.stderr.write(
                 `[spawntree-daemon] discovery upsert failed for ${s.sourceId}: ${String(err)}\n`,
