@@ -27,8 +27,10 @@ function envStatusToDisplay(status: ReturnType<typeof deriveEnvStatus>): Status 
 
 function previewURLFor(service: Service) {
   if (service.type === "postgres" || service.type === "redis") return null;
-  if (!service.url) return null;
-  return /^https?:\/\//.test(service.url) ? service.url : null;
+  const route = service.routes?.find((item) => item.kind === "proxy") ?? service.routes?.[0];
+  const url = route?.url ?? service.url;
+  if (!url) return null;
+  return /^https?:\/\//.test(url) ? url : null;
 }
 
 function serviceStatus(status: Service["status"]): Status {
@@ -196,7 +198,9 @@ function EnvDetail() {
                   </a>
                   <button
                     type="button"
-                    onClick={() => handleCopy(previewURL)}
+                    onClick={() => {
+                      void handleCopy(previewURL);
+                    }}
                     className="inline-flex items-center gap-1 text-blue hover:underline"
                   >
                     <Link2 className="w-3 h-3" />

@@ -1,0 +1,39 @@
+{
+  "name": "spawntree-browser",
+  "version": "0.0.1",
+  "description": "Browser-mode SpawnTree: catalog (BYO sqlite), File System Access folder picker, isomorphic-git read layer, spawntree config read/write. A consumer plugs in a SQLite handle and a fetchPack callback; spawntree-browser does the rest. Strict subset of spawntree-daemon — no env spin-up, no sessions, no infrastructure.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ziahamza/spawntree.git",
+    "directory": "packages/browser"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "buffer": "^6.0.3",
+    "diff": "^5.2.0",
+    "drizzle-orm": "^0.45.2",
+    "isomorphic-git": "^1.27.1",
+    "spawntree-core": "workspace:*",
+    "uuidv7": "^1.2.1"
+  },
+  "devDependencies": {
+    "@types/diff": "^5.2.3"
+  }
+}

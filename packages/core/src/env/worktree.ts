@@ -35,7 +35,21 @@ export class WorktreeManager {
    */
   static currentBranch(dir: string): string {
     try {
-      return execSync("git branch --show-current", {
+      return (
+        execSync("git branch --show-current", {
+          cwd: dir,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+        }).trim() || "detached"
+      );
+    } catch {
+      return "detached";
+    }
+  }
+
+  static currentHead(dir: string): string {
+    try {
+      return execSync("git rev-parse --short=8 HEAD", {
         cwd: dir,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],

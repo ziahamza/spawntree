@@ -16,6 +16,14 @@ function bufferKey(repoId: string, envId: string, service: string): string {
   return `${repoId}:${envId}:${service}`;
 }
 
+function openLogWriteStream(filePath: string): ReturnType<typeof createWriteStream> {
+  const stream = createWriteStream(filePath, { flags: "a" });
+  stream.on("error", (error) => {
+    console.error(`[spawntree-logs] Failed to write ${filePath}: ${error.message}`);
+  });
+  return stream;
+}
+
 export interface SubscribeOptions {
   service?: string;
   follow?: boolean;
@@ -50,7 +58,7 @@ export class LogStreamer {
     if (!buf) {
       const dir = logDir(repoId, envId);
       const filePath = resolvePath(dir, `${service}.log`);
-      const writeStream = createWriteStream(filePath, { flags: "a" });
+      const writeStream = openLogWriteStream(filePath);
       buf = {
         lines: [],
         subscribers: new Set(),
@@ -131,7 +139,7 @@ export class LogStreamer {
           if (!buf) {
             const dir = logDir(repoId, envId);
             const filePath = resolvePath(dir, `${svc}.log`);
-            const writeStream = createWriteStream(filePath, { flags: "a" });
+            const writeStream = openLogWriteStream(filePath);
             buf = { lines: [], subscribers: new Set(), writeStream };
             this.buffers.set(key, buf);
           }
@@ -171,7 +179,7 @@ export class LogStreamer {
     if (!this.buffers.has(key)) {
       const dir = logDir(repoId, envId);
       const filePath = resolvePath(dir, `${service}.log`);
-      const writeStream = createWriteStream(filePath, { flags: "a" });
+      const writeStream = openLogWriteStream(filePath);
       this.buffers.set(key, {
         lines: [],
         subscribers: new Set(),

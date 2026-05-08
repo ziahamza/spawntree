@@ -17,6 +17,8 @@ import {
   ListEnvsResponse,
   ListSessionsResponse,
   LogLine,
+  PrepareRunResponse,
+  PrepareStatusResponse,
   RegisterRepoResponse,
   RestoreDbResponse,
   SessionDetail,
@@ -37,6 +39,7 @@ import type {
   CreateEnvRequest,
   CreateSessionRequest,
   DumpDbRequest,
+  PrepareRunRequest,
   RegisterRepoRequest,
   RelinkCloneRequest,
   RespondToToolCallRequest,
@@ -82,6 +85,25 @@ export class ApiClient {
       method: "POST",
       body,
       schema: CreateEnvResponse,
+    });
+  }
+
+  async getPrepareStatus(body: { repoPath: string; configFile?: string; profile?: string }) {
+    return this.request(
+      this.withSearch("/api/v1/prepare/status", {
+        repoPath: body.repoPath,
+        configFile: body.configFile,
+        profile: body.profile,
+      }),
+      { schema: PrepareStatusResponse },
+    );
+  }
+
+  async prepare(body: PrepareRunRequest) {
+    return this.request("/api/v1/prepare", {
+      method: "POST",
+      body,
+      schema: PrepareRunResponse,
     });
   }
 

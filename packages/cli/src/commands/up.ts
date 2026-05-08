@@ -1,8 +1,15 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import type { LogLine } from "spawntree-core";
-import { getClient, getCurrentEnvId, getCurrentRepoId, getRepoPath } from "../daemon-bridge.ts";
+import { localConfigPathForRepo } from "spawntree-core";
+import {
+  getClient,
+  getCurrentProfileEnvId,
+  getCurrentRepoId,
+  getRepoPath,
+  isCurrentHeadDetached,
+  resolveConfigFileForRepo,
+} from "../daemon-bridge.ts";
 
 const COLORS: Record<string, string> = {};
 const COLOR_PALETTE = [
@@ -27,9 +34,33 @@ export function registerUpCommand(program: Command): void {
     .command("up")
     .description("Start the environment")
     .option("--prefix <name>", "Named prefix for additional environments")
+    .option("--env-name <name>", "Explicit environment name")
+    .option("--profile <name>", "Config profile", "default")
+    .option("--worktree-strategy <strategy>", "current | isolated | auto", "auto")
+    .option("--no-prepare", "Skip automatic prepare")
     .option("--env <vars...>", "Override environment variables (KEY=VALUE)")
     .action(async (options) => {
-      const configFile = resolve(process.cwd(), program.opts().configFile ?? "spawntree.yaml");
+      let repoId: string;
+      let repoPath: string;
+      let envId: string;
+      let configFile: string;
+
+      try {
+        repoId = getCurrentRepoId();
+        repoPath = getRepoPath();
+        const requestedConfigFile = resolveConfigFileForRepo(repoPath, program.opts().configFile);
+        const localConfigFile = localConfigPathForRepo(repoPath);
+        configFile = existsSync(requestedConfigFile) ? requestedConfigFile : localConfigFile;
+        if (isCurrentHeadDetached() && !options.envName && !options.prefix) {
+          throw new Error(
+            "Detached HEAD detected. Create or switch to a branch before running SpawnTree, or pass --env-name for an advanced detached-commit environment.",
+          );
+        }
+        envId = options.envName || getCurrentProfileEnvId(options.prefix, options.profile);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : err);
+        process.exit(1);
+      }
 
       if (!existsSync(configFile)) {
         console.error(`Config file not found: ${configFile}`);
@@ -37,16 +68,8 @@ export function registerUpCommand(program: Command): void {
         process.exit(1);
       }
 
-      let repoId: string;
-      let repoPath: string;
-      let envId: string;
-
-      try {
-        repoId = getCurrentRepoId();
-        repoPath = getRepoPath();
-        envId = getCurrentEnvId(options.prefix);
-      } catch (err) {
-        console.error(err instanceof Error ? err.message : err);
+      if (!["current", "isolated", "auto"].includes(options.worktreeStrategy)) {
+        console.error('Invalid --worktree-strategy. Use "current", "isolated", or "auto".');
         process.exit(1);
       }
 
@@ -63,7 +86,15 @@ export function registerUpCommand(program: Command): void {
         }
       }
 
-      console.log(`Environment: ${envId}`);
+      printStartupPlan({
+        repoPath,
+        envId,
+        profile: options.profile,
+        worktreeStrategy: options.worktreeStrategy,
+        prepare: options.prepare,
+        configFile,
+        prefix: options.prefix,
+      });
       console.log("Starting daemon...");
 
       let client;
@@ -80,6 +111,9 @@ export function registerUpCommand(program: Command): void {
           repoPath,
           envId,
           prefix: options.prefix,
+          profile: options.profile,
+          worktreeStrategy: options.worktreeStrategy,
+          runPrepare: options.prepare,
           envOverrides: Object.keys(envOverrides).length > 0 ? envOverrides : undefined,
           configFile,
         });
@@ -126,6 +160,27 @@ export function registerUpCommand(program: Command): void {
         }
       }
     });
+}
+
+function printStartupPlan(input: {
+  repoPath: string;
+  envId: string;
+  profile: string;
+  worktreeStrategy: string;
+  prepare: boolean;
+  configFile: string;
+  prefix?: string;
+}): void {
+  console.log("SpawnTree is starting an environment");
+  console.log(`  repo: ${input.repoPath}`);
+  console.log(`  env: ${input.envId}`);
+  console.log(`  profile: ${input.profile}`);
+  console.log(`  worktree strategy: ${input.worktreeStrategy}`);
+  console.log(`  prepare: ${input.prepare ? "auto" : "skipped"}`);
+  console.log(`  config: ${input.configFile}`);
+  if (input.prefix) {
+    console.log(`  prefix: ${input.prefix}`);
+  }
 }
 
 function printLogLine(line: LogLine): void {

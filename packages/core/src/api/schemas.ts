@@ -24,8 +24,19 @@ export const ServiceType = Schema.Literals([
 ]);
 export type ServiceType = Schema.Schema.Type<typeof ServiceType>;
 
+export const WorktreeStrategy = Schema.Literals(["current", "isolated", "auto"]);
+export type WorktreeStrategy = Schema.Schema.Type<typeof WorktreeStrategy>;
+
 export const InfraStatus = Schema.Literals(["running", "stopped", "starting", "error"]);
 export type InfraStatus = Schema.Schema.Type<typeof InfraStatus>;
+
+export const ServiceRoute = Schema.Struct({
+  url: Schema.String,
+  hostname: Schema.String,
+  targetPort: Schema.Number,
+  kind: Schema.Literals(["proxy", "direct", "external"]),
+});
+export type ServiceRoute = Schema.Schema.Type<typeof ServiceRoute>;
 
 export const ServiceInfo = Schema.Struct({
   name: Schema.String,
@@ -34,6 +45,7 @@ export const ServiceInfo = Schema.Struct({
   port: Schema.Number,
   pid: Schema.optional(Schema.Number),
   url: Schema.optional(Schema.String),
+  routes: Schema.optional(Schema.Array(ServiceRoute)),
   containerId: Schema.optional(Schema.String),
 });
 export type ServiceInfo = Schema.Schema.Type<typeof ServiceInfo>;
@@ -43,6 +55,8 @@ export const EnvInfo = Schema.Struct({
   repoId: RepoId,
   repoPath: Schema.String,
   branch: Schema.String,
+  profile: Schema.optional(Schema.String),
+  worktreePath: Schema.optional(Schema.String),
   basePort: Schema.Number,
   createdAt: Schema.String,
   services: Schema.Array(ServiceInfo),
@@ -152,6 +166,9 @@ export const CreateEnvRequest = Schema.Struct({
   repoPath: Schema.String,
   envId: Schema.optional(EnvId),
   prefix: Schema.optional(Schema.String),
+  profile: Schema.optional(Schema.String),
+  worktreeStrategy: Schema.optional(WorktreeStrategy),
+  runPrepare: Schema.optional(Schema.Boolean),
   envOverrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   configFile: Schema.optional(Schema.String),
   skipHealthcheckWait: Schema.optional(Schema.Boolean),
@@ -177,6 +194,40 @@ export const OkResponse = Schema.Struct({
   ok: Schema.Boolean,
 });
 export type OkResponse = Schema.Schema.Type<typeof OkResponse>;
+
+export const PrepareStatus = Schema.Struct({
+  repoPath: Schema.String,
+  worktreePath: Schema.String,
+  configPath: Schema.String,
+  profile: Schema.String,
+  checksum: Schema.String,
+  state: Schema.Literals(["missing", "stale", "ready", "unconfigured"]),
+  command: Schema.optional(Schema.String),
+  preparedAt: Schema.optional(Schema.String),
+  statePath: Schema.String,
+});
+export type PrepareStatus = Schema.Schema.Type<typeof PrepareStatus>;
+
+export const PrepareRunRequest = Schema.Struct({
+  repoPath: Schema.String,
+  configFile: Schema.optional(Schema.String),
+  profile: Schema.optional(Schema.String),
+  force: Schema.optional(Schema.Boolean),
+});
+export type PrepareRunRequest = Schema.Schema.Type<typeof PrepareRunRequest>;
+
+export const PrepareStatusResponse = Schema.Struct({
+  status: PrepareStatus,
+});
+export type PrepareStatusResponse = Schema.Schema.Type<typeof PrepareStatusResponse>;
+
+export const PrepareRunResponse = Schema.Struct({
+  status: PrepareStatus,
+  ran: Schema.Boolean,
+  exitCode: Schema.optional(Schema.Number),
+  output: Schema.optional(Schema.String),
+});
+export type PrepareRunResponse = Schema.Schema.Type<typeof PrepareRunResponse>;
 
 export const LogLine = Schema.Struct({
   ts: Schema.String,

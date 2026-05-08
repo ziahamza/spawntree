@@ -10,14 +10,19 @@ import { HostConfigSync } from "../src/storage/host-sync.ts";
  * Cover the daemon-side host-config-sync loop with a stubbed `fetch`:
  *   - Authorization header: bearer host-key, never the URL.
  *   - URL: <binding.url>/api/daemons/me/config.
+ *   - X-Spawntree-Fingerprint: 32-hex-char hash of the machine id, sent
+ *     on every request (fingerprintOverride is the test seam).
  *   - Success: payload's StorageConfig is applied via manager.applyConfig.
  *   - 404: status becomes `awaiting_config`, no config write.
+ *   - 409 FINGERPRINT_MISMATCH: status becomes a TERMINAL error and the
+ *     loop refuses to retry. Daemon must be restarted.
  *   - 5xx / network error: status becomes `error` with backoff scheduled.
  *   - Bad JSON / missing `config`: error path.
  *   - stop(): cancels next scheduled fetch and waits for in-flight.
  *
- * Tests use a no-op fetch (we control the response) and tiny backoff so
- * they don't depend on real network or wall-clock delays.
+ * Tests pass `fingerprintOverride` so they don't depend on the
+ * `node-machine-id` package being installed in CI before the vendor
+ * postinstall runs.
  */
 
 interface FetchCall {
@@ -61,6 +66,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 const TEST_KEY = "dh_TESTxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const TEST_FINGERPRINT = "0123456789abcdef0123456789abcdef";
 
 describe("HostConfigSync", () => {
   let tmp: string;
@@ -83,7 +89,7 @@ describe("HostConfigSync", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("hits <host>/api/daemons/me/config with the bearer key", async () => {
+  it("hits <host>/api/daemons/me/config with the bearer key + fingerprint header", async () => {
     const { fetch, calls } = makeStubFetch([
       jsonResponse({
         config: { primary: { id: "local", config: {} }, replicators: [] },
@@ -96,6 +102,7 @@ describe("HostConfigSync", () => {
       fetch,
       pollIntervalMs: 60_000,
       logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
     });
     await sync.refreshNow();
     await sync.stop();
@@ -106,6 +113,13 @@ describe("HostConfigSync", () => {
     expect(calls[0]!.headers["Authorization"] || calls[0]!.headers["authorization"]).toBe(
       `Bearer ${TEST_KEY}`,
     );
+    // Fingerprint must be sent on every host poll. The header name is the
+    // same casing the host expects (X-Spawntree-Fingerprint) — it's
+    // case-insensitive on the wire but we pin the canonical form here so
+    // accidental renames break this test.
+    const fp =
+      calls[0]!.headers["X-Spawntree-Fingerprint"] || calls[0]!.headers["x-spawntree-fingerprint"];
+    expect(fp).toBe(TEST_FINGERPRINT);
   });
 
   it("strips trailing slash from the binding URL", async () => {
@@ -118,6 +132,7 @@ describe("HostConfigSync", () => {
       fetch,
       pollIntervalMs: 60_000,
       logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
     });
     await sync.refreshNow();
     await sync.stop();
@@ -137,6 +152,7 @@ describe("HostConfigSync", () => {
       fetch,
       pollIntervalMs: 60_000,
       logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
     });
     await sync.refreshNow();
     await sync.stop();
@@ -157,6 +173,7 @@ describe("HostConfigSync", () => {
       fetch,
       pollIntervalMs: 60_000,
       logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
     });
     await sync.refreshNow();
     await sync.stop();
@@ -172,6 +189,53 @@ describe("HostConfigSync", () => {
     expect(managerStatus.replicators).toEqual([]);
   });
 
+  it("on 409 FINGERPRINT_MISMATCH: terminal error state; loop will not retry", async () => {
+    // 409 should be HARD-FAIL: the host has positively rejected this
+    // fingerprint as belonging to a different machine. We must not silently
+    // keep polling — that would let an attacker brute-force a stolen
+    // dh_ key by spinning up a new daemon on another box.
+    const responses = [
+      new Response(
+        JSON.stringify({
+          code: "FINGERPRINT_MISMATCH",
+          error: "Daemon key already bound to a different machine",
+        }),
+        { status: 409, headers: { "content-type": "application/json" } },
+      ),
+      // Second response would be served if the loop kept going. The test
+      // asserts the daemon ignores it (no consecutive call after a 409).
+      jsonResponse({ config: { primary: { id: "local", config: {} }, replicators: [] } }),
+    ];
+    const { fetch, calls } = makeStubFetch(responses);
+    const sync = new HostConfigSync({
+      binding: { url: "http://controller:7777", key: TEST_KEY },
+      manager,
+      fetch,
+      pollIntervalMs: 60_000,
+      backoffSequenceMs: [10],
+      logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
+    });
+
+    await sync.refreshNow();
+    const first = sync.getStatus();
+    expect(first.state).toBe("error");
+    if (first.state === "error") {
+      expect(first.error).toMatch(/different machine/i);
+      expect(first.terminal).toBe(true);
+    }
+
+    // Even an explicit refresh after a 409 is a no-op — terminal means
+    // terminal until the daemon process restarts.
+    await sync.refreshNow();
+    await sync.stop();
+    expect(calls).toHaveLength(1);
+
+    // The persisted config should NOT have been touched by a 409.
+    const managerStatus = await manager.status();
+    expect(managerStatus.primary.id).toBe("local");
+  });
+
   it("on 5xx: state=error with backoff", async () => {
     const { fetch } = makeStubFetch([new Response("upstream timeout", { status: 503 })]);
     const sync = new HostConfigSync({
@@ -181,6 +245,7 @@ describe("HostConfigSync", () => {
       pollIntervalMs: 60_000,
       backoffSequenceMs: [50, 100, 200],
       logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
     });
     await sync.refreshNow();
     const status = sync.getStatus();
@@ -188,6 +253,8 @@ describe("HostConfigSync", () => {
     if (status.state === "error") {
       expect(status.error).toMatch(/503/);
       expect(status.nextRetryAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      // Non-409 errors are NOT terminal — the loop will retry.
+      expect(status.terminal).toBeUndefined();
     }
     await sync.stop();
   });
@@ -201,6 +268,7 @@ describe("HostConfigSync", () => {
       pollIntervalMs: 60_000,
       backoffSequenceMs: [50],
       logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
     });
     await sync.refreshNow();
     const status = sync.getStatus();
@@ -225,6 +293,7 @@ describe("HostConfigSync", () => {
       pollIntervalMs: 60_000,
       backoffSequenceMs: [50],
       logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
     });
     await sync.refreshNow();
     expect(sync.getStatus().state).toBe("error");
@@ -240,6 +309,7 @@ describe("HostConfigSync", () => {
       pollIntervalMs: 60_000,
       backoffSequenceMs: [50],
       logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
     });
     await sync.refreshNow();
     const status = sync.getStatus();
@@ -264,6 +334,7 @@ describe("HostConfigSync", () => {
       pollIntervalMs: 60_000,
       backoffSequenceMs: [10, 20, 50],
       logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
     });
 
     await sync.refreshNow();
@@ -300,6 +371,7 @@ describe("HostConfigSync", () => {
       pollIntervalMs: 60_000,
       backoffSequenceMs: [10, 999],
       logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
     });
 
     await sync.refreshNow();
@@ -329,6 +401,7 @@ describe("HostConfigSync", () => {
       fetch,
       pollIntervalMs: 60_000,
       logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
     });
     sync.start();
     await new Promise((r) => setImmediate(r));
@@ -362,6 +435,7 @@ describe("HostConfigSync", () => {
       fetch,
       pollIntervalMs: 60_000,
       logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
     });
 
     const before = Date.now();

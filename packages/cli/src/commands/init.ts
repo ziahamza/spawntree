@@ -1,7 +1,9 @@
 import type { Command } from "commander";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { localConfigPathForRepo } from "spawntree-core";
 import { parse as parseYaml, stringify } from "yaml";
+import { getRepoPath } from "../daemon-bridge.ts";
 
 export function registerInitCommand(program: Command): void {
   program
@@ -9,11 +11,15 @@ export function registerInitCommand(program: Command): void {
     .description("Generate a spawntree.yaml config file")
     .option("--from-compose", "Convert from docker-compose.yml")
     .option("--from-package", "Generate from package.json scripts")
+    .option("--global", "Write a per-user config instead of a repo config")
     .action((options) => {
-      const configFile = resolve(process.cwd(), "spawntree.yaml");
+      const repoPath = tryGetRepoPath() ?? process.cwd();
+      const repoConfigFile = resolve(repoPath, "spawntree.yaml");
+      const shouldWriteGlobal = Boolean(options.global) || !canWritePath(repoConfigFile);
+      const configFile = shouldWriteGlobal ? localConfigPathForRepo(repoPath) : repoConfigFile;
 
       if (existsSync(configFile)) {
-        console.error("spawntree.yaml already exists. Delete it first to regenerate.");
+        console.error(`${configFile} already exists. Delete it first to regenerate.`);
         process.exit(1);
       }
 
@@ -32,8 +38,9 @@ export function registerInitCommand(program: Command): void {
         }
 
         const config = convertFromCompose(actualPath);
+        mkdirSync(resolve(configFile, ".."), { recursive: true });
         writeFileSync(configFile, config);
-        console.log("Created spawntree.yaml from docker-compose.yml");
+        console.log(`Created ${configFile} from docker-compose.yml`);
         console.log("Review and adjust the generated config before running spawntree up.");
         return;
       }
@@ -46,17 +53,36 @@ export function registerInitCommand(program: Command): void {
         }
 
         const config = convertFromPackage(packagePath);
+        mkdirSync(resolve(configFile, ".."), { recursive: true });
         writeFileSync(configFile, config);
-        console.log("Created spawntree.yaml from package.json");
+        console.log(`Created ${configFile} from package.json`);
         return;
       }
 
       // Default: generate a template
       const template = generateTemplate();
+      mkdirSync(resolve(configFile, ".."), { recursive: true });
       writeFileSync(configFile, template);
-      console.log("Created spawntree.yaml with example template.");
+      console.log(`Created ${configFile} with example template.`);
       console.log('Edit it to match your project, then run "spawntree up".');
     });
+}
+
+function tryGetRepoPath(): string | null {
+  try {
+    return getRepoPath();
+  } catch {
+    return null;
+  }
+}
+
+function canWritePath(path: string): boolean {
+  try {
+    accessSync(resolve(path, ".."), constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function convertFromCompose(composePath: string): string {

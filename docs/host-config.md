@@ -312,3 +312,9 @@ Surfaced by `spawntree-daemon`:
 | `--host-key <dh_…>` | Bearer token from `POST /api/daemons`. Persisted alongside the URL. |
 
 Both flags are passed together or not at all. Either alone exits with code 2.
+
+### Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `SPAWNTREE_HOST_POLL_INTERVAL_MS` | Override the default 5-minute poll interval for host config sync. Internal/test debugging knob — must be a positive integer; invalid values exit with code 2. |

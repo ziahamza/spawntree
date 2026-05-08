@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import { registerDoctorCommand } from "./commands/doctor.ts";
 import { registerDownCommand } from "./commands/down.ts";
 import { registerInitCommand } from "./commands/init.ts";
 import { registerLogsCommand } from "./commands/logs.ts";
+import { registerPrepareCommand } from "./commands/prepare.ts";
 import { registerRmCommand } from "./commands/rm.ts";
 import { registerStatusCommand } from "./commands/status.ts";
 import { registerUpCommand } from "./commands/up.ts";
@@ -24,6 +26,8 @@ registerStatusCommand(program);
 registerLogsCommand(program);
 registerRmCommand(program);
 registerInitCommand(program);
+registerPrepareCommand(program);
+registerDoctorCommand(program);
 
 // ---------------------------------------------------------------------------
 // infra subcommands

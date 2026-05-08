@@ -63,11 +63,67 @@ services:
     const config = parseConfig(yaml, {});
     expect(config.services.db.fork_from).toBe("${PROD_DB_URL}");
   });
+
+  it("treats explicit default profile as no-op when config has no profiles", () => {
+    const yaml = `
+services:
+  app:
+    type: process
+    command: node server.js
+`;
+    const config = parseConfig(yaml, {}, { profile: "default" });
+    expect(config.services.app.command).toBe("node server.js");
+  });
+
+  it("applies default profile when profiles are present", () => {
+    const yaml = `
+services:
+  api:
+    type: process
+    command: node server.js
+profiles:
+  default:
+    environment:
+      API_PORT: "8787"
+    services:
+      api:
+        command: node server.js --port \${API_PORT}
+`;
+    const config = parseConfig(yaml, {});
+    expect(config.services.api.command).toBe("node server.js --port 8787");
+  });
+
+  it("overlays named profiles and inherited services", () => {
+    const yaml = `
+services:
+  api:
+    type: process
+    command: node server.js
+profiles:
+  powersync:
+    services:
+      powersync:
+        type: container
+        image: journeyapps/powersync-service:latest
+  local:
+    extends: powersync
+    services:
+      db:
+        type: postgres
+      api:
+        depends_on: [db, powersync]
+`;
+    const config = parseConfig(yaml, {}, { profile: "local" });
+    expect(config.services.api.depends_on).toEqual(["db", "powersync"]);
+    expect(config.services.powersync.type).toBe("container");
+    expect(config.services.db.type).toBe("postgres");
+  });
 });
 
 describe("validateConfig", () => {
   it("accepts valid config", () => {
     const result = validateConfig({
+      prepare: { command: "pnpm install", inputs: ["package.json"] },
       services: {
         api: { type: "process", command: "node server.js" },
       },
