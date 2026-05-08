@@ -30,10 +30,14 @@ import {
   deletePersistedSession,
   getPersistedSession,
   hydrateTurnContent,
+  listPersistedSessionIdsByProvider,
   listPersistedSessions,
+  loadAdoptableSession,
   persistSessionEvent,
+  replaceSessionTurns,
   upsertSession,
 } from "./persistence.ts";
+import { parseClaudeJsonl, resolveClaudeJsonlPath } from "./claude-jsonl.ts";
 
 /** Pending approval entry held while a tool call awaits user response. */
 interface PendingApproval {
@@ -162,8 +166,126 @@ export class SessionManager {
             `[spawntree-daemon] failed to clear pending approvals on startup: ${String(err)}\n`,
           );
         });
+        // Re-introduce persisted Claude Code sessions into the adapter's
+        // in-memory map. Without this, the adapter starts with an empty
+        // map and any subsequent getSessionDetail / sendMessage / resume
+        // for a session that survived restart fails with "Unknown session".
+        // Codex doesn't need this — its subprocess persists threads itself
+        // and re-discovers them via thread/list.
+        await this.hydrateClaudeAdapterFromCatalog().catch((err) => {
+          process.stderr.write(
+            `[spawntree-daemon] failed to hydrate Claude sessions from catalog: ${String(err)}\n`,
+          );
+        });
       }
     }
+  }
+
+  /**
+   * Adopt every persisted Claude Code session into the adapter's in-memory
+   * tracking so the post-restart catalog and the live adapter agree on
+   * which sessions exist. Hydration is cheap — only touches the in-memory
+   * `Map`; the ACP subprocess is told about each session lazily on next
+   * interaction (see `ClaudeCodeAdapter.ensureSubprocessHasSession`).
+   *
+   * Failures on individual sessions are logged and skipped so one corrupt
+   * row doesn't abort daemon boot.
+   */
+  private async hydrateClaudeAdapterFromCatalog(): Promise<void> {
+    if (!this.catalog) return;
+    const adapter = this.adapters.get("claude-code");
+    if (!adapter || !(adapter instanceof ClaudeCodeAdapter)) return;
+
+    const ids = await listPersistedSessionIdsByProvider(this.catalog, "claude-code");
+    if (ids.length === 0) return;
+
+    let adopted = 0;
+    let backfilled = 0;
+    for (const sessionId of ids) {
+      try {
+        const snapshot = await loadAdoptableSession(this.catalog, sessionId);
+        if (!snapshot) continue;
+
+        // The catalog stores turn skeletons (`content: []`) — final content
+        // historically came from the in-memory adapter via `hydrateTurnContent`,
+        // which doesn't run for sessions that ended with a previous daemon
+        // process. The Claude CLI itself wrote the full transcript to disk;
+        // re-parse it so adopted sessions render their actual conversation
+        // history in the Studio instead of empty bubbles.
+        const jsonlPath = resolveClaudeJsonlPath(snapshot.cwd, sessionId);
+        if (jsonlPath) {
+          const parsed = parseClaudeJsonl(jsonlPath, sessionId);
+          if (parsed.turns.length > 0) {
+            snapshot.turns = parsed.turns;
+            // Derive title from the first user message when the catalog
+            // doesn't already have one. Without this, every adopted
+            // session shows "Untitled" forever — the adapter never
+            // generates a title server-side and there's no UX to set
+            // one. The .jsonl already has the user's own first message,
+            // which is the natural label.
+            if (parsed.title && !snapshot.title) {
+              snapshot.title = parsed.title;
+            }
+            // Repair `startedAt` / `updatedAt` from real turn timestamps
+            // when available. The previous `upsertSession` implementation
+            // stamped `now()` on every discovery tick, so legacy rows
+            // carry "boot time" timestamps that lie about activity.
+            // Replacing them with the .jsonl's first/last turn times
+            // makes the Threads tab show the truth (sessions days apart,
+            // not all 26 simultaneous).
+            if (parsed.startedAt) snapshot.startedAt = parsed.startedAt;
+            if (parsed.lastActivityAt) snapshot.updatedAt = parsed.lastActivityAt;
+            // Backfill the catalog so external Drizzle clients (Studio
+            // offline, Turso replicas) also see the real content. Using
+            // replaceSessionTurns rather than a per-row upsert because the
+            // ids differ between the legacy `${sid}-turn-N` rows and the
+            // new `${sid}-jsonl-N` rows — coexistence would duplicate.
+            if (this.catalog) {
+              await replaceSessionTurns(this.catalog, sessionId, parsed.turns).catch(
+                (err) => {
+                  process.stderr.write(
+                    `[spawntree-daemon] backfill failed for session ${sessionId}: ${String(err)}\n`,
+                  );
+                },
+              );
+              // Always upsert when we hydrated turns, not only when a
+              // title was derived — the row may need its `started_at` /
+              // `updated_at` reset even when title resolution failed
+              // (e.g., conversation only has tool calls and no text).
+              await upsertSession(this.catalog, {
+                sessionId,
+                provider: "claude-code",
+                status: snapshot.status,
+                workingDirectory: snapshot.cwd,
+                title: snapshot.title,
+                gitBranch: snapshot.gitBranch,
+                gitHeadCommit: snapshot.gitHeadCommit,
+                gitRemoteUrl: snapshot.gitRemoteUrl,
+                totalTurns: parsed.turns.length,
+                startedAt: snapshot.startedAt,
+                updatedAt: snapshot.updatedAt,
+              }).catch((err) => {
+                process.stderr.write(
+                  `[spawntree-daemon] hydration upsert failed for session ${sessionId}: ${String(err)}\n`,
+                );
+              });
+              backfilled += 1;
+            }
+          }
+        }
+
+        adapter.adoptSession(snapshot);
+        this.sessionIndex.set(sessionId, "claude-code");
+        adopted += 1;
+      } catch (err) {
+        process.stderr.write(
+          `[spawntree-daemon] adopt failed for session ${sessionId}: ${String(err)}\n`,
+        );
+      }
+    }
+    process.stderr.write(
+      `[spawntree-daemon] adopted ${adopted}/${ids.length} Claude Code sessions from catalog (backfilled ${backfilled} from .jsonl)\n`,
+    );
   }
 
   /**
@@ -409,6 +531,11 @@ export class SessionManager {
               gitRemoteUrl: git.remoteUrl,
               totalTurns: s.totalTurns,
               startedAt: s.startedAt,
+              // Preserve the adapter's real `updatedAt` rather than
+              // stamping `now()` on every discovery tick. Without this
+              // the catalog column collapses to "boot time" right after
+              // a daemon restart and is useless for sorting by recency.
+              updatedAt: s.updatedAt,
             }).catch((err) => {
               process.stderr.write(
                 `[spawntree-daemon] discovery upsert failed for ${s.sourceId}: ${String(err)}\n`,
@@ -499,6 +626,13 @@ export class SessionManager {
     // every adapter's discoverSessions() (which would spawn subprocesses).
     this.sessionIndex.set(result.sessionId, provider);
 
+    // Invalidate the discovery cache so the next `listSessions()` call
+    // returns fresh data including this new session. Without this, the
+    // 30s cache window served stale lists immediately after creation —
+    // the Studio's create-session flow then routed the user back to a
+    // pre-existing session because the new id wasn't in the response.
+    this.discoveryCacheAt = 0;
+
     // Mirror the session row into the catalog so list/get can come from
     // Drizzle without bouncing through the adapter subprocess, and so the
     // s3-snapshot replicator captures session metadata.
@@ -577,6 +711,10 @@ export class SessionManager {
     }
     await adapter.deleteSession(sessionId);
     this.sessionIndex.delete(sessionId);
+    // Invalidate the discovery cache so the deleted session disappears
+    // from `listSessions()` immediately. Without this, the UI would
+    // continue showing the deleted session for up to 30s.
+    this.discoveryCacheAt = 0;
     if (this.catalog) {
       await deletePersistedSession(this.catalog, sessionId).catch(() => undefined);
     }
