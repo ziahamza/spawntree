@@ -167,6 +167,29 @@ export interface SessionDetail {
   toolCalls: SessionToolCallData[];
 }
 
+/**
+ * Snapshot used to re-introduce a session into an adapter that lost its
+ * in-memory tracking — typically across daemon restarts. The adapter
+ * reconstructs its `TrackedSession` shape from this and re-loads the
+ * session into its subprocess lazily on next interaction.
+ *
+ * Produced by the daemon's catalog (see `loadAdoptableSession`) so the
+ * adapter doesn't depend on Drizzle directly.
+ */
+export interface AdoptedSession {
+  sessionId: string;
+  cwd: string;
+  status: SessionStatus;
+  title: string | null;
+  turns: SessionTurnData[];
+  toolCalls: SessionToolCallData[];
+  startedAt: string;
+  updatedAt: string;
+  gitBranch: string | null;
+  gitHeadCommit: string | null;
+  gitRemoteUrl: string | null;
+}
+
 export interface SessionTurnData {
   id: string;
   turnIndex: number;

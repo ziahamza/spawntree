@@ -1,5 +1,6 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import type {
+  AdoptedSession,
   CatalogDb,
   ContentBlock,
   SessionEvent,
@@ -273,6 +274,137 @@ export async function getPersistedSession(
 export async function deletePersistedSession(db: CatalogDb, sessionId: string): Promise<void> {
   // FK cascades drop turns + tool calls.
   await db.delete(sessions).where(eq(sessions.sessionId, sessionId));
+}
+
+/**
+ * Read a persisted session plus its turns and tool calls in the shape an
+ * adapter expects to re-introduce it via `adoptSession()`. Used by
+ * `SessionManager.start()` to repopulate adapters whose in-memory tracking
+ * would otherwise be empty after a daemon restart.
+ *
+ * Returns `undefined` when the session row no longer exists. Turns are
+ * returned ordered by `turnIndex` so the adapter can preserve transcript
+ * order when rebuilding its internal counter.
+ */
+export async function loadAdoptableSession(
+  db: CatalogDb,
+  sessionId: string,
+): Promise<AdoptedSession | undefined> {
+  const [sessionRow] = await db
+    .select()
+    .from(sessions)
+    .where(eq(sessions.sessionId, sessionId))
+    .limit(1);
+  if (!sessionRow) return undefined;
+
+  const turnRows = await db
+    .select()
+    .from(sessionTurns)
+    .where(eq(sessionTurns.sessionId, sessionId))
+    .orderBy(asc(sessionTurns.turnIndex), asc(sessionTurns.createdAt));
+
+  const toolCallRows = await db
+    .select()
+    .from(sessionToolCalls)
+    .where(eq(sessionToolCalls.sessionId, sessionId))
+    .orderBy(asc(sessionToolCalls.createdAt));
+
+  // The barrel `spawntree-core` resolves SessionTurnData/SessionToolCallData
+  // to the Effect Schema variants (readonly arrays), while AdoptedSession in
+  // adapter.ts uses the local mutable interfaces. Avoid an explicit type
+  // annotation on the local consts (which would anchor to the readonly
+  // variant) and spread row.content so the inner ContentBlock array is
+  // mutable when it lands on AdoptedSession.turns.
+  const turns = turnRows.map((row) => ({
+    id: row.id,
+    turnIndex: row.turnIndex,
+    role: row.role as SessionTurnData["role"],
+    content: [...(row.content ?? [])] as ContentBlock[],
+    modelId: row.modelId,
+    durationMs: row.durationMs,
+    stopReason: row.stopReason,
+    status: row.status as SessionTurnData["status"],
+    errorMessage: row.errorMessage,
+    createdAt: row.createdAt,
+  }));
+
+  const toolCalls = toolCallRows.map((row) => ({
+    id: row.id,
+    turnId: row.turnId,
+    toolName: row.toolName,
+    toolKind: row.toolKind as SessionToolCallData["toolKind"],
+    status: row.status as SessionToolCallData["status"],
+    arguments: row.arguments,
+    result: row.result,
+    durationMs: row.durationMs,
+    createdAt: row.createdAt,
+  }));
+
+  return {
+    sessionId: sessionRow.sessionId,
+    cwd: sessionRow.workingDirectory,
+    status: sessionRow.status as SessionStatus,
+    title: sessionRow.title,
+    turns,
+    toolCalls,
+    startedAt: sessionRow.startedAt ?? sessionRow.updatedAt,
+    updatedAt: sessionRow.updatedAt,
+    gitBranch: sessionRow.gitBranch,
+    gitHeadCommit: sessionRow.gitHeadCommit,
+    gitRemoteUrl: sessionRow.gitRemoteUrl,
+  };
+}
+
+/**
+ * List `sessionId`s for a given provider, ordered by recency. Helper used
+ * during boot to know which sessions to re-introduce into an adapter via
+ * `loadAdoptableSession` + `adoptSession`. Returns ids only so callers
+ * can decide whether to hydrate eagerly or lazily.
+ */
+export async function listPersistedSessionIdsByProvider(
+  db: CatalogDb,
+  provider: string,
+): Promise<string[]> {
+  const rows = await db
+    .select({ sessionId: sessions.sessionId })
+    .from(sessions)
+    .where(eq(sessions.provider, provider))
+    .orderBy(desc(sessions.updatedAt));
+  return rows.map((r) => r.sessionId);
+}
+
+/**
+ * Replace all `session_turns` rows for a given session with a fresh set.
+ * Used when backfilling content from an authoritative external source
+ * (e.g. the Claude CLI on-disk transcript) where the row ids may not
+ * match the legacy `${sessionId}-turn-N` convention — a per-row upsert
+ * would leave stale empty rows behind. Wrapped in a single SQLite
+ * transaction so a partial failure can't leave the session half-deleted.
+ */
+export async function replaceSessionTurns(
+  db: CatalogDb,
+  sessionId: string,
+  turns: SessionTurnData[],
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.delete(sessionTurns).where(eq(sessionTurns.sessionId, sessionId));
+    if (turns.length === 0) return;
+    await tx.insert(sessionTurns).values(
+      turns.map((turn) => ({
+        id: turn.id,
+        sessionId,
+        turnIndex: turn.turnIndex,
+        role: turn.role,
+        content: [...turn.content],
+        modelId: turn.modelId ?? null,
+        durationMs: turn.durationMs ?? null,
+        stopReason: turn.stopReason ?? null,
+        status: turn.status,
+        errorMessage: turn.errorMessage ?? null,
+        createdAt: turn.createdAt,
+      })),
+    );
+  });
 }
 
 /**
