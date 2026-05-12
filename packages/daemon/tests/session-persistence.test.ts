@@ -81,8 +81,14 @@ describe("SessionManager persistence", () => {
   let manager: SessionManager;
   let fake: FakeAdapter;
 
+  let originalClaudeHome: string | undefined;
   beforeEach(async () => {
     tmp = mkdtempSync(resolve(tmpdir(), "spawntree-sess-persist-"));
+    // Isolate from the developer's real ~/.claude/projects/ — otherwise
+    // SessionManager.start() walks the host machine and pulls thousands
+    // of unrelated session rows into the catalog under test.
+    originalClaudeHome = process.env["CLAUDE_CONFIG_DIR"];
+    process.env["CLAUDE_CONFIG_DIR"] = resolve(tmp, "claude");
     storage = new StorageManager({ dataDir: tmp, logger: () => undefined });
     await storage.start();
     const events = new DomainEvents();
@@ -96,6 +102,8 @@ describe("SessionManager persistence", () => {
     await manager.shutdown();
     await storage.stop();
     rmSync(tmp, { recursive: true, force: true });
+    if (originalClaudeHome === undefined) delete process.env["CLAUDE_CONFIG_DIR"];
+    else process.env["CLAUDE_CONFIG_DIR"] = originalClaudeHome;
   });
 
   it("createSession upserts a row into sessions", async () => {

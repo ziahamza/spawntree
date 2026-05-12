@@ -47,8 +47,28 @@ export interface CreateRoutingCatalogClientOptions {
    * How long a probe result is cached, in ms. Default 30s.
    * Tradeoff: shorter values recover from primary outages faster but
    * cost an extra round-trip on each window boundary.
+   *
+   * When set, applies to both successful and failed probes. Use
+   * `probeTtlOkMs` and `probeTtlFailMs` to set asymmetric TTLs — the
+   * common case is "trust primary for a while, but re-probe quickly
+   * after a failure so a restarted daemon is picked up fast." When the
+   * specific knobs are not provided they fall back to this single value.
    */
   probeTtlMs?: number;
+  /**
+   * Override the cache TTL for successful probes only. Falls back to
+   * `probeTtlMs` (or the 30s default). Use when you want the route to
+   * stay pinned to primary for longer than the failure-recovery window.
+   */
+  probeTtlOkMs?: number;
+  /**
+   * Override the cache TTL for failed probes only. Falls back to
+   * `probeTtlMs` (or the 30s default). Set this short (a few seconds)
+   * so a daemon that comes back online during the cached fallback
+   * window is detected quickly, rather than serving stale "host
+   * fallback" results for the full 30s.
+   */
+  probeTtlFailMs?: number;
   /**
    * Per-probe timeout. Default 800ms. The same value used by
    * `probeDaemonReachable`. Don't make this too aggressive — under load
@@ -94,6 +114,8 @@ export function createRoutingCatalogProxy(
   options: CreateRoutingCatalogClientOptions,
 ): CatalogHttpProxy {
   const probeTtlMs = options.probeTtlMs ?? 30_000;
+  const probeTtlOkMs = options.probeTtlOkMs ?? probeTtlMs;
+  const probeTtlFailMs = options.probeTtlFailMs ?? probeTtlMs;
   const probeTimeoutMs = options.probeTimeoutMs ?? 800;
   const probe =
     options.probe ??
@@ -125,7 +147,8 @@ export function createRoutingCatalogProxy(
       inflightProbe = probe(options.primary.url)
         .catch(() => false)
         .then((ok) => {
-          cache = { ok, expiresAt: Date.now() + probeTtlMs };
+          const ttl = ok ? probeTtlOkMs : probeTtlFailMs;
+          cache = { ok, expiresAt: Date.now() + ttl };
           inflightProbe = null;
           return ok;
         });

@@ -1,5 +1,6 @@
 export type {
   ACPAdapter,
+  AdoptedSession,
   // ContentBlock, SessionStatus, SessionToolCallData, SessionTurnData,
   // ToolCallApprovalOption are exported from api/schemas.ts with
   // runtime-validatable Schema definitions. Export only the types that
@@ -22,6 +23,7 @@ export {
   ProviderCapabilityError,
   SessionBusyError,
   SessionDeleteUnsupportedError,
+  SessionResumeFailedError,
   UnknownProviderError,
 } from "./adapter.ts";
 export { ACPConnection, buildDefaultClient } from "./client.ts";

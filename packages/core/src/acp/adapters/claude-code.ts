@@ -2,9 +2,10 @@ import { execSync } from "node:child_process";
 import type * as acp from "@zed-industries/agent-client-protocol";
 import { detectGitMetadata } from "../../lib/git.ts";
 import { ACPConnection } from "../client.ts";
-import { SessionBusyError } from "../adapter.ts";
+import { SessionBusyError, SessionResumeFailedError } from "../adapter.ts";
 import type {
   ACPAdapter,
+  AdoptedSession,
   DiscoveredSession,
   SessionDetail,
   SessionEvent,
@@ -59,6 +60,38 @@ interface TrackedSession {
   gitBranch: string | null;
   gitHeadCommit: string | null;
   gitRemoteUrl: string | null;
+  /**
+   * False when the session was reconstructed from the daemon's catalog
+   * (cross-restart adoption) and the ACP subprocess has not yet been told
+   * about it via `loadSession`. Flipped to true after `ensureSubprocessHasSession`
+   * runs successfully, OR set true on `createSession` since the subprocess
+   * created the session itself.
+   */
+  loadedInSubprocess: boolean;
+  /**
+   * MCP server list the session was opened with. Replayed verbatim on
+   * `loadSession` so a session that gets re-loaded into the subprocess
+   * (e.g. after a connection bounce, or any adapter lifecycle that
+   * re-issues `loadSession`) keeps the same tool surface it had during
+   * its first run. `null` when we don't know — currently the case for
+   * sessions adopted from the catalog after a daemon restart, because
+   * the catalog schema doesn't persist this list yet. Cross-restart
+   * persistence is a follow-up (would require an `mcp_servers` JSON
+   * column on `sessions`).
+   */
+  mcpServers: acp.McpServer[] | null;
+  /**
+   * Set when an attempt to resume this session via ACP `loadSession`
+   * failed and we don't intend to retry. The session is then treated
+   * as read-only — `sendMessage` / `interruptSession` throw
+   * `SessionResumeFailedError` immediately and the Studio surfaces a
+   * banner instead of looping the failing RPC. Sessions imported from
+   * `~/.claude/projects/` (discovered from disk) are the main source
+   * of these failures: their `.jsonl` exists but the agent's own
+   * session registry may not, so `loadSession` returns "session not
+   * found" even though the transcript is readable.
+   */
+  resumeFailed: boolean;
 }
 
 export class ClaudeCodeAdapter implements ACPAdapter {
@@ -69,6 +102,14 @@ export class ClaudeCodeAdapter implements ACPAdapter {
   private eventHandlers: Array<(event: SessionEvent) => void> = [];
   private connection: ACPConnection | null = null;
   private started = false;
+  /**
+   * Capabilities returned by the agent in the `initialize()` handshake.
+   * Captured so `ensureSubprocessHasSession` can short-circuit with a
+   * clear error when the agent doesn't support `loadSession` (rather than
+   * failing later inside the ACP wire call). Null until the first
+   * successful handshake.
+   */
+  private agentCapabilities: acp.AgentCapabilities | null = null;
   /**
    * In-flight start promise. Concurrent `ensureStarted()` callers (e.g.
    * the two arms of `Promise.all([getSessionInfo, getSessionDetail])`
@@ -117,7 +158,27 @@ export class ClaudeCodeAdapter implements ACPAdapter {
     const connection = new ACPConnection({
       command,
       args,
-      env: this.options.env,
+      // Strip env vars that signal "we're already inside a Claude Code
+      // session" before spawning claude-code-acp. Without this, when the
+      // spawntree daemon is launched from inside Claude Code (common
+      // during development on the spawntree codebase itself), the
+      // subprocess inherits CLAUDECODE=1 from the harness and refuses
+      // to start with: "Claude Code cannot be launched inside another
+      // Claude Code session." Setting these to `undefined` makes Node's
+      // child_process spawn treat them as unset in the child, regardless
+      // of what's in the daemon's own process.env.
+      //
+      // Custom `env` from `this.options.env` is spread FIRST so the
+      // explicit unsets win the merge — callers that pass through
+      // `process.env` (or any env carrying these keys) would otherwise
+      // reintroduce CLAUDECODE and hit the nested-Claude refusal this
+      // block exists to prevent.
+      env: {
+        ...this.options.env,
+        CLAUDECODE: undefined,
+        CLAUDE_CODE_ENTRYPOINT: undefined,
+        CLAUDE_CODE_SSE_PORT: undefined,
+      },
       label: "claude-code",
       defaultClient: {
         permissionPolicy: this.options.permissionPolicy ?? "allow_once",
@@ -134,12 +195,17 @@ export class ClaudeCodeAdapter implements ACPAdapter {
         this.handleSessionUpdate(notification);
       });
 
-      await connection.initialize({
+      const initResponse = await connection.initialize({
         protocolVersion: 1,
         clientCapabilities: {
           fs: { readTextFile: true, writeTextFile: true },
         },
       } satisfies acp.InitializeRequest);
+
+      // Cache capabilities so `ensureSubprocessHasSession` can pre-check
+      // `loadSession` support and produce a clear error instead of a
+      // generic ACP failure when adopting a session from the catalog.
+      this.agentCapabilities = initResponse.agentCapabilities ?? null;
 
       // Publish connection + started AFTER the handshake so concurrent
       // callers entering ensureStarted() during initialize() correctly
@@ -163,9 +229,10 @@ export class ClaudeCodeAdapter implements ACPAdapter {
     await this.ensureStarted();
     const conn = this.requireConnection();
 
+    const mcpServers = (params.mcpServers as acp.McpServer[] | undefined) ?? [];
     const response = await conn.newSession({
       cwd: params.cwd,
-      mcpServers: (params.mcpServers as acp.McpServer[] | undefined) ?? [],
+      mcpServers,
     });
 
     const now = new Date().toISOString();
@@ -184,9 +251,152 @@ export class ClaudeCodeAdapter implements ACPAdapter {
       gitBranch: git.branch,
       gitHeadCommit: git.headCommit,
       gitRemoteUrl: git.remoteUrl,
+      // Subprocess just created this session, so it already knows about it.
+      loadedInSubprocess: true,
+      mcpServers,
+      resumeFailed: false,
     });
 
     return { sessionId: response.sessionId };
+  }
+
+  /**
+   * Re-introduce a session that was created in a previous adapter lifetime
+   * and persisted in the daemon's catalog. Synchronous and cheap — only
+   * touches the in-memory `Map`; the ACP subprocess is told about the
+   * session lazily, the first time `sendMessage`/`resumeSession`/`interruptSession`
+   * is called for it (see `ensureSubprocessHasSession`).
+   *
+   * Idempotent: re-adopting an already-tracked session is a no-op so a
+   * boot-time hydration that races with a discovery pass doesn't clobber
+   * fresh in-memory state with stale catalog state.
+   */
+  adoptSession(input: AdoptedSession): void {
+    if (this.sessions.has(input.sessionId)) return;
+
+    // Reconstruct the per-session turn counter so the next sendMessage()
+    // doesn't reuse an existing turn id. Turn ids follow the pattern
+    // `${sessionId}-turn-${n}`; parse the suffix and take the max. Fall
+    // back to user-turn count when the suffix isn't parseable (e.g.
+    // legacy ids from a different scheme).
+    let maxCounter = 0;
+    for (const t of input.turns) {
+      const m = /-turn-(\d+)/.exec(t.id);
+      if (m && m[1]) {
+        const n = Number(m[1]);
+        if (Number.isFinite(n) && n > maxCounter) maxCounter = n;
+      }
+    }
+    if (maxCounter === 0) {
+      maxCounter = input.turns.filter((t) => t.role === "user").length;
+    }
+
+    this.sessions.set(input.sessionId, {
+      sourceId: input.sessionId,
+      cwd: input.cwd,
+      // Anything that was streaming when the previous daemon died is
+      // stuck — the subprocess is gone. Mark idle so the UI doesn't show
+      // a forever-spinning row; the catalog still has the partial turn.
+      status: input.status === "streaming" ? "idle" : input.status,
+      title: input.title,
+      turns: [...input.turns],
+      toolCalls: [...input.toolCalls],
+      turnCounter: maxCounter,
+      activeTurnId: null,
+      createdAt: input.startedAt,
+      updatedAt: input.updatedAt,
+      gitBranch: input.gitBranch,
+      gitHeadCommit: input.gitHeadCommit,
+      gitRemoteUrl: input.gitRemoteUrl,
+      loadedInSubprocess: false,
+      // The catalog doesn't yet persist the original MCP server list, so
+      // post-restart adoption can't recover it. `null` signals "unknown"
+      // to `ensureSubprocessHasSession`, which then falls back to an
+      // empty list and emits a warning.
+      mcpServers: null,
+      resumeFailed: false,
+    });
+  }
+
+  /**
+   * Make sure the ACP subprocess knows about `sessionId` before we send
+   * it a request that references it (`prompt`, `cancel`). Sessions that
+   * were just created via `createSession()` are already loaded; sessions
+   * adopted from the catalog after a daemon restart need an explicit
+   * `loadSession` RPC to re-establish state on the agent side.
+   *
+   * If the agent's `initialize` response did not advertise the
+   * `loadSession` capability, throws a typed error so the caller can
+   * surface a clear diagnostic instead of an opaque "method not supported"
+   * from the ACP wire layer.
+   */
+  private async ensureSubprocessHasSession(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.loadedInSubprocess) return;
+    // A previous attempt already failed; fail fast instead of replaying
+    // the same RPC on every interaction. The Studio renders a read-only
+    // banner when this flag is exposed via getSessionDetail.
+    if (session.resumeFailed) {
+      throw new SessionResumeFailedError(sessionId, this.name);
+    }
+
+    if (!this.agentCapabilities?.loadSession) {
+      // Map capability-missing to the same typed error as a runtime
+      // "session not found", so the HTTP layer returns 409 Conflict and
+      // the Studio renders the read-only banner instead of treating it
+      // as an opaque 500. The sticky flag is also set: a given agent
+      // build either advertises `loadSession` or it doesn't, so this
+      // failure is permanent for the lifetime of this subprocess.
+      session.resumeFailed = true;
+      throw new SessionResumeFailedError(sessionId, this.name);
+    }
+
+    const conn = this.requireConnection();
+    // Replay the original MCP server list when we know it so the resumed
+    // session keeps the same tool surface; fall back to empty when the
+    // session was adopted from the catalog (where this list isn't yet
+    // persisted) and warn so the gap is visible in logs.
+    const mcpServers = session.mcpServers ?? [];
+    if (session.mcpServers === null) {
+      process.stderr.write(
+        `[spawntree-daemon] loadSession ${sessionId}: original mcpServers unknown ` +
+          `(catalog does not persist this list across restarts); resuming with empty list\n`,
+      );
+    }
+    try {
+      await conn.loadSession({
+        sessionId,
+        cwd: session.cwd,
+        mcpServers,
+      } satisfies acp.LoadSessionRequest);
+      session.loadedInSubprocess = true;
+    } catch (err) {
+      // Distinguish definitive failures from transient ones. "Session
+      // not found" / "unknown session" / "does not exist" responses
+      // from the agent are permanent (the .jsonl exists but the agent
+      // was never told about the session, so the only safe state is
+      // read-only). Network/connection errors and other transient
+      // failures (ACP disconnect during boot race, brief subprocess
+      // restart) should NOT freeze the session: retrying on the next
+      // interaction is the correct behavior. The earlier "any error
+      // is sticky" rule converted otherwise-recoverable hiccups into
+      // permanent read-only mode until daemon restart.
+      const permanent = isPermanentLoadSessionFailure(err);
+      if (permanent) {
+        session.resumeFailed = true;
+        process.stderr.write(
+          `[spawntree-daemon] loadSession ${sessionId} failed permanently: ${String(err)} — marking session as resume-failed (read-only)\n`,
+        );
+        throw new SessionResumeFailedError(sessionId, this.name, err);
+      }
+      process.stderr.write(
+        `[spawntree-daemon] loadSession ${sessionId} failed (transient, will retry): ${String(err)}\n`,
+      );
+      // Re-throw the raw error so the HTTP layer returns 500 and the
+      // client retries naturally; no sticky flag, so the next call
+      // will attempt loadSession again.
+      throw err;
+    }
   }
 
   async discoverSessions(): Promise<DiscoveredSession[]> {
@@ -216,7 +426,14 @@ export class ClaudeCodeAdapter implements ACPAdapter {
   async getSessionDetail(sessionId: string): Promise<SessionDetail> {
     const s = this.sessions.get(sessionId);
     if (!s) throw new Error(`Unknown session: ${sessionId}`);
-    return { turns: [...s.turns], toolCalls: [...s.toolCalls] };
+    return {
+      turns: [...s.turns],
+      toolCalls: [...s.toolCalls],
+      // Surface the read-only state so the UI can render its banner
+      // without having to attempt a sendMessage first to discover the
+      // resume failure.
+      resumeFailed: s.resumeFailed,
+    };
   }
 
   async sendMessage(sessionId: string, content: string): Promise<void> {
@@ -226,6 +443,10 @@ export class ClaudeCodeAdapter implements ACPAdapter {
     if (!session) {
       throw new Error(`Unknown session: ${sessionId}. Call createSession first.`);
     }
+    // Adopted sessions need a one-shot loadSession before the subprocess
+    // accepts prompts referencing this id. Throws if the agent doesn't
+    // advertise the loadSession capability.
+    await this.ensureSubprocessHasSession(sessionId);
 
     // Reject concurrent sends — ACP does not support parallel turns within
     // one session. Allowing two sendMessage() calls would race: both would
@@ -335,19 +556,23 @@ export class ClaudeCodeAdapter implements ACPAdapter {
   async interruptSession(sessionId: string): Promise<void> {
     const conn = this.connection;
     if (!conn) return;
+    // Cancelling a session the subprocess never heard of is a no-op on
+    // the agent side and on ours — only flush the wire when the session
+    // is actually loaded there. Adopted-but-never-touched sessions never
+    // had an active turn anyway, so there's nothing to cancel.
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.loadedInSubprocess) return;
     await conn.cancel({ sessionId } satisfies acp.CancelNotification);
   }
 
   async resumeSession(sessionId: string): Promise<void> {
     await this.ensureStarted();
-    const conn = this.requireConnection();
     const s = this.sessions.get(sessionId);
     if (!s) throw new Error(`Unknown session: ${sessionId}`);
-    await conn.loadSession({
-      sessionId,
-      cwd: s.cwd,
-      mcpServers: [],
-    } satisfies acp.LoadSessionRequest);
+    // Idempotent: if the session is already loaded into the subprocess,
+    // ensureSubprocessHasSession is a no-op. Otherwise it sends the
+    // ACP loadSession RPC.
+    await this.ensureSubprocessHasSession(sessionId);
   }
 
   /**
@@ -385,6 +610,7 @@ export class ClaudeCodeAdapter implements ACPAdapter {
     this.started = false;
     this.eventHandlers = [];
     this.sessions.clear();
+    this.agentCapabilities = null;
   }
 
   private async ensureStarted(): Promise<void> {
@@ -526,6 +752,46 @@ export class ClaudeCodeAdapter implements ACPAdapter {
 function extractText(content: acp.ContentBlock): string | null {
   if (content.type === "text") return content.text;
   return null;
+}
+
+/**
+ * Pattern-match a `loadSession` rejection to decide whether it is
+ * permanently unrecoverable (the agent does not know this session)
+ * versus a transient hiccup (connection dropped, agent restarted,
+ * boot race). Permanent failures freeze the session into read-only
+ * mode; transient ones must be retried so the session stays usable.
+ *
+ * The ACP wire layer surfaces server errors as `Error` instances with
+ * the JSON-RPC error payload stringified into `.message`. We probe
+ * both the structured `code` (if present) and known substrings, which
+ * cover the responses currently emitted by claude-code-acp.
+ */
+function isPermanentLoadSessionFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const raw = err.message ?? "";
+  const msg = raw.toLowerCase();
+  if (msg.includes("not found")) return true;
+  if (msg.includes("unknown session")) return true;
+  if (msg.includes("session does not exist")) return true;
+  if (msg.includes("no such session")) return true;
+  // Some agents stringify the full JSON-RPC payload — attempt to parse
+  // and look at the structured `code` / `message` fields too.
+  try {
+    const parsed = JSON.parse(raw) as { code?: unknown; message?: unknown };
+    // -32602 = Invalid params; claude-code-acp uses this for unknown
+    // session id specifically. Pair with a message guard so other
+    // invalid-params failures (malformed cwd, etc.) stay transient.
+    if (
+      parsed.code === -32602 &&
+      typeof parsed.message === "string" &&
+      /not found|unknown session|does not exist/i.test(parsed.message)
+    ) {
+      return true;
+    }
+  } catch {
+    // Not a JSON payload — pattern match above is the final word.
+  }
+  return false;
 }
 
 function mapToolKind(kind: string | undefined | null): SessionToolCallData["toolKind"] {

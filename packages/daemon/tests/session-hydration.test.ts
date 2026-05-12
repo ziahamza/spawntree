@@ -89,8 +89,15 @@ describe("SessionManager turn hydration", () => {
   let manager: SessionManager;
   let fake: HydratingFakeAdapter;
 
+  let originalClaudeHome: string | undefined;
   beforeEach(async () => {
     tmp = mkdtempSync(resolve(tmpdir(), "spawntree-hydrate-"));
+    // Isolate Claude transcript discovery from the developer's real
+    // `~/.claude/projects/`. Without this, `SessionManager.start()`'s
+    // disk-discovery pass walks the host machine and pulls thousands
+    // of unrelated session rows into the test's catalog.
+    originalClaudeHome = process.env["CLAUDE_CONFIG_DIR"];
+    process.env["CLAUDE_CONFIG_DIR"] = resolve(tmp, "claude");
     storage = new StorageManager({ dataDir: tmp, logger: () => undefined });
     await storage.start();
     const events = new DomainEvents();
@@ -104,6 +111,8 @@ describe("SessionManager turn hydration", () => {
     await manager.shutdown();
     await storage.stop();
     rmSync(tmp, { recursive: true, force: true });
+    if (originalClaudeHome === undefined) delete process.env["CLAUDE_CONFIG_DIR"];
+    else process.env["CLAUDE_CONFIG_DIR"] = originalClaudeHome;
   });
 
   it("backfills turn content on turn_completed", async () => {

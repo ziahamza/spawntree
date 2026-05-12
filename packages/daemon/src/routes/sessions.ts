@@ -7,6 +7,7 @@ import {
   SendSessionMessageRequest,
   SessionBusyError,
   SessionDeleteUnsupportedError,
+  SessionResumeFailedError,
   UnknownProviderError,
 } from "spawntree-core";
 import { BadRequestError } from "../errors.ts";
@@ -124,6 +125,9 @@ export function createSessionRoutes(manager: SessionManager) {
         },
         turns: detail.turns,
         toolCalls: detail.toolCalls,
+        // Forwarded so the UI can switch to read-only mode without an
+        // extra round-trip. Omitted when the adapter doesn't set it.
+        ...(detail.resumeFailed ? { resumeFailed: true } : {}),
       });
     } catch (error) {
       return sessionErrorResponse(error);
@@ -265,6 +269,20 @@ function sessionErrorResponse(error: unknown): Response {
         error: error.message,
         code: error.code,
         details: { sessionId: error.sessionId, activeTurnId: error.activeTurnId },
+      }),
+      { status: 409, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  // Adopted/discovered session can't be re-loaded into the agent —
+  // 409 Conflict so the Studio can render a read-only banner and tell
+  // the user to start a new session. The transcript history is still
+  // readable via GET /:id; only mutations are blocked.
+  if (error instanceof SessionResumeFailedError) {
+    return new Response(
+      JSON.stringify({
+        error: error.message,
+        code: error.code,
+        details: { sessionId: error.sessionId, provider: error.provider },
       }),
       { status: 409, headers: { "Content-Type": "application/json" } },
     );
