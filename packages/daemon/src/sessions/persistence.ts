@@ -11,6 +11,8 @@ import type {
 } from "spawntree-core";
 import { sessions, sessionToolCalls, sessionTurns } from "spawntree-core";
 
+const SESSION_TURN_INSERT_CHUNK_SIZE = 50;
+
 /**
  * Mirror ACP session state into the catalog DB. The ACP adapter subprocesses
  * (Claude Code, Codex) still own the live conversation — this module is the
@@ -451,25 +453,27 @@ export async function replaceSessionTurns(
     await tx.delete(sessionTurns).where(eq(sessionTurns.sessionId, sessionId));
     if (turns.length === 0) return;
     const newRoleCounter = new Map<string, number>();
-    await tx.insert(sessionTurns).values(
-      turns.map((turn) => {
-        const seq = newRoleCounter.get(turn.role) ?? 0;
-        newRoleCounter.set(turn.role, seq + 1);
-        return {
-          id: existingIdByKey.get(`${turn.role}:${seq}`) ?? turn.id,
-          sessionId,
-          turnIndex: turn.turnIndex,
-          role: turn.role,
-          content: [...turn.content],
-          modelId: turn.modelId ?? null,
-          durationMs: turn.durationMs ?? null,
-          stopReason: turn.stopReason ?? null,
-          status: turn.status,
-          errorMessage: turn.errorMessage ?? null,
-          createdAt: turn.createdAt,
-        };
-      }),
-    );
+    const rows = turns.map((turn) => {
+      const seq = newRoleCounter.get(turn.role) ?? 0;
+      newRoleCounter.set(turn.role, seq + 1);
+      return {
+        id: existingIdByKey.get(`${turn.role}:${seq}`) ?? turn.id,
+        sessionId,
+        turnIndex: turn.turnIndex,
+        role: turn.role,
+        content: [...turn.content],
+        modelId: turn.modelId ?? null,
+        durationMs: turn.durationMs ?? null,
+        stopReason: turn.stopReason ?? null,
+        status: turn.status,
+        errorMessage: turn.errorMessage ?? null,
+        createdAt: turn.createdAt,
+      };
+    });
+
+    for (let i = 0; i < rows.length; i += SESSION_TURN_INSERT_CHUNK_SIZE) {
+      await tx.insert(sessionTurns).values(rows.slice(i, i + SESSION_TURN_INSERT_CHUNK_SIZE));
+    }
   });
 }
 

@@ -82,7 +82,7 @@ import {
   detectRepoInfo,
   defaultBranchName,
   discoverWorktrees,
-  findImmediateGitRepos,
+  findGitRepos,
   findWorktreeForBranch,
   inspectGitPath,
   normalizeInputPath,
@@ -105,6 +105,7 @@ import { spawntreeHome } from "../state/global-state.ts";
 import type { StorageManager } from "../storage/manager.ts";
 
 const VERSION = "0.4.0";
+const WATCHED_PATH_RESCAN_INTERVAL_MS = 5 * 60 * 1000;
 type DaemonError = BadRequestError | ConflictError | InternalError | NotFoundError;
 
 interface PreviewSession {
@@ -123,6 +124,7 @@ export class DaemonService extends ServiceMap.Service<
     readonly daemonInfo: Effect.Effect<DaemonInfo, DaemonError>;
     /** Expose the raw DomainEvents bus for direct publication (e.g. SessionManager). */
     readonly domainEvents: Effect.Effect<DomainEvents>;
+    readonly rescanWatchedPaths: Effect.Effect<void>;
     listEnvs(repoId?: string): Effect.Effect<ListEnvsResponse, DaemonError>;
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -1056,10 +1058,15 @@ export class DaemonService extends ServiceMap.Service<
           return { ok: true, configPath, saveMode };
         });
 
+        const rescanWatchedPaths = Effect.promise(() =>
+          rescanWatchedPathsOnStartup(catalog, publish),
+        );
+
         return DaemonService.of({
           shutdown,
           daemonInfo,
           domainEvents: Effect.succeed(events),
+          rescanWatchedPaths,
           listEnvs,
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -1267,6 +1274,10 @@ function logDaemonMessage(message: string, details?: Record<string, unknown>) {
   process.stderr.write(`[spawntree-daemon] ${message}${suffix}\n`);
 }
 
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function safeRemove(path: string) {
   if (existsSync(path)) {
     rmSync(path, { force: true });
@@ -1335,31 +1346,85 @@ function syncCloneWorktrees(catalog: CatalogDb, clone: Clone) {
 
 function syncWatchedPath(catalog: CatalogDb, watchedPath: WatchedPath) {
   return Effect.tryPromise({
-    try: async () => {
-      const probe = probePath(watchedPath.path);
-      if (!probe.exists) {
-        throw new Error("path not found");
-      }
-
-      let imported = 0;
-      if (probe.isGitRepo) {
-        await importGitRepoPathAsync(catalog, probe.path, undefined, false);
-        imported += 1;
-      }
-      if (!probe.isGitRepo && watchedPath.scanChildren) {
-        for (const repoPath of findImmediateGitRepos(watchedPath.path)) {
-          await importGitRepoPathAsync(catalog, repoPath, undefined, false);
-          imported += 1;
-        }
-      }
-      await catalog
-        .update(watchedPathsTable)
-        .set({ lastScannedAt: new Date().toISOString(), lastScanError: "" })
-        .where(eq(watchedPathsTable.path, watchedPath.path));
-      return imported;
-    },
+    try: () => syncWatchedPathAsync(catalog, watchedPath),
     catch: (error) => mapInternalError("WATCHED_PATH_SYNC_FAILED", error),
   });
+}
+
+async function syncWatchedPathAsync(catalog: CatalogDb, watchedPath: WatchedPath): Promise<number> {
+  const probe = probePath(watchedPath.path);
+  if (!probe.exists) {
+    throw new Error("path not found");
+  }
+
+  let imported = 0;
+  if (probe.isGitRepo) {
+    await importGitRepoPathAsync(catalog, probe.path, undefined, false);
+    imported += 1;
+  }
+  if (!probe.isGitRepo && watchedPath.scanChildren) {
+    for (const repoPath of findGitRepos(watchedPath.path)) {
+      await importGitRepoPathAsync(catalog, repoPath, undefined, false);
+      imported += 1;
+      await yieldToEventLoop();
+    }
+  }
+  await catalog
+    .update(watchedPathsTable)
+    .set({ lastScannedAt: new Date().toISOString(), lastScanError: "" })
+    .where(eq(watchedPathsTable.path, watchedPath.path));
+  return imported;
+}
+
+function shouldRescanWatchedPath(lastScannedAt: string | null | undefined): boolean {
+  if (!lastScannedAt) return true;
+  const scannedAt = new Date(lastScannedAt).getTime();
+  if (!Number.isFinite(scannedAt)) return true;
+  return Date.now() - scannedAt > WATCHED_PATH_RESCAN_INTERVAL_MS;
+}
+
+async function rescanWatchedPathsOnStartup(
+  catalog: CatalogDb,
+  publish: (event: Omit<DomainEvent, "seq" | "timestamp">) => void,
+): Promise<void> {
+  try {
+    const watchedRows = await catalog
+      .select()
+      .from(watchedPathsTable)
+      .where(eq(watchedPathsTable.scanChildren, 1));
+
+    logDaemonMessage("watched path startup rescan", { watchedPathCount: watchedRows.length });
+
+    let imported = 0;
+    for (const row of watchedRows) {
+      if (!shouldRescanWatchedPath(row.lastScannedAt)) continue;
+
+      try {
+        imported += await syncWatchedPathAsync(catalog, {
+          path: row.path,
+          scanChildren: row.scanChildren === 1,
+          addedAt: row.addedAt,
+          lastScannedAt: row.lastScannedAt,
+          lastScanError: row.lastScanError,
+        });
+      } catch (error) {
+        await catalog
+          .update(watchedPathsTable)
+          .set({
+            lastScannedAt: new Date().toISOString(),
+            lastScanError: toMessage(error),
+          })
+          .where(eq(watchedPathsTable.path, row.path));
+      }
+    }
+
+    if (imported > 0) {
+      logDaemonMessage("watched path startup rescan imported repos", { importedCount: imported });
+      publish({ type: "repo.updated" });
+    }
+  } catch (error) {
+    logDaemonMessage("watched path startup rescan failed", { error: toMessage(error) });
+  }
 }
 
 function importGitRepoPath(

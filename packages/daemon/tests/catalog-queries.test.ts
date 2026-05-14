@@ -257,6 +257,53 @@ describe("catalog/queries helpers", () => {
       const after = await db.select().from(worktreesTable);
       expect(after).toHaveLength(0);
     });
+
+    it("dedupes paths and moves stale worktree ownership", async () => {
+      await upsertClone(db, {
+        id: "c2",
+        repoId: "r1",
+        path: "/tmp/c2",
+        status: "active",
+        lastSeenAt: "",
+        registeredAt: "",
+      });
+
+      await replaceWorktrees(db, "c1", [
+        {
+          path: "/tmp/shared",
+          cloneId: "c1",
+          branch: "old",
+          headRef: "old-head",
+          discoveredAt: "2026-01-01T00:00:00Z",
+        },
+      ]);
+
+      await replaceWorktrees(db, "c2", [
+        {
+          path: "/tmp/shared",
+          cloneId: "c2",
+          branch: "main",
+          headRef: "new-head",
+          discoveredAt: "2026-01-02T00:00:00Z",
+        },
+        {
+          path: "/tmp/shared",
+          cloneId: "c2",
+          branch: "main",
+          headRef: "new-head",
+          discoveredAt: "2026-01-02T00:00:00Z",
+        },
+      ]);
+
+      const rows = await db.select().from(worktreesTable);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        path: "/tmp/shared",
+        cloneId: "c2",
+        branch: "main",
+        headRef: "new-head",
+      });
+    });
   });
 
   describe("upsertWatchedPath + registerRepo", () => {

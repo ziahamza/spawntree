@@ -42,19 +42,37 @@
 }
 
 @theme {
-  --color-background: #0D1117;
-  --color-foreground: #E6EDF3;
-  --color-surface: #161B22;
-  --color-border: #30363D;
-  --color-border-subtle: #21262D;
-  --color-muted: #8B949E;
-  --color-green: #3FB950;
-  --color-red: #F85149;
-  --color-orange: #D29922;
-  --color-blue: #58A6FF;
-  --color-warning-bg: #1C1306;
-  --color-warning-border: #854D0E;
+  --color-background: #FAF7F5;
+  --color-foreground: #4A351C;
+  --color-surface: #FFFFFF;
+  --color-border: #DBCDBD;
+  --color-border-subtle: #E4D9CD;
+  --color-muted: #9B6E3B;
+  --color-green: #1A7F37;
+  --color-red: #CF222E;
+  --color-orange: #BF8700;
+  --color-blue: #4A351C;
+  --color-warning-bg: #FFF8C5;
+  --color-warning-border: #BF8700;
   --font-sans: 'Mona Sans', system-ui, sans-serif;
   --font-display: 'Hubot Sans', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    background: #FAF7F5;
+    color: #4A351C;
+  }
+
+  * {
+    letter-spacing: 0;
+  }
+
+  ::selection {
+    background: #E4D9CD;
+    color: #4A351C;
+  }
 }

@@ -23,6 +23,10 @@ describe("CORS / PNA helpers", () => {
       expect(isAllowedBrowserOrigin("https://app.gitenv.dev", policy)).toBe(true);
     });
 
+    it("allows the GitEnv desktop app origin by default", () => {
+      expect(isAllowedBrowserOrigin("app://gitenv", policy)).toBe(true);
+    });
+
     it("rejects unknown origins by default", () => {
       expect(isAllowedBrowserOrigin("https://evil.example.com", policy)).toBe(false);
       expect(isAllowedBrowserOrigin("https://gitenv.dev.evil.com", policy)).toBe(false);

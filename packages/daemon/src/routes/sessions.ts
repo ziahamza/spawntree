@@ -19,6 +19,8 @@ import {
 } from "../lib/cors.ts";
 import type { SessionManager } from "../sessions/session-manager.ts";
 
+const SESSION_DETAIL_TIMEOUT_MS = 2_500;
+
 /**
  * Session API routes — mount on the main Hono app.
  *
@@ -106,30 +108,19 @@ export function createSessionRoutes(manager: SessionManager) {
     const sessionId = c.req.param("id");
     try {
       const [info, detail] = await Promise.all([
-        manager.getSessionInfo(sessionId),
-        manager.getSessionDetail(sessionId),
+        withTimeout(manager.getSessionInfo(sessionId), SESSION_DETAIL_TIMEOUT_MS),
+        withTimeout(manager.getSessionDetail(sessionId), SESSION_DETAIL_TIMEOUT_MS),
       ]);
-      return c.json({
-        session: {
-          sessionId: info.sourceId,
-          provider: info.provider,
-          status: info.status,
-          title: info.title,
-          workingDirectory: info.workingDirectory,
-          gitBranch: info.gitBranch,
-          gitHeadCommit: info.gitHeadCommit,
-          gitRemoteUrl: info.gitRemoteUrl,
-          totalTurns: info.totalTurns,
-          startedAt: info.startedAt,
-          updatedAt: info.updatedAt,
-        },
-        turns: detail.turns,
-        toolCalls: detail.toolCalls,
-        // Forwarded so the UI can switch to read-only mode without an
-        // extra round-trip. Omitted when the adapter doesn't set it.
-        ...(detail.resumeFailed ? { resumeFailed: true } : {}),
-      });
+      return c.json(toSessionDetailResponse(info, detail));
     } catch (error) {
+      const [info, detail] = await Promise.all([
+        manager.getPersistedSession(sessionId),
+        manager.getPersistedSessionDetail(sessionId),
+      ]);
+      if (info && detail) {
+        return c.json(toSessionDetailResponse(info, detail));
+      }
+
       return sessionErrorResponse(error);
     }
   });
@@ -226,6 +217,53 @@ export function createSessionRoutes(manager: SessionManager) {
   });
 
   return app;
+}
+
+function toSessionDetailResponse(
+  info:
+    | Awaited<ReturnType<SessionManager["getSessionInfo"]>>
+    | NonNullable<Awaited<ReturnType<SessionManager["getPersistedSession"]>>>,
+  detail: Awaited<ReturnType<SessionManager["getSessionDetail"]>>,
+) {
+  const sessionId = "sourceId" in info ? info.sourceId : info.sessionId;
+
+  return {
+    session: {
+      sessionId,
+      provider: info.provider,
+      status: info.status,
+      title: info.title,
+      workingDirectory: info.workingDirectory,
+      gitBranch: info.gitBranch,
+      gitHeadCommit: info.gitHeadCommit,
+      gitRemoteUrl: info.gitRemoteUrl,
+      totalTurns: info.totalTurns,
+      startedAt: info.startedAt,
+      updatedAt: info.updatedAt,
+    },
+    turns: detail.turns,
+    toolCalls: detail.toolCalls,
+    // Forwarded so the UI can switch to read-only mode without an
+    // extra round-trip. Omitted when the adapter doesn't set it.
+    ...(detail.resumeFailed ? { resumeFailed: true } : {}),
+  };
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = globalThis.setTimeout(() => {
+      reject(new Error("Timed out loading live session detail."));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) {
+      globalThis.clearTimeout(timeoutId);
+    }
+  }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

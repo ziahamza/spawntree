@@ -845,6 +845,21 @@ export class SessionManager {
   }
 
   /**
+   * Read the persisted catalog copy of a session detail without touching the
+   * live adapter. Used by HTTP routes as a bounded fallback when an adapter
+   * blocks while rehydrating a dormant session.
+   */
+  async getPersistedSessionDetail(sessionId: string): Promise<ACPSessionDetail | undefined> {
+    if (!this.catalog) return undefined;
+    const snapshot = await loadAdoptableSession(this.catalog, sessionId);
+    if (!snapshot) return undefined;
+    return {
+      turns: snapshot.turns,
+      toolCalls: snapshot.toolCalls,
+    };
+  }
+
+  /**
    * Get the summary info for a session.
    */
   async getSessionInfo(sessionId: string): Promise<DiscoveredSession & { provider: string }> {

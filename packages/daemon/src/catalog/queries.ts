@@ -1,5 +1,5 @@
 import type { Client } from "@libsql/client";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import {
   BASELINE_DDL,
   type CatalogDb,
@@ -112,10 +112,19 @@ export async function replaceWorktrees(
   entries: Array<Worktree>,
 ): Promise<void> {
   await db.transaction(async (tx) => {
+    const entriesByPath = new Map(entries.map((worktree) => [worktree.path, worktree]));
+    const dedupedEntries = Array.from(entriesByPath.values());
+
     await tx.delete(worktrees).where(eq(worktrees.cloneId, cloneId));
-    if (entries.length > 0) {
+    if (dedupedEntries.length > 0) {
+      await tx.delete(worktrees).where(
+        inArray(
+          worktrees.path,
+          dedupedEntries.map((w) => w.path),
+        ),
+      );
       await tx.insert(worktrees).values(
-        entries.map((worktree) => ({
+        dedupedEntries.map((worktree) => ({
           path: worktree.path,
           cloneId,
           branch: worktree.branch,
@@ -133,23 +142,28 @@ export async function replaceWorktrees(
  * reaching into Drizzle schema internals.
  */
 export async function upsertWatchedPath(db: CatalogDb, watchedPath: WatchedPath): Promise<void> {
-  await db
-    .insert(watchedPaths)
-    .values({
-      path: watchedPath.path,
-      scanChildren: watchedPath.scanChildren ? 1 : 0,
-      addedAt: watchedPath.addedAt || nowIso(),
-      lastScannedAt: watchedPath.lastScannedAt ?? "",
-      lastScanError: watchedPath.lastScanError ?? "",
-    })
-    .onConflictDoUpdate({
-      target: watchedPaths.path,
-      set: {
-        scanChildren: watchedPath.scanChildren ? 1 : 0,
-        lastScannedAt: watchedPath.lastScannedAt ?? "",
-        lastScanError: watchedPath.lastScanError ?? "",
-      },
-    });
+  const existing = await db
+    .select({ path: watchedPaths.path })
+    .from(watchedPaths)
+    .where(eq(watchedPaths.path, watchedPath.path))
+    .limit(1);
+
+  const row = {
+    scanChildren: watchedPath.scanChildren ? 1 : 0,
+    lastScannedAt: watchedPath.lastScannedAt ?? "",
+    lastScanError: watchedPath.lastScanError ?? "",
+  };
+
+  if (existing.length > 0) {
+    await db.update(watchedPaths).set(row).where(eq(watchedPaths.path, watchedPath.path));
+    return;
+  }
+
+  await db.insert(watchedPaths).values({
+    path: watchedPath.path,
+    addedAt: watchedPath.addedAt || nowIso(),
+    ...row,
+  });
 }
 
 /** Same pattern for registered repos. */
