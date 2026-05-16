@@ -14,12 +14,22 @@
  * worktree-stitching pass without hitting any real disk.
  */
 import { describe, expect, it } from "vitest";
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 import {
   hintMatchesRepoGit,
   scanFolder,
   stitchWorktrees,
   type ScannedEntry,
 } from "../src/fsa/scan.ts";
+<<<<<<< HEAD
+=======
+import { scanFolder, stitchWorktrees, type ScannedEntry } from "../src/fsa/scan.ts";
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 
 type MockNode = { kind: "dir"; entries: Record<string, MockNode> } | { kind: "file"; text: string };
 
@@ -198,6 +208,144 @@ describe("scanFolder", () => {
     expect(result.entries).toHaveLength(1);
     expect(result.entries[0]?.relativePath).toBe("repo");
   });
+
+  describe("worktree gitdir metadata (regression for PR #51 review)", () => {
+    // The old code called `readGitMeta(handle)` on the worktree's
+    // working dir, where neither `config` nor `HEAD` exists, so
+    // every worktree entry silently got `originUrl: null` and
+    // `head: null`. The fix walks the FSA tree to the worktree's
+    // actual gitdir using the relative `gitdir:` pointer.
+
+    it("populates head + originUrl from the worktree gitdir + main repo config", async () => {
+      // Layout: repo/ is the main, repo-feature-x/ is a sibling worktree
+      // whose .git file says `gitdir: ../repo/.git/worktrees/feature-x`.
+      const root = makeDirHandle(
+        dir({
+          repo: dir({
+            ".git": dir({
+              HEAD: file(HEAD_MAIN),
+              config: file(ORIGIN_CONFIG),
+              worktrees: dir({
+                "feature-x": dir({
+                  HEAD: file(HEAD_FEATURE),
+                  // No `config` here — worktrees inherit from main.
+                }),
+              }),
+            }),
+          }),
+          "repo-feature-x": dir({
+            ".git": file("gitdir: ../repo/.git/worktrees/feature-x\n"),
+          }),
+        }) as MockNode & { kind: "dir" },
+      );
+      const result = await scanFolder(root);
+      const worktree = result.entries.find(
+        (e) => e.kind === "worktree" && e.relativePath === "repo-feature-x",
+      );
+      expect(worktree).toBeDefined();
+      // Origin URL comes from the MAIN repo's config — worktrees
+      // share the main's remote.
+      expect(worktree?.originUrl).toBe("https://github.com/foo/bar.git");
+      // HEAD comes from `<main>/.git/worktrees/feature-x/HEAD`.
+      expect(worktree?.head).toEqual({ kind: "branch", value: "feature-x" });
+    });
+
+    it("falls back to nulls when the gitdir target is an absolute path (unreachable via FSA)", async () => {
+      // FSA can't navigate absolute paths outside the picked folder.
+      // The previous behavior was nulls; we keep that for absolute
+      // pointers explicitly — better than throwing.
+      const root = makeDirHandle(
+        dir({
+          orphan: dir({
+            ".git": file("gitdir: /Users/someone/elsewhere/.git/worktrees/orphan\n"),
+          }),
+        }) as MockNode & { kind: "dir" },
+      );
+      const result = await scanFolder(root);
+      const worktree = result.entries.find((e) => e.kind === "worktree");
+      expect(worktree?.originUrl).toBeNull();
+      expect(worktree?.head).toBeNull();
+    });
+
+    it("falls back to nulls when the worktree gitdir doesn't exist in the FSA tree", async () => {
+      // `.git` points at a sibling that isn't actually inside the
+      // picked folder. The walker should give up gracefully.
+      const root = makeDirHandle(
+        dir({
+          worktree: dir({
+            ".git": file("gitdir: ../missing/.git/worktrees/feat\n"),
+          }),
+        }) as MockNode & { kind: "dir" },
+      );
+      const result = await scanFolder(root);
+      const worktree = result.entries.find((e) => e.kind === "worktree");
+      expect(worktree?.originUrl).toBeNull();
+      expect(worktree?.head).toBeNull();
+    });
+
+    it("recovers HEAD even when the main config is missing (originUrl null, head still set)", async () => {
+      // Edge case: a worktree gitdir is present + readable, but the
+      // main repo's config file is missing or unreadable. We should
+      // still get HEAD; originUrl just stays null.
+      const root = makeDirHandle(
+        dir({
+          repo: dir({
+            ".git": dir({
+              HEAD: file(HEAD_MAIN),
+              // no config
+              worktrees: dir({
+                feat: dir({
+                  HEAD: file(HEAD_FEATURE),
+                }),
+              }),
+            }),
+          }),
+          "repo-feat": dir({
+            ".git": file("gitdir: ../repo/.git/worktrees/feat\n"),
+          }),
+        }) as MockNode & { kind: "dir" },
+      );
+      const result = await scanFolder(root);
+      const worktree = result.entries.find(
+        (e) => e.kind === "worktree" && e.relativePath === "repo-feat",
+      );
+      expect(worktree?.originUrl).toBeNull();
+      expect(worktree?.head).toEqual({ kind: "branch", value: "feature-x" });
+    });
+
+    it("enables stitchWorktrees strategy 2 (origin-URL fallback) by populating worktree.originUrl", async () => {
+      // Pre-fix: worktree.originUrl was always null, so the
+      // origin-URL+sibling fallback in stitchWorktrees was dead code
+      // for FSA-discovered worktrees. Post-fix it's reachable.
+      const root = makeDirHandle(
+        dir({
+          // Main repo (no embedded worktrees dir — to force the
+          // hint-based strategy to MISS, leaving strategy 2 as the
+          // only option).
+          main: dir({
+            ".git": dir({
+              HEAD: file(HEAD_MAIN),
+              config: file(ORIGIN_CONFIG),
+              worktrees: dir({
+                feat: dir({ HEAD: file(HEAD_FEATURE) }),
+              }),
+            }),
+          }),
+          // Sibling worktree pointing into main's gitdir.
+          "main-feat": dir({
+            ".git": file("gitdir: ../main/.git/worktrees/feat\n"),
+          }),
+        }) as MockNode & { kind: "dir" },
+      );
+      const result = await scanFolder(root);
+      // The hint-based strategy will match here since the gitdir
+      // path correctly resolves through `../main/.git/...`. The
+      // important check is that originUrl is populated (which
+      // strategy 2 needs in its fallback path).
+      const worktree = result.entries.find((e) => e.kind === "worktree");
+      expect(worktree?.originUrl).toBe("https://github.com/foo/bar.git");
+    });
+  });
 });
 
 describe("stitchWorktrees", () => {
@@ -272,6 +420,10 @@ describe("stitchWorktrees", () => {
     // import alive for future test cases.
     expect(HEAD_FEATURE.length).toBeGreaterThan(0);
   });
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 
   describe("path-boundary suffix match (regression for PR #51 review)", () => {
     // The old `hint.endsWith(repoGit) || hint.endsWith('/' + repoGit)`
@@ -344,4 +496,9 @@ describe("stitchWorktrees", () => {
       expect(stitched.has("other-main-repo-feat")).toBe(false);
     });
   });
+<<<<<<< HEAD
+=======
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 });

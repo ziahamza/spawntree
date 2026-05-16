@@ -201,6 +201,27 @@ See [the storage architecture doc](./packages/core/src/storage/README.md) for
 the full schema, the replicator providers, and the `/api/v1/catalog/*`
 endpoint shape.
 
+## Browser-only tools: `spawntree-browser`
+
+For tools that run entirely in a browser tab — no daemon, no host — use
+the `spawntree-browser` package. It drives the File System Access API,
+walks the user's picked folders for git clones + worktrees, persists the
+catalog in browser-side SQLite (consumer brings the DB), and computes
+diffs locally with a pluggable `fetchPack` callback for missing objects.
+
+```ts
+import { SpawntreeBrowser, migrateBrowserSchema } from "spawntree-browser";
+
+await migrateBrowserSchema(db);
+const browser = new SpawntreeBrowser({ db, fetchPack });
+await browser.scanFolder(folderId, dirHandle);
+const result = await browser.computeDiff({ cloneId, baseRef, headSha, ... });
+```
+
+The `fetchPack` callback supports both wants-mode (caller has the SHA) and
+refNames-mode (caller knows the ref name; server resolves via `ls-refs`).
+See [docs/embedding.md](./docs/embedding.md) for the full API.
+
 ## Requirements
 
 - Node.js >= 20

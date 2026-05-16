@@ -1,8 +1,26 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, realpathSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import type { Clone, GitPathInfo, GitRemote, Repo, Worktree } from "spawntree-core";
+
+const DISCOVERY_MAX_DEPTH = 4;
+const DISCOVERY_SKIP_DIRS = new Set([
+  ".git",
+  ".hg",
+  ".svn",
+  ".Trash",
+  "Library",
+  "node_modules",
+  ".pnpm-store",
+  ".npm",
+  ".cache",
+  "dist",
+  "build",
+  ".next",
+  ".turbo",
+  "target",
+]);
 
 export interface RemoteInfo {
   provider: string;
@@ -83,33 +101,82 @@ export function probePath(rawPath: string): PathProbeResult {
     return result;
   } catch {
     result.canScanChildren = true;
-    result.childRepoCount = findImmediateGitRepos(path).length;
+    result.childRepoCount = findGitRepos(path).length;
     return result;
   }
 }
 
-export function findImmediateGitRepos(parent: string) {
+function hasGitMarker(path: string): boolean {
+  try {
+    statSync(join(path, ".git"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isSamePath(left: string, right: string): boolean {
+  try {
+    return realpathSync(left) === realpathSync(right);
+  } catch {
+    return resolve(left) === resolve(right);
+  }
+}
+
+export function findGitRepos(parent: string, maxDepth = DISCOVERY_MAX_DEPTH) {
   const seen = new Set<string>();
   const repos: Array<string> = [];
+  const queue: Array<{ path: string; depth: number }> = [{ path: parent, depth: 0 }];
 
-  for (const entry of readdirSync(parent, { withFileTypes: true })) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const child = resolve(join(parent, entry.name));
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) break;
+
+    let entries;
     try {
-      const gitRoot = resolve(validateGitRepo(child));
-      if (gitRoot === child && !seen.has(gitRoot)) {
-        seen.add(gitRoot);
-        repos.push(gitRoot);
-      }
+      entries = readdirSync(current.path, { withFileTypes: true }).sort((left, right) =>
+        left.name.localeCompare(right.name),
+      );
     } catch {
       continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || DISCOVERY_SKIP_DIRS.has(entry.name)) {
+        continue;
+      }
+
+      const child = resolve(join(current.path, entry.name));
+      const childDepth = current.depth + 1;
+      if (childDepth > maxDepth) {
+        continue;
+      }
+
+      if (hasGitMarker(child)) {
+        try {
+          const gitRoot = resolve(validateGitRepo(child));
+          if (isSamePath(gitRoot, child) && !seen.has(gitRoot)) {
+            seen.add(gitRoot);
+            repos.push(gitRoot);
+          }
+          continue;
+        } catch {
+          // Fall through and scan below corrupt or partial repo-like dirs.
+        }
+      }
+
+      if (childDepth < maxDepth) {
+        queue.push({ path: child, depth: childDepth });
+      }
     }
   }
 
   repos.sort((left, right) => left.localeCompare(right));
   return repos;
+}
+
+export function findImmediateGitRepos(parent: string) {
+  return findGitRepos(parent, 1);
 }
 
 export function parseRemoteUrl(rawUrl: string): RemoteInfo {
@@ -210,6 +277,7 @@ export function tryGhMetadata(owner: string, repo: string) {
       {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
+        timeout: 3000,
       },
     ).trim();
     const [defaultBranch = "", description = ""] = output.split("\n", 2);
@@ -560,6 +628,7 @@ function gitOutput(dir: string, args: Array<string>) {
     cwd: dir,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: 5000,
   });
   return output.trim();
 }

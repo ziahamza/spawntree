@@ -43,14 +43,28 @@ await migrateBrowserSchema(db);
 // 2. Construct the orchestrator.
 const sb = new SpawntreeBrowser({
   db,
-  fetchPack: async ({ remoteUrl, wants, haves }) => {
+  fetchPack: async ({ remoteUrl, wants, haves, refNames }) => {
     // Call your CF Worker / spawntree-host proxy that bypasses
     // GitHub's CORS block on git-upload-pack.
     const res = await fetch("/api/git/pack", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ remoteUrl, wants, haves }),
+      body: JSON.stringify({ remoteUrl, wants, haves, refNames }),
     });
+    if (res.headers.get("content-type")?.includes("application/json")) {
+      // refNames-mode: server resolved ref names → SHAs via ls-refs
+      // and packs both the bytes + the resolved refs into the JSON
+      // response. spawntree-browser writes refs/remotes/origin/<name>
+      // locally so subsequent computeDiff calls find the new commit
+      // by name without re-fetching.
+      const { pack, refs } = (await res.json()) as {
+        pack: string;
+        refs: Record<string, string>;
+      };
+      const bytes = Uint8Array.from(atob(pack), (c) => c.charCodeAt(0));
+      return { pack: bytes, refs };
+    }
+    // Wants-only mode: raw pack bytes, side-band stripped.
     return new Uint8Array(await res.arrayBuffer());
   },
 });

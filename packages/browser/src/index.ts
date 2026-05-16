@@ -12,7 +12,14 @@ export type {
   SpawntreeBrowserOptions,
   FetchPackInput,
   FetchPackFn,
+<<<<<<< HEAD
+<<<<<<< HEAD
   FetchPackResult,
+=======
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
+=======
+  FetchPackResult,
+>>>>>>> 8ad3dcd0 (fix(spawntree-browser): refNames-based fetch mode for missing base refs)
   GitDiffOk,
   GitDiffErr,
   GitDiffResult,

@@ -270,6 +270,43 @@ interface RepoTreeProps {
   onNavigate?: () => void;
 }
 
+function UtilityLinks({
+  currentPath,
+  onNavigate,
+}: {
+  currentPath: string;
+  onNavigate?: () => void;
+}) {
+  return (
+    <div className="mt-2 pt-2 border-t border-border mx-2 space-y-0.5">
+      <Link
+        to="/sessions"
+        onClick={onNavigate}
+        className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs transition-colors ${
+          currentPath === "/sessions" || currentPath.startsWith("/sessions/")
+            ? "bg-blue/10 text-blue"
+            : "text-muted hover:text-foreground hover:bg-surface"
+        }`}
+      >
+        <MessagesSquare className="w-3 h-3 flex-shrink-0" />
+        <span>Sessions</span>
+      </Link>
+      <Link
+        to="/infra"
+        onClick={onNavigate}
+        className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs transition-colors ${
+          currentPath === "/infra"
+            ? "bg-blue/10 text-blue"
+            : "text-muted hover:text-foreground hover:bg-surface"
+        }`}
+      >
+        <FolderOpen className="w-3 h-3 flex-shrink-0" />
+        <span>Infrastructure</span>
+      </Link>
+    </div>
+  );
+}
+
 export function RepoTree({ onNavigate }: RepoTreeProps) {
   const { data: repos, isLoading } = useWebRepos();
   const routerState = useRouterState();
@@ -298,12 +335,15 @@ export function RepoTree({ onNavigate }: RepoTreeProps) {
 
   if (!repos || repos.length === 0) {
     return (
-      <div className="p-3 text-xs text-muted">
-        <p className="mb-2">No repos linked yet.</p>
-        <p>
-          Click <strong>+ Add</strong> to link your first repo.
-        </p>
-      </div>
+      <nav className="py-1">
+        <div className="p-3 text-xs text-muted">
+          <p className="mb-2">No repos linked yet.</p>
+          <p>
+            Click <strong>+ Add</strong> to link your first repo.
+          </p>
+        </div>
+        <UtilityLinks currentPath={currentPath} onNavigate={onNavigate} />
+      </nav>
     );
   }
 
@@ -323,32 +363,7 @@ export function RepoTree({ onNavigate }: RepoTreeProps) {
         />
       ))}
 
-      <div className="mt-2 pt-2 border-t border-border mx-2 space-y-0.5">
-        <Link
-          to="/sessions"
-          onClick={onNavigate}
-          className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs transition-colors ${
-            currentPath === "/sessions" || currentPath.startsWith("/sessions/")
-              ? "bg-blue/10 text-blue"
-              : "text-muted hover:text-foreground hover:bg-surface"
-          }`}
-        >
-          <MessagesSquare className="w-3 h-3 flex-shrink-0" />
-          <span>Sessions</span>
-        </Link>
-        <Link
-          to="/infra"
-          onClick={onNavigate}
-          className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs transition-colors ${
-            currentPath === "/infra"
-              ? "bg-blue/10 text-blue"
-              : "text-muted hover:text-foreground hover:bg-surface"
-          }`}
-        >
-          <FolderOpen className="w-3 h-3 flex-shrink-0" />
-          <span>Infrastructure</span>
-        </Link>
-      </div>
+      <UtilityLinks currentPath={currentPath} onNavigate={onNavigate} />
     </nav>
   );
 }

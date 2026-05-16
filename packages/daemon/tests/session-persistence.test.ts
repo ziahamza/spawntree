@@ -12,6 +12,7 @@ import {
 } from "spawntree-core";
 import { DomainEvents } from "../src/events/domain-events.ts";
 import { SessionManager } from "../src/sessions/session-manager.ts";
+import { replaceSessionTurns, upsertSession } from "../src/sessions/persistence.ts";
 import { StorageManager } from "../src/storage/manager.ts";
 
 /**
@@ -81,8 +82,14 @@ describe("SessionManager persistence", () => {
   let manager: SessionManager;
   let fake: FakeAdapter;
 
+  let originalClaudeHome: string | undefined;
   beforeEach(async () => {
     tmp = mkdtempSync(resolve(tmpdir(), "spawntree-sess-persist-"));
+    // Isolate from the developer's real ~/.claude/projects/ — otherwise
+    // SessionManager.start() walks the host machine and pulls thousands
+    // of unrelated session rows into the catalog under test.
+    originalClaudeHome = process.env["CLAUDE_CONFIG_DIR"];
+    process.env["CLAUDE_CONFIG_DIR"] = resolve(tmp, "claude");
     storage = new StorageManager({ dataDir: tmp, logger: () => undefined });
     await storage.start();
     const events = new DomainEvents();
@@ -96,6 +103,8 @@ describe("SessionManager persistence", () => {
     await manager.shutdown();
     await storage.stop();
     rmSync(tmp, { recursive: true, force: true });
+    if (originalClaudeHome === undefined) delete process.env["CLAUDE_CONFIG_DIR"];
+    else process.env["CLAUDE_CONFIG_DIR"] = originalClaudeHome;
   });
 
   it("createSession upserts a row into sessions", async () => {
@@ -279,6 +288,49 @@ describe("SessionManager persistence", () => {
     expect(rows[0]?.provider).toBe("fake");
     expect(rows[0]?.toolName).toBe("Bash");
     expect(rows[0]?.toolStatus).toBe("completed");
+  });
+
+  it("backfills large transcripts without oversized session_turns inserts", async () => {
+    const { drizzle } = await import("drizzle-orm/libsql");
+    const { eq } = await import("drizzle-orm");
+    const db = drizzle(storage.client, { schema });
+    const sessionId = "large-transcript";
+    const now = new Date().toISOString();
+
+    await upsertSession(db, {
+      sessionId,
+      provider: "claude-code",
+      status: "idle",
+      workingDirectory: "/tmp/x",
+      totalTurns: 120,
+      startedAt: now,
+      updatedAt: now,
+      overwriteMetrics: true,
+    });
+
+    await replaceSessionTurns(
+      db,
+      sessionId,
+      Array.from({ length: 240 }, (_, index) => ({
+        id: `large-turn-${index}`,
+        sessionId,
+        turnIndex: index,
+        role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+        content: [{ type: "text", text: `message ${index}` }] as ContentBlock[],
+        modelId: null,
+        durationMs: null,
+        stopReason: null,
+        status: "completed" as const,
+        errorMessage: null,
+        createdAt: now,
+      })),
+    );
+
+    const turns = await db
+      .select()
+      .from(schema.sessionTurns)
+      .where(eq(schema.sessionTurns.sessionId, sessionId));
+    expect(turns).toHaveLength(240);
   });
 });
 

@@ -125,8 +125,8 @@ export function AddFolderDialog({ open, onOpenChange }: AddFolderDialogProps) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-surface border border-border rounded-xl shadow-2xl p-6 focus:outline-none">
+        <Dialog.Overlay className="fixed inset-0 bg-black/35 z-40" />
+        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-surface border border-border rounded-lg shadow-2xl p-6 focus:outline-none">
           {/* Header */}
           <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-2">
@@ -179,10 +179,10 @@ export function AddFolderDialog({ open, onOpenChange }: AddFolderDialogProps) {
                 />
                 <span>
                   <span className="block text-foreground mb-1">
-                    Watch one level deep for Git repos
+                    Watch nested folders for Git repos
                   </span>
                   <span>
-                    spawntree will keep scanning this folder and auto-import repos it finds.
+                    spawntree will keep scanning this folder and auto-import repos below it.
                     {probe.childRepoCount > 0
                       ? ` Currently sees ${probe.childRepoCount} repo${probe.childRepoCount === 1 ? "" : "s"}.`
                       : ""}

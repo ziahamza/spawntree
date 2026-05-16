@@ -1,0 +1,53 @@
+name: Spawntree checks
+description: >
+  Install, build, lint, typecheck, test, and CLI smoke-test for spawntree.
+  Single source of truth invoked by spawntree's own CI and by gitenv's
+  vendored-copy CI, so the two never drift.
+
+inputs:
+  working-directory:
+    description: >
+      Path to the spawntree root. Defaults to the repo root (spawntree's
+      own CI). gitenv passes "vendor/spawntree".
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Enable corepack package manager
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        corepack enable
+        corepack install
+
+    - name: Install
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pnpm install --frozen-lockfile
+
+    - name: Build
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pnpm build
+
+    - name: Lint
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pnpm lint
+
+    - name: Typecheck
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pnpm typecheck
+
+    - name: Test
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pnpm test
+
+    - name: CLI smoke test
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: node packages/cli/dist/index.js --help

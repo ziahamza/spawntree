@@ -4,6 +4,7 @@ import type {
   ACPRequestPermissionRequest,
   ACPRequestPermissionResponse,
   ACPSessionDetail,
+  AdoptedSession,
   CatalogDb,
   DiscoveredSession,
   GitMetadata,
@@ -30,10 +31,18 @@ import {
   deletePersistedSession,
   getPersistedSession,
   hydrateTurnContent,
+  listPersistedSessionIdsByProvider,
   listPersistedSessions,
+  loadAdoptableSession,
   persistSessionEvent,
+  replaceSessionTurns,
   upsertSession,
 } from "./persistence.ts";
+import {
+  listDiscoverableClaudeSessions,
+  parseClaudeJsonl,
+  resolveClaudeJsonlPath,
+} from "./claude-jsonl.ts";
 
 /** Pending approval entry held while a tool call awaits user response. */
 interface PendingApproval {
@@ -162,8 +171,303 @@ export class SessionManager {
             `[spawntree-daemon] failed to clear pending approvals on startup: ${String(err)}\n`,
           );
         });
+        // Re-introduce persisted Claude Code sessions into the adapter's
+        // in-memory map. Without this, the adapter starts with an empty
+        // map and any subsequent getSessionDetail / sendMessage / resume
+        // for a session that survived restart fails with "Unknown session".
+        // Codex doesn't need this — its subprocess persists threads itself
+        // and re-discovers them via thread/list.
+        await this.hydrateClaudeAdapterFromCatalog().catch((err) => {
+          process.stderr.write(
+            `[spawntree-daemon] failed to hydrate Claude sessions from catalog: ${String(err)}\n`,
+          );
+        });
+        // After the catalog-driven hydration, walk `~/.claude/projects/`
+        // and import every Claude CLI session that isn't already in the
+        // catalog (sessions created via the Claude Code IDE or a direct
+        // `claude` invocation never went through `POST /sessions` on the
+        // daemon, so the catalog has no row for them). Imported rows
+        // expose them to the Studio's per-PR session filter alongside
+        // sessions the daemon created itself.
+        await this.discoverFromClaudeProjects().catch((err) => {
+          process.stderr.write(
+            `[spawntree-daemon] failed to discover Claude sessions on disk: ${String(err)}\n`,
+          );
+        });
       }
     }
+  }
+
+  /**
+   * Adopt every persisted Claude Code session into the adapter's in-memory
+   * tracking so the post-restart catalog and the live adapter agree on
+   * which sessions exist. Hydration is cheap — only touches the in-memory
+   * `Map`; the ACP subprocess is told about each session lazily on next
+   * interaction (see `ClaudeCodeAdapter.ensureSubprocessHasSession`).
+   *
+   * Failures on individual sessions are logged and skipped so one corrupt
+   * row doesn't abort daemon boot.
+   */
+  private async hydrateClaudeAdapterFromCatalog(): Promise<void> {
+    if (!this.catalog) return;
+    const adapter = this.adapters.get("claude-code");
+    if (!adapter || !(adapter instanceof ClaudeCodeAdapter)) return;
+
+    const ids = await listPersistedSessionIdsByProvider(this.catalog, "claude-code");
+    if (ids.length === 0) return;
+
+    let adopted = 0;
+    let backfilled = 0;
+    for (const sessionId of ids) {
+      try {
+        const snapshot = await loadAdoptableSession(this.catalog, sessionId);
+        if (!snapshot) continue;
+
+        // The catalog stores turn skeletons (`content: []`) — final content
+        // historically came from the in-memory adapter via `hydrateTurnContent`,
+        // which doesn't run for sessions that ended with a previous daemon
+        // process. The Claude CLI itself wrote the full transcript to disk;
+        // re-parse it so adopted sessions render their actual conversation
+        // history in the Studio instead of empty bubbles.
+        const jsonlPath = resolveClaudeJsonlPath(snapshot.cwd, sessionId);
+        if (jsonlPath) {
+          const parsed = parseClaudeJsonl(jsonlPath, sessionId);
+          // Skip the destructive replace when the parser hit a corrupt
+          // line — a truncated transcript would otherwise overwrite valid
+          // persisted turns with only the parsed prefix, losing history
+          // permanently. Adopt the parsed turns in-memory only and leave
+          // the catalog rows alone for now; the next clean parse can
+          // hydrate.
+          if (parsed.turns.length > 0 && !parsed.partialParse) {
+            snapshot.turns = parsed.turns;
+            // Derive title from the first user message when the catalog
+            // doesn't already have one. Without this, every adopted
+            // session shows "Untitled" forever — the adapter never
+            // generates a title server-side and there's no UX to set
+            // one. The .jsonl already has the user's own first message,
+            // which is the natural label.
+            if (parsed.title && !snapshot.title) {
+              snapshot.title = parsed.title;
+            }
+            // Repair `startedAt` / `updatedAt` from real turn timestamps
+            // when available. The previous `upsertSession` implementation
+            // stamped `now()` on every discovery tick, so legacy rows
+            // carry "boot time" timestamps that lie about activity.
+            // Replacing them with the .jsonl's first/last turn times
+            // makes the Threads tab show the truth (sessions days apart,
+            // not all 26 simultaneous).
+            if (parsed.startedAt) snapshot.startedAt = parsed.startedAt;
+            if (parsed.lastActivityAt) snapshot.updatedAt = parsed.lastActivityAt;
+            // Backfill the catalog so external Drizzle clients (Studio
+            // offline, Turso replicas) also see the real content.
+            // `replaceSessionTurns` preserves existing turn ids by index
+            // so `session_tool_calls.turn_id` references stay attached.
+            if (this.catalog) {
+              let replaceFailed = false;
+              try {
+                await replaceSessionTurns(this.catalog, sessionId, parsed.turns);
+              } catch (err) {
+                replaceFailed = true;
+                process.stderr.write(
+                  `[spawntree-daemon] backfill failed for session ${sessionId}: ${String(err)}\n`,
+                );
+              }
+              // Skip the metadata upsert when the turn replace failed:
+              // otherwise `sessions.total_turns` / `started_at` would
+              // claim a successful hydration that didn't happen, and
+              // downstream readers would see counts that don't match
+              // the `session_turns` rows.
+              if (!replaceFailed) {
+                // Always upsert when we hydrated turns, not only when a
+                // title was derived — the row may need its `started_at` /
+                // `updated_at` reset even when title resolution failed
+                // (e.g., conversation only has tool calls and no text).
+                // `overwriteMetrics` is on so existing rows get the
+                // corrected `total_turns` / `started_at`; without it the
+                // upsert's normal conflict path skips those fields to
+                // protect the live counters maintained by `bumpTotalTurns`.
+                // `totalTurns` counts user messages only — same convention
+                // `ClaudeCodeAdapter.discoverSessions` reports, so a
+                // freshly-hydrated row matches what the live adapter
+                // would say. Without this filter the parsed array
+                // (which interleaves user + assistant rows) inflates
+                // the catalog count by ~2x and the Studio's session
+                // list drifts from live state.
+                await upsertSession(this.catalog, {
+                  sessionId,
+                  provider: "claude-code",
+                  status: snapshot.status,
+                  workingDirectory: snapshot.cwd,
+                  title: snapshot.title,
+                  gitBranch: snapshot.gitBranch,
+                  gitHeadCommit: snapshot.gitHeadCommit,
+                  gitRemoteUrl: snapshot.gitRemoteUrl,
+                  totalTurns: parsed.turns.filter((t) => t.role === "user").length,
+                  startedAt: snapshot.startedAt,
+                  updatedAt: snapshot.updatedAt,
+                  overwriteMetrics: true,
+                }).catch((err) => {
+                  process.stderr.write(
+                    `[spawntree-daemon] hydration upsert failed for session ${sessionId}: ${String(err)}\n`,
+                  );
+                });
+                backfilled += 1;
+              }
+            }
+          } else if (parsed.partialParse) {
+            process.stderr.write(
+              `[spawntree-daemon] skipping backfill for session ${sessionId}: transcript has corrupt lines\n`,
+            );
+          }
+        }
+
+        adapter.adoptSession(snapshot);
+        this.sessionIndex.set(sessionId, "claude-code");
+        adopted += 1;
+      } catch (err) {
+        process.stderr.write(
+          `[spawntree-daemon] adopt failed for session ${sessionId}: ${String(err)}\n`,
+        );
+      }
+    }
+    process.stderr.write(
+      `[spawntree-daemon] adopted ${adopted}/${ids.length} Claude Code sessions from catalog (backfilled ${backfilled} from .jsonl)\n`,
+    );
+  }
+
+  /**
+   * Walk `~/.claude/projects/` and import every Claude CLI session that
+   * isn't already in the catalog. This covers sessions the user ran via
+   * the Claude Code IDE or a direct `claude` CLI invocation — they never
+   * went through `POST /sessions` on the daemon, so the standard
+   * catalog-driven hydration above couldn't see them.
+   *
+   * Imported sessions get the same in-memory adoption treatment as
+   * catalog-restored ones (`adapter.adoptSession`, `loadedInSubprocess:
+   * false`), so the first interaction triggers a lazy `loadSession`
+   * exactly like a daemon-created session. If the agent can't actually
+   * resume that session — likely when the JSONL came from a different
+   * Claude invocation channel — the adapter records `resumeFailed` and
+   * the Studio surfaces a read-only banner instead of throwing.
+   *
+   * Git metadata is captured at import time via `detectGitMetadata(cwd)`,
+   * which reads the cwd's CURRENT branch/head. That means a session
+   * recorded yesterday on `main` shows up under the branch the cwd has
+   * checked out today — accepted compromise; the JSONL doesn't carry
+   * the original branch, and matching via `git reflog` would be
+   * heuristic at best.
+   */
+  private async discoverFromClaudeProjects(): Promise<void> {
+    if (!this.catalog) return;
+    const adapter = this.adapters.get("claude-code");
+    if (!adapter || !(adapter instanceof ClaudeCodeAdapter)) return;
+
+    const candidates = listDiscoverableClaudeSessions();
+    if (candidates.length === 0) return;
+
+    // Cache git metadata per cwd — every session inside the same
+    // `~/.claude/projects/<encoded-cwd>/` folder shares the same cwd, so
+    // we avoid spawning N git invocations for N sessions.
+    const gitByCwd = new Map<string, GitMetadata>();
+    let imported = 0;
+    let skipped = 0;
+
+    for (const candidate of candidates) {
+      try {
+        const existing = await getPersistedSession(this.catalog, candidate.sessionId);
+        if (existing) {
+          skipped += 1;
+          continue;
+        }
+
+        const parsed = parseClaudeJsonl(candidate.jsonlPath, candidate.sessionId);
+        if (parsed.turns.length === 0) {
+          // Empty transcript (or unreadable) — nothing useful to import.
+          skipped += 1;
+          continue;
+        }
+
+        if (parsed.partialParse) {
+          // Defer the entire import until the transcript parses cleanly.
+          // Previously the session row was upserted before this check
+          // and turn backfill was skipped, leaving an orphan row with
+          // metadata but zero turns. On the next boot, getPersistedSession
+          // would return the orphan and discovery would skip the session
+          // entirely, so transcript history could disappear permanently
+          // for any session with a corrupt JSONL line. Skipping the
+          // whole import here lets the next discovery pass retry once
+          // the agent finishes writing.
+          process.stderr.write(
+            `[spawntree-daemon] discovered session ${candidate.sessionId} but transcript has corrupt lines; deferring import until next discovery\n`,
+          );
+          skipped += 1;
+          continue;
+        }
+
+        let git = gitByCwd.get(candidate.cwd);
+        if (!git) {
+          git = detectGitMetadata(candidate.cwd);
+          gitByCwd.set(candidate.cwd, git);
+        }
+
+        // Build the snapshot in the same shape `loadAdoptableSession`
+        // produces, so the adapter doesn't care that this session
+        // didn't pass through the normal catalog flow. The explicit
+        // `AdoptedSession` annotation pins `toolCalls` to the mutable
+        // variant the adapter expects — without it the inferred type
+        // resolves through `spawntree-core`'s readonly Effect Schema
+        // variant and `adoptSession()` rejects the call.
+        const startedAt = parsed.startedAt ?? new Date().toISOString();
+        const updatedAt = parsed.lastActivityAt ?? startedAt;
+        const snapshot: AdoptedSession = {
+          sessionId: candidate.sessionId,
+          cwd: candidate.cwd,
+          status: "idle",
+          title: parsed.title,
+          turns: parsed.turns,
+          toolCalls: [],
+          startedAt,
+          updatedAt,
+          gitBranch: git.branch,
+          gitHeadCommit: git.headCommit,
+          gitRemoteUrl: git.remoteUrl,
+        };
+
+        await upsertSession(this.catalog, {
+          sessionId: snapshot.sessionId,
+          provider: "claude-code",
+          status: snapshot.status,
+          workingDirectory: snapshot.cwd,
+          title: snapshot.title,
+          gitBranch: snapshot.gitBranch,
+          gitHeadCommit: snapshot.gitHeadCommit,
+          gitRemoteUrl: snapshot.gitRemoteUrl,
+          // User-turn count keeps catalog rows aligned with what
+          // `ClaudeCodeAdapter.discoverSessions` reports for live
+          // sessions. Inserting `parsed.turns.length` instead would
+          // double-count because the parser emits user + assistant
+          // rows.
+          totalTurns: parsed.turns.filter((t) => t.role === "user").length,
+          startedAt: snapshot.startedAt,
+          updatedAt: snapshot.updatedAt,
+          overwriteMetrics: true,
+        });
+
+        await replaceSessionTurns(this.catalog, snapshot.sessionId, parsed.turns);
+
+        adapter.adoptSession(snapshot);
+        this.sessionIndex.set(snapshot.sessionId, "claude-code");
+        imported += 1;
+      } catch (err) {
+        process.stderr.write(
+          `[spawntree-daemon] discover failed for session ${candidate.sessionId}: ${String(err)}\n`,
+        );
+      }
+    }
+
+    process.stderr.write(
+      `[spawntree-daemon] discovered ${imported} new Claude sessions on disk (${skipped} already known or empty)\n`,
+    );
   }
 
   /**
@@ -409,6 +713,11 @@ export class SessionManager {
               gitRemoteUrl: git.remoteUrl,
               totalTurns: s.totalTurns,
               startedAt: s.startedAt,
+              // Preserve the adapter's real `updatedAt` rather than
+              // stamping `now()` on every discovery tick. Without this
+              // the catalog column collapses to "boot time" right after
+              // a daemon restart and is useless for sorting by recency.
+              updatedAt: s.updatedAt,
             }).catch((err) => {
               process.stderr.write(
                 `[spawntree-daemon] discovery upsert failed for ${s.sourceId}: ${String(err)}\n`,
@@ -499,6 +808,13 @@ export class SessionManager {
     // every adapter's discoverSessions() (which would spawn subprocesses).
     this.sessionIndex.set(result.sessionId, provider);
 
+    // Invalidate the discovery cache so the next `listSessions()` call
+    // returns fresh data including this new session. Without this, the
+    // 30s cache window served stale lists immediately after creation —
+    // the Studio's create-session flow then routed the user back to a
+    // pre-existing session because the new id wasn't in the response.
+    this.discoveryCacheAt = 0;
+
     // Mirror the session row into the catalog so list/get can come from
     // Drizzle without bouncing through the adapter subprocess, and so the
     // s3-snapshot replicator captures session metadata.
@@ -526,6 +842,21 @@ export class SessionManager {
     const [, adapter] = await this.findSession(sessionId);
     const detail = await adapter.getSessionDetail(sessionId);
     return this.patchPendingApprovals(detail);
+  }
+
+  /**
+   * Read the persisted catalog copy of a session detail without touching the
+   * live adapter. Used by HTTP routes as a bounded fallback when an adapter
+   * blocks while rehydrating a dormant session.
+   */
+  async getPersistedSessionDetail(sessionId: string): Promise<ACPSessionDetail | undefined> {
+    if (!this.catalog) return undefined;
+    const snapshot = await loadAdoptableSession(this.catalog, sessionId);
+    if (!snapshot) return undefined;
+    return {
+      turns: snapshot.turns,
+      toolCalls: snapshot.toolCalls,
+    };
   }
 
   /**
@@ -577,6 +908,10 @@ export class SessionManager {
     }
     await adapter.deleteSession(sessionId);
     this.sessionIndex.delete(sessionId);
+    // Invalidate the discovery cache so the deleted session disappears
+    // from `listSessions()` immediately. Without this, the UI would
+    // continue showing the deleted session for up to 30s.
+    this.discoveryCacheAt = 0;
     if (this.catalog) {
       await deletePersistedSession(this.catalog, sessionId).catch(() => undefined);
     }

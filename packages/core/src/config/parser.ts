@@ -47,6 +47,10 @@ export interface SpawntreeConfig {
   services: Record<string, ServiceConfig>;
 }
 
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
 export interface ParseConfigOptions {
   profile?: string;
 }
@@ -56,6 +60,12 @@ export function parseConfig(
   envVars: Record<string, string>,
   options: ParseConfigOptions = {},
 ): SpawntreeConfig {
+<<<<<<< HEAD
+=======
+export function parseConfig(yamlContent: string, envVars: Record<string, string>): SpawntreeConfig {
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
+=======
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
   const raw = parseYaml(yamlContent) as Record<string, unknown>;
   const resolvedProfile = resolveProfile(raw, options.profile);
   const profileEnvVars = stringRecord(resolvedProfile.environment);
@@ -67,6 +77,10 @@ export function parseConfig(
   return substituted as SpawntreeConfig;
 }
 
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
 function resolveProfile(
   raw: Record<string, unknown>,
   requestedProfile?: string,
@@ -188,6 +202,11 @@ function stringRecord(value: unknown): Record<string, string> {
   return result;
 }
 
+<<<<<<< HEAD
+=======
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
+=======
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
 function substituteVarsInObject(obj: unknown, vars: Record<string, string>): unknown {
   if (typeof obj === "string") {
     return substituteVars(obj, vars);

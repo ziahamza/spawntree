@@ -26,6 +26,10 @@ export * from "./db/routing-client.ts";
 // strings + plain objects, with no runtime filesystem dependency, so
 // they're safe to ship in a browser bundle. spawntree-browser uses
 // these to back its `readConfig` / `writeConfig` API.
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
 export {
   parseConfig,
   type PrepareConfig,
@@ -33,5 +37,11 @@ export {
   type ServiceConfig,
   type SpawntreeConfig,
 } from "./config/parser.ts";
+<<<<<<< HEAD
+=======
+export { parseConfig, type ServiceConfig, type SpawntreeConfig } from "./config/parser.ts";
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
+=======
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
 export { validateConfig } from "./config/schema.ts";
 export { substituteVars } from "./config/substitution.ts";

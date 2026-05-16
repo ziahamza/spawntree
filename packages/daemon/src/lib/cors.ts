@@ -31,6 +31,8 @@ const DEFAULT_PUBLIC_ORIGINS = [
   "https://app.gitenv.dev",
 ] as const;
 
+const DEFAULT_APP_ORIGINS = ["app://gitenv"] as const;
+
 /** Hostnames considered loopback. Any port. Any scheme. */
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
@@ -62,6 +64,9 @@ export function isAllowedBrowserOrigin(origin: string, policy: CorsPolicy): bool
   if (LOOPBACK_HOSTNAMES.has(url.hostname)) return true;
 
   const normalized = `${url.protocol}//${url.host}`;
+  if (DEFAULT_APP_ORIGINS.includes(normalized as (typeof DEFAULT_APP_ORIGINS)[number])) {
+    return true;
+  }
   if (DEFAULT_PUBLIC_ORIGINS.includes(normalized as (typeof DEFAULT_PUBLIC_ORIGINS)[number])) {
     return true;
   }

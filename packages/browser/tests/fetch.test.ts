@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+<<<<<<< HEAD
+<<<<<<< HEAD
 import { findPackStart, tryFetchPack } from "../src/git/fetch.ts";
+=======
+import { tryFetchPack } from "../src/git/fetch.ts";
+>>>>>>> 8ad3dcd0 (fix(spawntree-browser): refNames-based fetch mode for missing base refs)
+=======
+import { findPackStart, tryFetchPack } from "../src/git/fetch.ts";
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 import type { FetchPackInput, FetchPackResult } from "../src/types.ts";
 
 /**
@@ -237,6 +245,10 @@ describe("tryFetchPack input validation", () => {
     }
   });
 });
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 
 describe("findPackStart (PR #51 review: off-by-one)", () => {
   // The old loop bound was `i < buf.length - 4`. The last valid start
@@ -279,3 +291,8 @@ describe("findPackStart (PR #51 review: off-by-one)", () => {
     expect(findPackStart(new Uint8Array([0x50, 0x41, 0x43]))).toBe(-1);
   });
 });
+<<<<<<< HEAD
+=======
+>>>>>>> 8ad3dcd0 (fix(spawntree-browser): refNames-based fetch mode for missing base refs)
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))

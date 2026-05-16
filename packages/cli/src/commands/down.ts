@@ -7,8 +7,17 @@ export function registerDownCommand(program: Command): void {
     .description("Stop the environment")
     .argument("[env-id]", "Environment ID (default: current branch)")
     .option("--prefix <name>", "Named prefix for the environment")
+<<<<<<< HEAD
+<<<<<<< HEAD
     .option("--profile <name>", "Config profile", "default")
     .action(async (envIdArg?: string, options?: { prefix?: string; profile?: string }) => {
+=======
+    .action(async (envIdArg?: string, options?: { prefix?: string }) => {
+>>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
+=======
+    .option("--profile <name>", "Config profile", "default")
+    .action(async (envIdArg?: string, options?: { prefix?: string; profile?: string }) => {
+>>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
       let repoId: string;
       let envId: string;
 

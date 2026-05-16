@@ -133,6 +133,14 @@ async function main() {
     );
   }
 
+  void runtime
+    .runPromise(DaemonService.use((service) => service.rescanWatchedPaths))
+    .catch((error) => {
+      process.stderr.write(
+        `[spawntree-daemon] watched path startup rescan failed: ${formatFatalError(error)}\n`,
+      );
+    });
+
   let shuttingDown = false;
   const shutdown = async (signal: string) =>
     Match.value(shuttingDown).pipe(

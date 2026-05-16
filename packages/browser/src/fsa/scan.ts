@@ -156,6 +156,82 @@ async function readGitMeta(
   };
 }
 
+/**
+ * Read git metadata for a WORKTREE.
+ *
+ * The previous implementation called `readGitMeta` directly with the
+ * worktree's working-directory handle — but `config` and `HEAD` don't
+ * live there. They're inside the gitdir the worktree's `.git` file
+ * points at, which in the standard layout is
+ * `<main>/.git/worktrees/<wtname>/`. Calling readGitMeta on the
+ * working dir silently produced `{ originUrl: null, head: null }` for
+ * every worktree, which broke:
+ *
+ *   1. Worktree branch/headRef rows in the catalog (always empty).
+ *   2. The origin-URL stitching fallback in `stitchWorktrees`
+ *      (worktree.originUrl was always null, so it never matched).
+ *
+ * The fix walks the FSA tree to the worktree's gitdir using the
+ * relative `gitdir:` pointer, reads `HEAD` from there, and reads
+ * `config` from the main repo's `.git/` (worktrees share the main's
+ * remote config — the worktree gitdir doesn't carry its own
+ * `[remote]` section). Best-effort: any inability to resolve a path
+ * (absolute target, missing dir, FSA permission denied) returns nulls
+ * for the missing piece without throwing.
+ */
+async function readWorktreeGitMeta(
+  root: DirHandle,
+  worktreeRelPath: string,
+  gitFileTarget: string,
+): Promise<{ originUrl: string | null; head: ScannedHead | null }> {
+  // Absolute paths can't be navigated through the FSA root. Fall back
+  // to nulls — strategy 2 in stitchWorktrees won't help these
+  // worktrees, but the hint-based strategy 1 still does.
+  if (gitFileTarget.startsWith("/")) {
+    return { originUrl: null, head: null };
+  }
+
+  // Compose the absolute-from-root path for the worktree's gitdir by
+  // joining `<worktreeRelPath>/<gitFileTarget>` and resolving `..` /
+  // `.` segments. Empty result (../ ate everything) means the
+  // computed path escaped the picked folder — bail.
+  const wtSegments = worktreeRelPath.split("/").filter(Boolean);
+  const targetSegments = gitFileTarget.split("/").filter(Boolean);
+  const wtGitDirSegments: string[] = [...wtSegments];
+  for (const seg of targetSegments) {
+    if (seg === "..") {
+      if (wtGitDirSegments.length === 0) return { originUrl: null, head: null };
+      wtGitDirSegments.pop();
+    } else if (seg !== ".") {
+      wtGitDirSegments.push(seg);
+    }
+  }
+
+  // Standard layout: <main>/.git/worktrees/<wtname>/. Drop the last
+  // two segments to get the main `.git` directory.
+  const mainGitDirSegments = wtGitDirSegments.slice(0, -2);
+
+  // Walk to the main `.git` directory for the config read.
+  let mainGitDir: DirHandle | null = root;
+  for (const seg of mainGitDirSegments) {
+    if (!mainGitDir) break;
+    mainGitDir = await tryGetDir(mainGitDir, seg).catch(() => null);
+  }
+  const config = mainGitDir ? await readFileText(mainGitDir, "config") : null;
+  const originUrl = parseConfigOriginUrl(config);
+
+  // Walk to the worktree gitdir for the HEAD read.
+  let wtGitDir: DirHandle | null = root;
+  for (const seg of wtGitDirSegments) {
+    if (!wtGitDir) break;
+    wtGitDir = await tryGetDir(wtGitDir, seg).catch(() => null);
+  }
+  const headText = wtGitDir ? await readFileText(wtGitDir, "HEAD") : null;
+  const head = parseHeadFile(headText);
+
+  return { originUrl, head };
+}
+
 async function readGitFileTarget(parent: DirHandle): Promise<string | null> {
   const text = await readFileText(parent, ".git");
   if (text === null) return null;
@@ -283,7 +359,15 @@ export async function scanFolder(
     // 1) Is THIS directory a worktree (has `.git` as a FILE)?
     const gitFileTarget = await readGitFileTarget(handle);
     if (gitFileTarget) {
-      const meta = await readGitMeta(handle).catch(() => ({ originUrl: null, head: null }));
+      // Worktrees keep config + HEAD in the gitdir the `.git` file
+      // points to (typically `<main>/.git/worktrees/<wtname>/`), NOT
+      // in the working directory. `readWorktreeGitMeta` walks the
+      // FSA tree to the right place. Best-effort: returns nulls if
+      // the gitdir is unreachable from the picked folder.
+      const meta = await readWorktreeGitMeta(root, rel, gitFileTarget).catch(() => ({
+        originUrl: null,
+        head: null,
+      }));
       const mainHint = resolveMainGitDirHint(gitFileTarget);
       entries.push({
         kind: "worktree",
@@ -393,6 +477,10 @@ export async function scanFolder(
  *   2. As a weaker fallback: same `originUrl` and the worktree's path
  *      is a sibling/child of the repo's path.
  */
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 
 /**
  * Path-boundary aware suffix match. `hint.endsWith(repoGit)` alone
@@ -409,6 +497,11 @@ export function hintMatchesRepoGit(hint: string, repoGit: string): boolean {
   return startIdx === 0 || hint[startIdx - 1] === "/";
 }
 
+<<<<<<< HEAD
+=======
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 export function stitchWorktrees(
   entries: ScannedEntry[],
 ): Map<string, string /* main repo relativePath */> {
@@ -422,6 +515,10 @@ export function stitchWorktrees(
     if (e.kind !== "worktree") continue;
     let matched: string | null = null;
 
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
     // Strategy 1: hint suffix match.
     //
     // We want the hint's path to END at a path-boundary aligned with
@@ -433,11 +530,25 @@ export function stitchWorktrees(
     // `hintMatchesRepoGit` enforces that the position immediately
     // before the matched suffix is either the start of the hint or a
     // path separator.
+<<<<<<< HEAD
+=======
+    // Strategy 1: hint suffix match
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
+=======
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
     if (e.mainGitDirHint) {
       const hint = e.mainGitDirHint;
       for (const [rel] of repoByRel) {
         const repoGit = rel ? `${rel}/.git` : ".git";
+<<<<<<< HEAD
+<<<<<<< HEAD
         if (hintMatchesRepoGit(hint, repoGit)) {
+=======
+        if (hint.endsWith(repoGit) || hint.endsWith(`/${repoGit}`)) {
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
+=======
+        if (hintMatchesRepoGit(hint, repoGit)) {
+>>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
           matched = rel;
           break;
         }

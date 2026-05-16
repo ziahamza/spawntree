@@ -646,7 +646,12 @@ export const ContentBlock = Schema.Union([
     type: Schema.Literal("diff"),
     path: Schema.String,
     oldText: Schema.optional(Schema.String),
-    newText: Schema.String,
+    // Codex emits header-only diff blocks (`{ type, path }`) to mark
+    // that a file was edited, without inlining the full new text — the
+    // actual edit lives in a separate tool call. Making `newText`
+    // optional lets those responses pass validation; clients render
+    // an empty diff body when the field is missing.
+    newText: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     type: Schema.Literal("terminal"),
@@ -695,6 +700,11 @@ export const SessionDetail = Schema.Struct({
   session: SessionInfo,
   turns: Schema.Array(SessionTurnData),
   toolCalls: Schema.Array(SessionToolCallData),
+  // Set when an adopted session failed to re-load into the agent
+  // subprocess (e.g. a disk-discovered session the agent never tracked).
+  // The transcript stays readable; new turns can't be started. UIs key
+  // off this to render a read-only banner.
+  resumeFailed: Schema.optional(Schema.Boolean),
 });
 export type SessionDetail = Schema.Schema.Type<typeof SessionDetail>;
 

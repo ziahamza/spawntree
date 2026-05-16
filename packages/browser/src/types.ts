@@ -40,12 +40,17 @@ export type FetchPackInput = {
   cloneId: string;
   /** Origin URL of the clone, normalized form unspecified. */
   remoteUrl: string;
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 8ad3dcd0 (fix(spawntree-browser): refNames-based fetch mode for missing base refs)
   /**
    * Object SHAs the caller needs (typically the PR head sha). The
    * consumer's proxy resolves these directly via `upload-pack`.
    *
    * At least one of `wants` or `refNames` must be non-empty.
    */
+<<<<<<< HEAD
   wants: string[];
   /**
    * Ref names (e.g. `main`, `release/2026-04`) the caller wants
@@ -61,10 +66,35 @@ export type FetchPackInput = {
    * `resolveRefSha` find the new commit on the next call.
    */
   refNames?: string[];
+=======
+  /** Object SHAs the caller needs (typically just the PR head sha). */
+  wants: string[];
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
+=======
+  wants: string[];
+  /**
+   * Ref names (e.g. `main`, `release/2026-04`) the caller wants
+   * resolved AND fetched. Used when the caller doesn't yet know the
+   * SHA — typically because the base ref hasn't been fetched into the
+   * local clone. The consumer's proxy is expected to do `ls-refs` to
+   * resolve the names → SHAs server-side, then `upload-pack` to deliver
+   * the corresponding packfile.
+   *
+   * The consumer signals successful resolution by returning the richer
+   * `{ pack, refs }` shape from `FetchPackFn` (see below) so we can
+   * write `refs/remotes/origin/<refName>` locally and let
+   * `resolveRefSha` find the new commit on the next call.
+   */
+  refNames?: string[];
+>>>>>>> 8ad3dcd0 (fix(spawntree-browser): refNames-based fetch mode for missing base refs)
   /** Object SHAs the caller already has (for thin packs). */
   haves: string[];
 };
 
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 8ad3dcd0 (fix(spawntree-browser): refNames-based fetch mode for missing base refs)
 /**
  * Successful pack response.
  *
@@ -84,6 +114,12 @@ export type FetchPackInput = {
 export type FetchPackResult = Uint8Array | { pack: Uint8Array; refs?: Record<string, string> };
 
 export type FetchPackFn = (input: FetchPackInput) => Promise<FetchPackResult>;
+<<<<<<< HEAD
+=======
+export type FetchPackFn = (input: FetchPackInput) => Promise<Uint8Array>;
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
+=======
+>>>>>>> 8ad3dcd0 (fix(spawntree-browser): refNames-based fetch mode for missing base refs)
 
 // ─── Diff results ────────────────────────────────────────────────────
 

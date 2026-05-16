@@ -6,6 +6,7 @@
  * open PRs when base has had new commits). GitHub's PR diff uses the
  * merge base — `mergeBase(base, head)..head` — which is what we want.
  *
+<<<<<<< HEAD
  * Special case: when the input `baseSha` is the local tip of a branch
  * that has ALREADY swallowed `headSha` (rebase/fast-forward merge,
  * cherry-picked, etc.), `mergeBase(base, head) === head` and the diff
@@ -19,12 +20,18 @@
  * Returns the merge base when found, the rewound branch point when the
  * PR was already merged into base, or falls back to the original
  * `baseSha` when no common ancestor exists.
+=======
+ * Returns the merge base when found, falls back to the original
+ * `baseSha` when no common ancestor exists (degenerate case — likely
+ * missing objects, in which case the caller should trigger a fetch).
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
  */
 import git from "isomorphic-git";
 import type { IsoFs } from "../fsa/fs-adapter.ts";
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
 
+<<<<<<< HEAD
 /**
  * Maximum depth to walk along head's first-parent chain when rewinding
  * past commits already in `baseSha`'s history. PRs rarely exceed a
@@ -34,12 +41,15 @@ const SHA_RE = /^[0-9a-f]{40}$/i;
  */
 const MAX_FIRST_PARENT_REWIND = 64;
 
+=======
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
 export async function effectiveBaseSha(
   fs: IsoFs,
   gitdir: string,
   baseSha: string,
   headSha: string,
 ): Promise<string> {
+<<<<<<< HEAD
   if (baseSha === headSha) {
     // Same input on both sides — caller is asking for a no-op diff.
     // Try the rewind anyway: if `parent(head)` is also reachable from
@@ -49,6 +59,9 @@ export async function effectiveBaseSha(
     return rewindFirstParent(fs, gitdir, headSha, baseSha);
   }
   let mergeBase = baseSha;
+=======
+  if (baseSha === headSha) return baseSha;
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
   try {
     const merged = await git.findMergeBase({
       fs: fs as unknown as Parameters<typeof git.findMergeBase>[0]["fs"],
@@ -57,11 +70,16 @@ export async function effectiveBaseSha(
     });
     const first = merged[0];
     if (typeof first === "string" && SHA_RE.test(first)) {
+<<<<<<< HEAD
       mergeBase = first;
+=======
+      return first;
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
     }
   } catch {
     // Unreachable bases / missing objects — fall through to baseSha.
   }
+<<<<<<< HEAD
 
   // Merged-PR case: head is already reachable from the base ref, so the
   // standard merge-base walk produces an empty diff. Rewind along head's
@@ -112,4 +130,7 @@ async function rewindFirstParent(
     return parent;
   }
   return fallback;
+=======
+  return baseSha;
+>>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
 }
