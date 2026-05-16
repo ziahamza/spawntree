@@ -40,11 +40,6 @@ export function registerUpCommand(program: Command): void {
     .option("--no-prepare", "Skip automatic prepare")
     .option("--env <vars...>", "Override environment variables (KEY=VALUE)")
     .action(async (options) => {
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
-      const configFile = resolve(process.cwd(), program.opts().configFile ?? "spawntree.yaml");
-=======
       let repoId: string;
       let repoPath: string;
       let envId: string;
@@ -64,41 +59,6 @@ export function registerUpCommand(program: Command): void {
         envId = options.envName || getCurrentProfileEnvId(options.prefix, options.profile);
       } catch (err) {
         console.error(err instanceof Error ? err.message : err);
-        process.exit(1);
-      }
->>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
-
-      if (!existsSync(configFile)) {
-        console.error(`Config file not found: ${configFile}`);
-        console.error('Run "spawntree init" to create one.');
-        process.exit(1);
-      }
-
-<<<<<<< HEAD
->>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
-      let repoId: string;
-      let repoPath: string;
-      let envId: string;
-      let configFile: string;
-
-      try {
-        repoId = getCurrentRepoId();
-        repoPath = getRepoPath();
-        const requestedConfigFile = resolveConfigFileForRepo(repoPath, program.opts().configFile);
-        const localConfigFile = localConfigPathForRepo(repoPath);
-        configFile = existsSync(requestedConfigFile) ? requestedConfigFile : localConfigFile;
-        if (isCurrentHeadDetached() && !options.envName && !options.prefix) {
-          throw new Error(
-            "Detached HEAD detected. Create or switch to a branch before running SpawnTree, or pass --env-name for an advanced detached-commit environment.",
-          );
-        }
-        envId = options.envName || getCurrentProfileEnvId(options.prefix, options.profile);
-      } catch (err) {
-        console.error(err instanceof Error ? err.message : err);
-=======
-      if (!["current", "isolated", "auto"].includes(options.worktreeStrategy)) {
-        console.error('Invalid --worktree-strategy. Use "current", "isolated", or "auto".');
->>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
         process.exit(1);
       }
 
