@@ -14,22 +14,12 @@
  * worktree-stitching pass without hitting any real disk.
  */
 import { describe, expect, it } from "vitest";
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 import {
   hintMatchesRepoGit,
   scanFolder,
   stitchWorktrees,
   type ScannedEntry,
 } from "../src/fsa/scan.ts";
-<<<<<<< HEAD
-=======
-import { scanFolder, stitchWorktrees, type ScannedEntry } from "../src/fsa/scan.ts";
->>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
-=======
->>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 
 type MockNode = { kind: "dir"; entries: Record<string, MockNode> } | { kind: "file"; text: string };
 
@@ -420,10 +410,6 @@ describe("stitchWorktrees", () => {
     // import alive for future test cases.
     expect(HEAD_FEATURE.length).toBeGreaterThan(0);
   });
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 
   describe("path-boundary suffix match (regression for PR #51 review)", () => {
     // The old `hint.endsWith(repoGit) || hint.endsWith('/' + repoGit)`
@@ -496,9 +482,4 @@ describe("stitchWorktrees", () => {
       expect(stitched.has("other-main-repo-feat")).toBe(false);
     });
   });
-<<<<<<< HEAD
-=======
->>>>>>> 0591b4ba (feat(spawntree): add spawntree-browser package + schema additions)
-=======
->>>>>>> fda79175 (fix(spawntree-browser): findPackStart off-by-one + path-boundary worktree stitch (#247))
 });

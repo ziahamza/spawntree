@@ -127,32 +127,6 @@ export function createApp(
       DaemonService.use((service) => service.createEnv(body)),
       201,
     );
-<<<<<<< HEAD
-  });
-
-  app.get("/api/v1/prepare/status", (context) =>
-    runJson(
-      runtime,
-      context,
-      DaemonService.use((service) =>
-        service.prepareStatus({
-          repoPath: context.req.query("repoPath") ?? "",
-          configFile: context.req.query("configFile"),
-          profile: context.req.query("profile"),
-        }),
-      ),
-    ),
-  );
-
-  app.post("/api/v1/prepare", async (context) => {
-    const body = await decodeBody(PrepareRunRequest, context);
-    return runJson(
-      runtime,
-      context,
-      DaemonService.use((service) => service.prepare(body)),
-    );
-=======
->>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
   });
 
   app.get("/api/v1/prepare/status", (context) =>

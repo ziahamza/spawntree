@@ -126,16 +126,8 @@ export class DaemonService extends ServiceMap.Service<
     readonly domainEvents: Effect.Effect<DomainEvents>;
     readonly rescanWatchedPaths: Effect.Effect<void>;
     listEnvs(repoId?: string): Effect.Effect<ListEnvsResponse, DaemonError>;
-<<<<<<< HEAD
-<<<<<<< HEAD
     prepareStatus(request: PrepareRunRequest): Effect.Effect<PrepareStatusResponse, DaemonError>;
     prepare(request: PrepareRunRequest): Effect.Effect<PrepareRunResponse, DaemonError>;
-=======
->>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
-=======
-    prepareStatus(request: PrepareRunRequest): Effect.Effect<PrepareStatusResponse, DaemonError>;
-    prepare(request: PrepareRunRequest): Effect.Effect<PrepareRunResponse, DaemonError>;
->>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
     createEnv(request: CreateEnvRequest): Effect.Effect<CreateEnvResponse, DaemonError>;
     getEnv(
       repoRef: string,
@@ -195,14 +187,7 @@ export class DaemonService extends ServiceMap.Service<
         const logStreamer = new LogStreamer();
         const infraManager = new InfraManager();
         const proxyManager = new ProxyManager();
-<<<<<<< HEAD
-<<<<<<< HEAD
         const prepareManager = new PrepareManager();
-=======
->>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
-=======
-        const prepareManager = new PrepareManager();
->>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
         const envManager = new EnvManager(portRegistry, logStreamer, infraManager, proxyManager);
         // Catalog talks to the active storage primary via Drizzle directly —
         // no wrapper class, no domain-type mappers. Drizzle's $inferSelect
@@ -264,10 +249,6 @@ export class DaemonService extends ServiceMap.Service<
           return yield* Effect.succeed({ envs: envManager.listEnvs(repoId) });
         });
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
         const prepareStatus = Effect.fn("DaemonService.prepareStatus")(function* (
           request: PrepareRunRequest,
         ) {
@@ -284,11 +265,6 @@ export class DaemonService extends ServiceMap.Service<
           });
         });
 
-<<<<<<< HEAD
-=======
->>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
-=======
->>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
         const createEnv = Effect.fn("DaemonService.createEnv")(function* (
           request: CreateEnvRequest,
         ) {
@@ -296,10 +272,6 @@ export class DaemonService extends ServiceMap.Service<
             repoPath: request.repoPath,
             envId: request.envId,
             configFile: request.configFile,
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
             profile: request.profile,
           });
           if (request.runPrepare !== false) {
@@ -326,12 +298,6 @@ export class DaemonService extends ServiceMap.Service<
               });
             }
           }
-<<<<<<< HEAD
-=======
-          });
->>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
-=======
->>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
           const env = yield* Effect.tryPromise({
             try: () => envManager.createEnv(request),
             catch: mapCreateEnvError,
@@ -1068,16 +1034,8 @@ export class DaemonService extends ServiceMap.Service<
           domainEvents: Effect.succeed(events),
           rescanWatchedPaths,
           listEnvs,
-<<<<<<< HEAD
-<<<<<<< HEAD
           prepareStatus,
           prepare,
-=======
->>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
-=======
-          prepareStatus,
-          prepare,
->>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
           createEnv,
           getEnv,
           downEnv,

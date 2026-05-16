@@ -71,31 +71,11 @@ export async function ensureDaemon(): Promise<void> {
       waitForDaemon(10_000).then(resolve).catch(reject);
     });
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
     if (!started) {
       throw new Error("Daemon did not start within 10 seconds");
     }
   } finally {
     releaseLock();
-<<<<<<< HEAD
-=======
-    child.once("error", (err) => {
-      reject(new Error(`Failed to start daemon: ${err.message}`));
-    });
-
-    child.unref();
-
-    waitForDaemon(10_000).then(resolve).catch(reject);
-  });
-
-  if (!started) {
-    throw new Error("Daemon did not start within 10 seconds");
->>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
-=======
->>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
   }
 }
 

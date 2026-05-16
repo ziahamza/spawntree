@@ -198,19 +198,9 @@ function EnvDetail() {
                   </a>
                   <button
                     type="button"
-<<<<<<< HEAD
-<<<<<<< HEAD
                     onClick={() => {
                       void handleCopy(previewURL);
                     }}
-=======
-                    onClick={() => handleCopy(previewURL)}
->>>>>>> 0f1b1946 (Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs)
-=======
-                    onClick={() => {
-                      void handleCopy(previewURL);
-                    }}
->>>>>>> 6590a1f0 (feat: harden spawntree bootstrap profiles (#255))
                     className="inline-flex items-center gap-1 text-blue hover:underline"
                   >
                     <Link2 className="w-3 h-3" />
