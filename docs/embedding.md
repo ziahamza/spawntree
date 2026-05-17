@@ -140,85 +140,103 @@ The client is fully typed against `packages/core/src/api/types.ts`. It returns
 `Result` shapes, not throwing for HTTP errors — same pattern as the existing
 daemon dashboard.
 
-## 5. Two consumption modes — npm or git subtree
+## 5. Browser-only mode: `spawntree-browser`
 
-The import paths above are identical in both modes. What differs is how
-the source resolves on disk.
+When the embedder runs entirely in a browser tab — no daemon, no host — it
+needs to drive everything from the page itself: pick folders via the File
+System Access API, scan them for git clones + worktrees, persist the catalog
+in browser-side SQLite, compute diffs against arbitrary base refs. That's
+what `spawntree-browser` is for.
 
-### Mode A: npm dependency (default for most embedders)
+```ts
+import {
+  SpawntreeBrowser,
+  browserSchema,
+  migrateBrowserSchema,
+  type FetchPackInput,
+  type FetchPackResult,
+} from "spawntree-browser";
 
-```jsonc
-// package.json
-{
-  "dependencies": {
-    "spawntree-core": "^0.7.0"
+// 1. BYO Drizzle async-SQLite. Most likely PowerSync, wa-sqlite,
+//    or a service-worker-hosted libSQL. The schema migration is
+//    one call — the embedder owns the database lifecycle.
+const db = wrapMyDrizzle(...);
+await migrateBrowserSchema(db);
+
+// 2. Optional: a `fetchPack` callback that the diff path uses when
+//    a needed object isn't in the user's local clone. GitHub's
+//    `git-upload-pack` doesn't serve CORS, so this typically goes
+//    through your own server (a Worker / Edge Function / spawntree
+//    host) that proxies upload-pack with auth.
+async function myFetchPack(input: FetchPackInput): Promise<FetchPackResult> {
+  const res = await fetch("/api/git/pack", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (res.headers.get("content-type")?.includes("application/json")) {
+    // refNames-mode: server returns { pack: <base64>, refs: {name: sha} }.
+    // See "RefNames mode" below.
+    return await res.json();
   }
+  return new Uint8Array(await res.arrayBuffer());
 }
+
+const browser = new SpawntreeBrowser({ db, fetchPack: myFetchPack });
+
+// 3. Use it.
+await browser.scanFolder(pickedFolderId, dirHandle);
+const result = await browser.computeDiff({
+  cloneId,
+  remoteUrl,
+  baseRef: "main",
+  headSha: prHeadSha,
+  headRef: "feature/x",
+});
+if (result.ok) console.log(result.unifiedDiff);
 ```
 
-You get whatever's been published to npm. Upgrades are a `pnpm up` away.
-This is the right default for tools that just want to consume.
+### What it does
 
-### Mode B: git subtree (gitenv's pattern)
+- **Scan**: walks an FSA `FileSystemDirectoryHandle`, finds git repos +
+  worktrees + bare repos, stitches worktrees back to their main repo,
+  produces normalized rows for `clones` / `worktrees` in the catalog DB.
+- **Catalog**: typed Drizzle queries over `repos`, `clones`, `worktrees`
+  (canonical schema from `spawntree-core`) plus a browser-only
+  `picked_folders` table for FSA permission tracking.
+- **computeDiff**: opens the user's local clone via the FSA bridge,
+  resolves `baseRef` + `headSha`, and returns a unified diff. If either
+  isn't local, it asks the consumer's `fetchPack` callback to land the
+  missing objects.
+- **Config**: `readConfig` / `writeConfig` for `spawntree.yaml` files
+  inside the user's clones, validated against the spawntree-core schema.
 
-If you also want to **contribute back** without forking — and want
-upstream changes mirrored into your repo as commits, not as a version
-bump — vendor spawntree as a git subtree. gitenv runs this setup:
+### `fetchPack` — wants vs refNames
 
-```yaml
-# pnpm-workspace.yaml
-packages:
-  - packages/*
-  - vendor/spawntree
-  - vendor/spawntree/packages/*
-```
+The callback has two modes the consumer can support:
 
-```jsonc
-// package.json
-{
-  "scripts": {
-    "postinstall": "(cd vendor/spawntree && pnpm --filter spawntree-core --filter spawntree-daemon --filter spawntree-host run build)"
-  }
-}
-```
+| Mode | Input | Use case | Response |
+|---|---|---|---|
+| Wants | `wants: ["<sha>"]` | The caller already has the SHA (typical for the PR head sha). | `Uint8Array` (raw pack bytes, side-band stripped). |
+| RefNames | `refNames: ["main"]`, `wants: []` | The caller knows ref names but not SHAs (typical when the base ref hasn't been fetched into the local clone). | `{ pack: Uint8Array, refs: Record<string,string> }` — server resolves names → SHAs via `ls-refs` and returns both. |
 
-What happens:
+`spawntree-browser` writes the resolved refs into
+`refs/remotes/origin/<name>` so subsequent `resolveRefSha` calls find the
+new commit by name. If the consumer can support both modes, return the
+richer `{ pack, refs }` shape whenever `refNames` is non-empty; the
+client side will accept either.
 
-- `vendor/spawntree` is the spawntree repo, mounted as a subtree at the
-  current main commit. Real source files, not a tarball.
-- `pnpm install` workspace-links `spawntree-core` from
-  `vendor/spawntree/packages/core`. Your imports resolve to local source
-  with full type inference and no npm publish gating.
-- `postinstall` builds the spawntree subset so the daemon is ready to
-  run from the embedder's clone, no extra step required.
-- New spawntree releases land in your repo via `git subtree pull`. Your
-  fixes go upstream via `git subtree push` — or a PR opened by an
-  automated workflow watching the subtree for changes.
+### When to use `spawntree-browser` vs `spawntree-core/browser`
 
-The key promise of this mode: **the embedder's source tree always
-matches a real upstream commit.** If schema drift ever appears, it's a
-merge conflict the next subtree pull surfaces, not a silent shape
-mismatch three months later.
+- **`spawntree-core/browser`** — talks to a running daemon (or host
+  fallback) over HTTP. The user has spawntree installed and running.
+- **`spawntree-browser`** — does it all in the browser tab. The user
+  doesn't need a daemon at all, just a folder they can pick.
 
-Tradeoffs:
-
-- Heavier `git clone` (~MB-scale subtree).
-- Build step on every `pnpm install` if you don't ship prebuilt artifacts.
-- The embedder has to wire up a sync mechanism (subtree pull/push, or a
-  GitHub Action that opens "Sync from $repo main" PRs both ways — see
-  spawntree's `.github/workflows/` for one implementation).
-
-### Which to pick
-
-| Situation | Use |
-|---|---|
-| Building a CLI / dashboard that consumes spawntree | npm |
-| Building a product that depends on spawntree behavior changes you also want to ship | npm |
-| Building a product that **co-evolves with spawntree** and contributes patches frequently | subtree |
-| You need a private fork with bespoke patches | subtree (with internal upstream) |
-
-Most embedders should start with npm. Switch to subtree once the
-contribution rate justifies the setup overhead.
+Many embedders ship both: `spawntree-core/browser` for the
+"daemon-detected" path with mutations and live data, and
+`spawntree-browser` as the always-available fallback that works even
+when no daemon is reachable. gitenv's studio is the canonical example.
 
 ## When to redeclare vs. when to import
 
