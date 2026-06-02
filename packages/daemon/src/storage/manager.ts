@@ -530,18 +530,41 @@ async function migrateDatabase(
     const placeholders = columns.map(() => "?").join(", ");
     const insertSql = `INSERT INTO ${quotedTable} (${quotedCols}) VALUES (${placeholders})`;
 
-    // Batch in chunks so we don't pin an unbounded arg array.
-    const chunkSize = 500;
-    for (let i = 0; i < dataRes.rows.length; i += chunkSize) {
-      const chunk = dataRes.rows.slice(i, i + chunkSize);
-      await dst.client.batch(
-        chunk.map((row) => ({
-          sql: insertSql,
-          args: columns.map((c) => (row[c] ?? null) as never),
-        })),
-        "write",
-      );
+    // Stream rows into the destination in size-bounded batches. A fixed row
+    // count (the old `chunkSize = 500`) overflows the destination's per-request
+    // size limit on tables with large rows (e.g. session transcripts) over a
+    // remote primary, which silently stalls the swap on big catalogs. Cap each
+    // batch by BOTH a byte budget and a row count, flushing before a row would
+    // overflow — small tables still go in a single batch (no behaviour change),
+    // large/heavy tables stay safely under the limit.
+    const MAX_BATCH_BYTES = 512 * 1024;
+    const MAX_BATCH_ROWS = 100;
+    let batch: { sql: string; args: never[] }[] = [];
+    let batchBytes = 0;
+    const flush = async (): Promise<void> => {
+      if (batch.length === 0) return;
+      await dst.client.batch(batch, "write");
+      batch = [];
+      batchBytes = 0;
+    };
+    for (const row of dataRes.rows) {
+      const args = columns.map((c) => (row[c] ?? null) as never);
+      let rowBytes = 0;
+      for (const value of args as unknown[]) {
+        if (typeof value === "string") rowBytes += value.length;
+        else if (value instanceof ArrayBuffer) rowBytes += value.byteLength;
+        else if (value !== null) rowBytes += 8;
+      }
+      if (
+        batch.length > 0 &&
+        (batch.length >= MAX_BATCH_ROWS || batchBytes + rowBytes > MAX_BATCH_BYTES)
+      ) {
+        await flush();
+      }
+      batch.push({ sql: insertSql, args });
+      batchBytes += rowBytes;
     }
+    await flush();
 
     logger("info", "storage.migrate: copied table", {
       table: tableName,
