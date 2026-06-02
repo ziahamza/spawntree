@@ -601,6 +601,7 @@ async function migrateDatabase(
       existing = new Set();
       insertSql = `INSERT INTO ${quotedTable} (${quotedCols}) VALUES (${placeholders})`;
     }
+    await flush();
 
     // Stream rows into the destination in size-bounded batches. A fixed row
     // count overflows the destination's per-request size limit on tables with
