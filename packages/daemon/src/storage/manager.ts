@@ -15,6 +15,7 @@ import {
   type StorageContext,
 } from "spawntree-core";
 import { Schema } from "effect";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
@@ -465,6 +466,31 @@ async function migrateDatabase(
   dst: PrimaryStorageHandle,
   logger: StorageContext["logger"],
 ): Promise<void> {
+  // 0. Bail if src and dst resolve to the SAME backing file. The upstream
+  //    no-op guard keys on raw config, so a config that differs textually but
+  //    points at the same DB (default local `{}` vs an explicit
+  //    `{ path: <dataDir>/spawntree.db }`, a symlink, or a relative path) slips
+  //    through to here. Because we clear destination tables before copying,
+  //    proceeding would DELETE the source rows and commit an empty catalog.
+  //    Canonicalize via realpath so symlink/relative variants collapse too.
+  const sameBackingFile = ((): boolean => {
+    if (!src.dbPath || !dst.dbPath) return false;
+    const canon = (p: string): string => {
+      try {
+        return realpathSync(p);
+      } catch {
+        return p;
+      }
+    };
+    return canon(src.dbPath) === canon(dst.dbPath);
+  })();
+  if (sameBackingFile) {
+    logger("info", "storage.migrate: src and dst share a backing file — skipping copy", {
+      dbPath: src.dbPath,
+    });
+    return;
+  }
+
   // 1. Enumerate schema objects in creation order (tables → indexes → ...).
   const schemaRes = await src.client.execute(
     `SELECT type, name, sql FROM sqlite_schema
