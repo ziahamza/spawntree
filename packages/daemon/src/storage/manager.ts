@@ -551,17 +551,25 @@ async function migrateDatabase(
   }
   const orderedTables = topoSortTables(tableSql);
 
-  // Clear any rows the destination already carries before copying. A fresh
-  // primary is empty, but a reused or previously-half-migrated DB is not, and
-  // a plain INSERT into it collides on UNIQUE/PK (e.g. `repos.slug`). Wiping
-  // first makes the swap a clean snapshot and idempotent across retries.
-  // Delete children before parents (reverse dependency order) so destination
-  // foreign-key enforcement is satisfied.
-  for (const tableName of [...orderedTables].reverse()) {
-    const quoted = `"${tableName.replace(/"/g, '""')}"`;
-    await dst.client.execute(`DELETE FROM ${quoted}`);
-  }
-
+  // Copy data parent-before-child, RESUMABLY. A swap of a large catalog over a
+  // remote primary can take a long time, and the swap only commits its config
+  // at the very end — so if the daemon restarts mid-copy, the whole thing
+  // re-runs. Rather than wipe + recopy every time (which never finishes for a
+  // huge catalog that keeps getting interrupted), skip rows already present in
+  // the destination, keyed by primary key, so each run resumes where the last
+  // left off.
+  //
+  // Per table:
+  //   • Read the destination's existing PK set once (the resume point).
+  //   • Copy only src rows whose PK isn't already there, with INSERT OR IGNORE
+  //     so a residual UNIQUE conflict from stale data is skipped rather than
+  //     aborting the whole swap.
+  //   • Keyless tables fall back to clear-then-copy — the catalog's keyless
+  //     tables are tiny, so a clean (non-resumable) snapshot is fine there.
+  //
+  // Trade-off: a destination row no longer present in src is NOT pruned (we no
+  // longer clear PK tables). On a fresh primary the destination starts empty so
+  // there's nothing to prune; post-swap incremental sync keeps it converged.
   for (const tableName of orderedTables) {
     const quotedTable = `"${tableName.replace(/"/g, '""')}"`;
 
@@ -596,16 +604,17 @@ async function migrateDatabase(
     await flush();
 
     // Stream rows into the destination in size-bounded batches. A fixed row
-    // count (the old `chunkSize = 500`) overflows the destination's per-request
-    // size limit on tables with large rows (e.g. session transcripts) over a
-    // remote primary, which silently stalls the swap on big catalogs. Cap each
-    // batch by BOTH a byte budget and a row count, flushing before a row would
-    // overflow — small tables still go in a single batch (no behaviour change),
-    // large/heavy tables stay safely under the limit.
+    // count overflows the destination's per-request size limit on tables with
+    // large rows (e.g. session transcripts) over a remote primary, which
+    // silently stalls the swap on big catalogs. Cap each batch by BOTH a byte
+    // budget and a row count, flushing before a row would overflow — small
+    // tables still go in a single batch (no behaviour change).
     const MAX_BATCH_BYTES = 512 * 1024;
     const MAX_BATCH_ROWS = 100;
     let batch: { sql: string; args: never[] }[] = [];
     let batchBytes = 0;
+    let copied = 0;
+    let skipped = 0;
     const flush = async (): Promise<void> => {
       if (batch.length === 0) return;
       await dst.client.batch(batch, "write");
@@ -613,6 +622,10 @@ async function migrateDatabase(
       batchBytes = 0;
     };
     for (const row of dataRes.rows) {
+      if (pkCols.length > 0 && existing.has(keyOf(row))) {
+        skipped += 1;
+        continue;
+      }
       const args = columns.map((c) => (row[c] ?? null) as never);
       let rowBytes = 0;
       for (const value of args as unknown[]) {
@@ -628,12 +641,15 @@ async function migrateDatabase(
       }
       batch.push({ sql: insertSql, args });
       batchBytes += rowBytes;
+      copied += 1;
     }
     await flush();
 
     logger("info", "storage.migrate: copied table", {
       table: tableName,
       rows: dataRes.rows.length,
+      copied,
+      skipped,
     });
   }
 }
