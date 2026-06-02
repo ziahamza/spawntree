@@ -465,7 +465,7 @@ async function migrateDatabase(
   dst: PrimaryStorageHandle,
   logger: StorageContext["logger"],
 ): Promise<void> {
-  // 1. Enumerate schema objects in dependency order.
+  // 1. Enumerate schema objects in creation order (tables → indexes → ...).
   const schemaRes = await src.client.execute(
     `SELECT type, name, sql FROM sqlite_schema
      WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
@@ -477,24 +477,49 @@ async function migrateDatabase(
        ELSE 5 END`,
   );
 
-  // 2. Apply schema to dst. `IF NOT EXISTS` isn't guaranteed in every DDL the
-  //    user may have created, so we let errors surface — a clean new primary
-  //    should have no conflicts.
+  // 2. Apply schema to dst, idempotently. The destination may already carry
+  //    the baseline schema — a fresh primary applies it on open, and a prior
+  //    failed swap can leave tables behind — so "already exists" is benign and
+  //    we skip it. Any other DDL error still surfaces. (Previously this let
+  //    every error throw, which wedged retries on a half-migrated dst with
+  //    "table ... already exists".)
   for (const row of schemaRes.rows) {
     const sql = row["sql"] as string | null;
     if (!sql) continue;
-    await dst.client.execute(sql);
+    try {
+      await dst.client.execute(sql);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/already exists/i.test(message)) throw err;
+    }
   }
 
-  // 3. Copy data, table-by-table.
-  const tablesRes = await src.client.execute(
-    `SELECT name FROM sqlite_schema
-     WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-     ORDER BY name`,
-  );
+  // 3. Copy data parent-before-child. The destination enforces foreign keys
+  //    (Turso/libSQL does by default), so copying tables alphabetically can
+  //    insert a child row (`clones` → `repos`, `session_turns` → `sessions`)
+  //    before its parent exists and fail with SQLITE_CONSTRAINT. Order tables
+  //    topologically by their `REFERENCES` edges so every parent is populated
+  //    first.
+  const tableSql = new Map<string, string>();
+  for (const row of schemaRes.rows) {
+    if (row["type"] !== "table") continue;
+    const name = row["name"] as string | null;
+    if (name) tableSql.set(name, (row["sql"] as string | null) ?? "");
+  }
+  const orderedTables = topoSortTables(tableSql);
 
-  for (const tableRow of tablesRes.rows) {
-    const tableName = tableRow["name"] as string;
+  // Clear any rows the destination already carries before copying. A fresh
+  // primary is empty, but a reused or previously-half-migrated DB is not, and
+  // a plain INSERT into it collides on UNIQUE/PK (e.g. `repos.slug`). Wiping
+  // first makes the swap a clean snapshot and idempotent across retries.
+  // Delete children before parents (reverse dependency order) so destination
+  // foreign-key enforcement is satisfied.
+  for (const tableName of [...orderedTables].reverse()) {
+    const quoted = `"${tableName.replace(/"/g, '""')}"`;
+    await dst.client.execute(`DELETE FROM ${quoted}`);
+  }
+
+  for (const tableName of orderedTables) {
     const quotedTable = `"${tableName.replace(/"/g, '""')}"`;
 
     const dataRes = await src.client.execute(`SELECT * FROM ${quotedTable}`);
@@ -523,6 +548,42 @@ async function migrateDatabase(
       rows: dataRes.rows.length,
     });
   }
+}
+
+/**
+ * Order tables so each comes after the tables it references via a foreign key,
+ * so a parent-before-child copy never trips destination FK enforcement. Parses
+ * `REFERENCES <table>` out of each CREATE TABLE statement (quoted or not).
+ * Best-effort: unknown refs are ignored and cycles fall back to insertion
+ * order — it never throws, so a quirky schema degrades to the old behaviour
+ * rather than breaking the swap.
+ */
+function topoSortTables(tableSql: Map<string, string>): string[] {
+  const deps = new Map<string, Set<string>>();
+  for (const [name, sql] of tableSql) {
+    const refs = new Set<string>();
+    const re = /REFERENCES\s+"?([A-Za-z0-9_]+)"?/gi;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(sql)) !== null) {
+      const ref = match[1];
+      if (ref && ref !== name && tableSql.has(ref)) refs.add(ref);
+    }
+    deps.set(name, refs);
+  }
+
+  const ordered: string[] = [];
+  const visited = new Set<string>();
+  const onStack = new Set<string>();
+  const visit = (name: string): void => {
+    if (visited.has(name) || onStack.has(name)) return;
+    onStack.add(name);
+    for (const dep of deps.get(name) ?? []) visit(dep);
+    onStack.delete(name);
+    visited.add(name);
+    ordered.push(name);
+  };
+  for (const name of tableSql.keys()) visit(name);
+  return ordered;
 }
 
 function canonicalEqual(a: unknown, b: unknown): boolean {
