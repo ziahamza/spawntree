@@ -329,6 +329,31 @@ export class StorageManager {
       ? Schema.decodeUnknownSync(provider.configSchema as never)(entry.config ?? {})
       : entry.config;
 
+    // Same-backing-file guard, BEFORE opening the destination. The raw-config
+    // no-op check above misses a config that differs textually but points at
+    // the live primary's file (e.g. turso-embedded `localPath` set to the
+    // current spawntree.db). That matters here and not only in migrateDatabase
+    // because some providers (turso-embedded) run an initial sync inside
+    // create(), which would destructively overwrite the live file before the
+    // migration could decide to skip. Compare the requested path against the
+    // live primary's dbPath now, before create() can touch anything. Best
+    // effort: only fires when the config carries an explicit path.
+    const requestedPath =
+      validated && typeof validated === "object"
+        ? ((validated as { localPath?: unknown }).localPath ??
+          (validated as { path?: unknown }).path)
+        : undefined;
+    if (
+      typeof requestedPath === "string" &&
+      this.primary.dbPath &&
+      canonicalPath(requestedPath) === canonicalPath(this.primary.dbPath)
+    ) {
+      this.ctx.logger("info", "primary swap no-op (destination is the live primary file)", {
+        dbPath: this.primary.dbPath,
+      });
+      return;
+    }
+
     // Snapshot active replicator configs so we can rebuild them against the
     // new primary. The handle references are about to be torn down.
     const replicatorSnapshot = this.config.replicators.slice();
@@ -473,17 +498,9 @@ async function migrateDatabase(
   //    through to here. Because we clear destination tables before copying,
   //    proceeding would DELETE the source rows and commit an empty catalog.
   //    Canonicalize via realpath so symlink/relative variants collapse too.
-  const sameBackingFile = ((): boolean => {
-    if (!src.dbPath || !dst.dbPath) return false;
-    const canon = (p: string): string => {
-      try {
-        return realpathSync(p);
-      } catch {
-        return p;
-      }
-    };
-    return canon(src.dbPath) === canon(dst.dbPath);
-  })();
+  const sameBackingFile = Boolean(
+    src.dbPath && dst.dbPath && canonicalPath(src.dbPath) === canonicalPath(dst.dbPath),
+  );
   if (sameBackingFile) {
     logger("info", "storage.migrate: src and dst share a backing file — skipping copy", {
       dbPath: src.dbPath,
@@ -633,6 +650,21 @@ function topoSortTables(tableSql: Map<string, string>): string[] {
   };
   for (const name of tableSql.keys()) visit(name);
   return ordered;
+}
+
+/**
+ * Canonicalize a DB path for backing-store identity comparison: make absolute,
+ * then resolve symlinks. Falls back to the absolute path when the file can't be
+ * realpath'd (e.g. it doesn't exist yet), so relative/symlink variants of the
+ * same file still compare equal.
+ */
+function canonicalPath(p: string): string {
+  const abs = resolve(p);
+  try {
+    return realpathSync(abs);
+  } catch {
+    return abs;
+  }
 }
 
 function canonicalEqual(a: unknown, b: unknown): boolean {
