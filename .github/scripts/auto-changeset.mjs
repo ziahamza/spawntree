@@ -69,3 +69,8 @@ export function computeBumps({ commits, packagesMeta, isOnNpm }) {
   }
   return { bumps, skippedNew };
 }
+
+export function renderChangeset(bumps, summary) {
+  const fm = [...bumps].map(([name, level]) => `"${name}": ${level}`).join("\n");
+  return `---\n${fm}\n---\n\n${summary}\n`;
+}

@@ -5,6 +5,7 @@ import { extractBump } from "./auto-changeset.mjs";
 import { computeRange } from "./auto-changeset.mjs";
 import { filesToPackages } from "./auto-changeset.mjs";
 import { computeBumps } from "./auto-changeset.mjs";
+import { renderChangeset } from "./auto-changeset.mjs";
 
 test("maxBump picks the higher-ranked bump", () => {
   assert.equal(maxBump("patch", "minor"), "minor");
@@ -109,4 +110,13 @@ test("computeBumps excludes brand-new (not-on-npm) packages and reports them", (
   const { bumps, skippedNew } = computeBumps({ commits, packagesMeta: META2, isOnNpm: onNpm });
   assert.equal(bumps.has("spawntree-browser"), false);
   assert.deepEqual(skippedNew, ["spawntree-browser"]);
+});
+
+test("renderChangeset writes frontmatter + summary", () => {
+  const bumps = new Map([
+    ["spawntree-daemon", "minor"],
+    ["spawntree-core", "patch"],
+  ]);
+  const out = renderChangeset(bumps, "Automated release");
+  assert.match(out, /^---\n"spawntree-daemon": minor\n"spawntree-core": patch\n---\n\nAutomated release\n$/);
 });
