@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { maxBump } from "./auto-changeset.mjs";
 import { extractBump } from "./auto-changeset.mjs";
+import { computeRange } from "./auto-changeset.mjs";
 
 test("maxBump picks the higher-ranked bump", () => {
   assert.equal(maxBump("patch", "minor"), "minor");
@@ -31,4 +32,19 @@ test("extractBump scans squash bodies (highest wins)", () => {
       "* feat(daemon): resumable migration\n",
   ];
   assert.equal(extractBump(squash), "minor");
+});
+
+test("computeRange uses before..after normally", () => {
+  assert.equal(computeRange("aaa", "bbb", null), "aaa..bbb");
+});
+
+test("computeRange falls back to last tag on zero/empty before", () => {
+  const zero = "0".repeat(40);
+  assert.equal(computeRange(zero, "bbb", "v1.2.3"), "v1.2.3..bbb");
+  assert.equal(computeRange("", "bbb", "v1.0.0"), "v1.0.0..bbb");
+});
+
+test("computeRange falls back to single commit when no tag", () => {
+  assert.equal(computeRange("", "bbb", null), "bbb~1..bbb");
+  assert.equal(computeRange(null, null, null), "HEAD~1..HEAD");
 });

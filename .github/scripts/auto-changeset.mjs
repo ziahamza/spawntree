@@ -24,3 +24,10 @@ export function extractBump(messages) {
   }
   return bump;
 }
+
+export function computeRange(before, after, lastTag) {
+  const head = after || "HEAD";
+  const isZero = !before || /^0+$/.test(before);
+  if (isZero) return lastTag ? `${lastTag}..${head}` : `${head}~1..${head}`;
+  return `${before}..${head}`;
+}
