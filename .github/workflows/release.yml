@@ -9,6 +9,7 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 jobs:
   release:
     runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.head_commit.message, '[skip-release]') }}
     permissions:
       contents: write
       pull-requests: write
@@ -22,6 +23,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - uses: pnpm/action-setup@v4
 
@@ -30,6 +34,11 @@ jobs:
           node-version: 22
           cache: pnpm
           registry-url: "https://registry.npmjs.org"
+
+      - name: Configure git identity
+        run: |
+          git config user.name "spawntree-release-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - run: pnpm install --frozen-lockfile
 
@@ -75,21 +84,27 @@ jobs:
             } >> "$GITHUB_ENV"
           fi
 
-      - name: Create Release PR or Publish
-        id: changesets
-        uses: changesets/action@v1
-        with:
-          publish: pnpm changeset publish
-          title: "chore: version packages"
-          commit: "chore: version packages"
+      - name: Auto-generate changeset from conventional commits
+        id: auto
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.after }}
+        run: node .github/scripts/auto-changeset.mjs
+
+      - name: Version, publish, and push
+        if: steps.auto.outputs.has_changeset == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }} # Granular access token, expires Jul 2, 2026
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          # Embed build provenance on every publish so consumers can verify
-          # the package was built by this repo + workflow. Requires
-          # `id-token: write` on the job (see permissions above).
           NPM_CONFIG_PROVENANCE: "true"
+        run: |
+          set -e
+          pnpm changeset version
+          git add -A
+          git commit -m "chore: version packages [skip-release]"
+          pnpm changeset publish
+          git push --follow-tags origin HEAD:main
 
       # On a partial publish failure, surface what landed and what didn't
       # so the PR author can take corrective action (usually: publish the
