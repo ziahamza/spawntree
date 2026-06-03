@@ -92,3 +92,97 @@ export function parseGitLog(raw) {
       return { hash, message, files };
     });
 }
+
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+function loadPackagesMeta(root) {
+  const dir = join(root, "packages");
+  const metas = [];
+  for (const d of readdirSync(dir)) {
+    const pj = join(dir, d, "package.json");
+    if (!existsSync(pj)) continue;
+    const json = JSON.parse(readFileSync(pj, "utf8"));
+    if (!json.name) continue;
+    metas.push({ dir: d, name: json.name, private: !!json.private });
+  }
+  return metas;
+}
+
+function loadIgnore(root) {
+  const cfg = JSON.parse(readFileSync(join(root, ".changeset/config.json"), "utf8"));
+  return new Set(cfg.ignore || []);
+}
+
+function makeIsOnNpm() {
+  const cache = new Map();
+  return (name) => {
+    if (cache.has(name)) return cache.get(name);
+    let exists = false;
+    try {
+      execFileSync("npm", ["view", name, "version"], { stdio: ["ignore", "ignore", "ignore"] });
+      exists = true;
+    } catch {
+      exists = false;
+    }
+    cache.set(name, exists);
+    return exists;
+  };
+}
+
+function lastTagOrNull() {
+  try {
+    return execFileSync("git", ["describe", "--tags", "--abbrev=0"], { encoding: "utf8" }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function readCommits(range) {
+  const raw = execFileSync(
+    "git",
+    ["log", range, "--format=\x01%H\x02%B\x03", "--name-only"],
+    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  );
+  return parseGitLog(raw);
+}
+
+function appendLine(file, line) {
+  if (file) writeFileSync(file, line.endsWith("\n") ? line : `${line}\n`, { flag: "a" });
+}
+
+export function main() {
+  const root = process.cwd();
+  const range = computeRange(process.env.BEFORE_SHA, process.env.AFTER_SHA, lastTagOrNull());
+  const commits = readCommits(range);
+
+  const ignore = loadIgnore(root);
+  const packagesMeta = loadPackagesMeta(root).map((m) => ({ ...m, ignored: ignore.has(m.name) }));
+
+  const { bumps, skippedNew } = computeBumps({ commits, packagesMeta, isOnNpm: makeIsOnNpm() });
+
+  const ghOut = process.env.GITHUB_OUTPUT;
+  const ghEnv = process.env.GITHUB_ENV;
+
+  if (bumps.size === 0) {
+    appendLine(ghOut, "has_changeset=false");
+    console.log(`auto-changeset: nothing to release (range ${range})`);
+  } else {
+    const after = process.env.AFTER_SHA || "head";
+    const summary =
+      "Automated release from synced changes:\n" +
+      commits.map((c) => `- ${c.message.split("\n")[0]}`).join("\n");
+    const file = join(root, ".changeset", `auto-${after.slice(0, 12)}.md`);
+    writeFileSync(file, renderChangeset(bumps, summary));
+    appendLine(ghOut, "has_changeset=true");
+    console.log(`auto-changeset: wrote ${file} -> ${[...bumps.keys()].join(", ")}`);
+  }
+
+  if (skippedNew.length) {
+    appendLine(ghEnv, `NEW_PACKAGES=${skippedNew.join(" ")}`);
+    console.log(`auto-changeset: skipped brand-new packages (need one-time first-publish): ${skippedNew.join(", ")}`);
+  }
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) main();
