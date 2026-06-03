@@ -167,7 +167,6 @@ export function main() {
   const { bumps, skippedNew } = computeBumps({ commits, packagesMeta, isOnNpm: makeIsOnNpm() });
 
   const ghOut = process.env.GITHUB_OUTPUT;
-  const ghEnv = process.env.GITHUB_ENV;
 
   if (bumps.size === 0) {
     appendLine(ghOut, "has_changeset=false");
@@ -184,7 +183,9 @@ export function main() {
   }
 
   if (skippedNew.length) {
-    appendLine(ghEnv, `NEW_PACKAGES=${skippedNew.join(" ")}`);
+    // NEW_PACKAGES for the run summary is owned by the workflow's "Check for
+    // unpublished packages" step (it scans all packages). We only log here, so
+    // we don't clobber that step's $GITHUB_ENV value with a narrower list.
     console.log(`auto-changeset: skipped brand-new packages (need one-time first-publish): ${skippedNew.join(", ")}`);
   }
 }

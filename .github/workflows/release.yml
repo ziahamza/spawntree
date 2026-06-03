@@ -31,6 +31,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # RELEASE_PUSH_TOKEN (a PAT) is REQUIRED if `main` has branch protection:
+          # the fallback GITHUB_TOKEN cannot push past a protected branch, which would
+          # fail the run AFTER publishing to npm (a painful partial state). See docs/RELEASE.md.
           token: ${{ secrets.RELEASE_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - uses: pnpm/action-setup@v4
@@ -106,7 +109,9 @@ jobs:
           pnpm changeset status --verbose || true
 
       - name: Version, publish, and push
-        if: ${{ steps.auto.outputs.has_changeset == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        # Publish only on real pushes to main. workflow_dispatch is dry-run only —
+        # it never publishes (avoids publishing whatever stale commit HEAD points at).
+        if: ${{ github.event_name == 'push' && steps.auto.outputs.has_changeset == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -115,8 +120,14 @@ jobs:
         run: |
           set -e
           pnpm changeset version
-          git add -A
-          git commit -m "chore: version packages [skip-release]"
+          # Stage only `changeset version` output (package.json, CHANGELOGs, consumed
+          # changesets). `git add -u` updates tracked files only, so untracked build
+          # output (dist/ is NOT gitignored) is never committed; the second add picks
+          # up newly-created CHANGELOG files. The commit is guarded so a no-op version
+          # (nothing staged) does not abort the step under `set -e`.
+          git add -u
+          git add packages/*/CHANGELOG.md 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "chore: version packages [skip-release]"
           pnpm changeset publish
           git push --follow-tags origin HEAD:main
 
