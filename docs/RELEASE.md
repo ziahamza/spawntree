@@ -1,20 +1,31 @@
 # Releasing spawntree
 
-Releases go out via the [`.github/workflows/release.yml`](../.github/workflows/release.yml) GitHub Actions workflow, driven by [Changesets](https://github.com/changesets/changesets).
+Releases are **fully automatic**, via the [`.github/workflows/release.yml`](../.github/workflows/release.yml) GitHub Actions workflow, driven by [Changesets](https://github.com/changesets/changesets). There is no manual `pnpm changeset` step and no "Version Packages" PR.
 
 ## Day-to-day flow
 
-1. When you land a user-facing change, add a changeset:
+On every push to `main` (typically the merge of the `gitenv-upstream` sync PR), the Release workflow:
 
-   ```sh
-   pnpm changeset
-   ```
+1. Runs [`.github/scripts/auto-changeset.mjs`](../.github/scripts/auto-changeset.mjs), which reads the pushed commit range and maps commits → packages (by changed file path) → semver bump (by [Conventional Commits](https://www.conventionalcommits.org/) type), then writes one `.changeset/auto-<sha>.md`:
+   - `feat` → **minor**; `fix` / `perf` / `refactor` / `revert` → **patch**; a `!` after the type/scope or a `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer → **major**.
+   - A public package touched without any conventional bump gets a **patch** (so real changes always ship).
+   - `private` packages and those in the changesets `ignore` list are skipped.
+   - The bump per package is the highest seen across the range. Squash-merge bodies are scanned too, so the original commit subjects still drive the bump.
+2. Runs `pnpm changeset version` + `pnpm changeset publish` inline, then pushes the `chore: version packages [skip-release]` commit and the new tags back to `main`. The `[skip-release]` tag is how the workflow's own version commit avoids re-triggering itself (a job-level `if:` guard).
 
-   Pick which packages bump and at what level. Commit the generated `.changeset/*.md` file alongside the change.
+You can still add a hand-written `.changeset/*.md` for cases the heuristic shouldn't decide on its own — it's consumed alongside the auto-generated one.
 
-2. On every push to `main`, the Release workflow runs. If there are pending changesets on `main`, it opens (or updates) the `chore: version packages` PR. Merging that PR publishes the new versions to npm.
+### Dry run
 
-3. If there are NO pending changesets but some package's `version` in `package.json` isn't on npm yet, the workflow tries to publish it. This is the path that catches brand-new packages.
+Trigger the **Release** workflow manually (`workflow_dispatch`, `dry_run: true` — the default) to print the generated changeset and `changeset status` **without** publishing. `workflow_dispatch` never publishes, regardless of the input.
+
+### Pushing the version commit (branch protection)
+
+The workflow pushes the version commit + tags straight to `main`. If `main` has branch protection, the default `GITHUB_TOKEN` cannot push past it — the run would fail **after** publishing to npm (a painful partial state). In that case, set a `RELEASE_PUSH_TOKEN` repo secret (a PAT with `contents: write` that can bypass the protection); the checkout step prefers it and falls back to `GITHUB_TOKEN` when it's absent.
+
+## Brand-new packages (first publish)
+
+A package whose name does not yet exist on npm is **excluded** from the automatic changeset — npm automation tokens cannot create new packages (see the next section). The workflow lists it under `NEW_PACKAGES` in the run summary. Publish it once manually, then every future bump is automatic.
 
 ## When `NPM_TOKEN` can't publish a package
 
