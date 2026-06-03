@@ -27,6 +27,7 @@ test("extractBump maps conventional types to bumps", () => {
 test("extractBump detects breaking changes as major", () => {
   assert.equal(extractBump(["feat(api)!: drop field"]), "major");
   assert.equal(extractBump(["fix: x\n\nBREAKING CHANGE: removed y"]), "major");
+  assert.equal(extractBump(["fix: x\n\nBREAKING-CHANGE: removed y"]), "major");
 });
 
 test("extractBump scans squash bodies (highest wins)", () => {
@@ -113,6 +114,13 @@ test("computeBumps excludes brand-new (not-on-npm) packages and reports them", (
   assert.deepEqual(skippedNew, ["spawntree-browser"]);
 });
 
+test("computeBumps ignores commits that touch no package (e.g. merge commits)", () => {
+  const commits = [{ message: "Merge pull request #1", files: [] }];
+  const { bumps, skippedNew } = computeBumps({ commits, packagesMeta: META2, isOnNpm: onNpm });
+  assert.equal(bumps.size, 0);
+  assert.deepEqual(skippedNew, []);
+});
+
 test("renderChangeset writes frontmatter + summary", () => {
   const bumps = new Map([
     ["spawntree-daemon", "minor"],
@@ -136,6 +144,7 @@ test("parseGitLog parses hash, message, and files", () => {
   assert.deepEqual(commits[1].files, ["packages/core/src/y.ts"]);
 });
 
-test("parseGitLog tolerates empty input", () => {
+test("parseGitLog tolerates empty input and stray fragments", () => {
   assert.deepEqual(parseGitLog(""), []);
+  assert.deepEqual(parseGitLog("\n"), []);
 });

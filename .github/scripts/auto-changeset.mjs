@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 const BUMP_RANK = { patch: 1, minor: 2, major: 3 };
 
 export function maxBump(a, b) {
@@ -13,7 +17,7 @@ export function extractBump(messages) {
   for (const msg of messages) {
     for (const rawLine of msg.split("\n")) {
       const line = rawLine.trim();
-      if (/^BREAKING CHANGE:/.test(line)) { bump = maxBump(bump, "major"); continue; }
+      if (/^BREAKING[ -]CHANGE:/.test(line)) { bump = maxBump(bump, "major"); continue; }
       const m = CONVENTIONAL.exec(line);
       if (!m) continue;
       const [, type, bang] = m;
@@ -75,10 +79,14 @@ export function renderChangeset(bumps, summary) {
   return `---\n${fm}\n---\n\n${summary}\n`;
 }
 
+// Records are delimited by control chars SOH (\x01, record start), STX (\x02,
+// hash/body separator) and ETX (\x03, body end). These are assumed absent from
+// commit messages — git permits them in theory but they never occur in practice.
+// Requiring \x02 per record also drops blank fragments (e.g. a stray "\n").
 export function parseGitLog(raw) {
   return raw
     .split("\x01")
-    .filter((r) => r.length)
+    .filter((r) => r.includes("\x02"))
     .map((r) => {
       const hashEnd = r.indexOf("\x02");
       const bodyEnd = r.indexOf("\x03");
@@ -92,10 +100,6 @@ export function parseGitLog(raw) {
       return { hash, message, files };
     });
 }
-
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 function loadPackagesMeta(root) {
   const dir = join(root, "packages");
