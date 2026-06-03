@@ -120,10 +120,10 @@ jobs:
         run: |
           set -e
           pnpm changeset version
-          # Stage only `changeset version` output (package.json, CHANGELOGs, consumed
-          # changesets). `git add -u` updates tracked files only, so untracked build
-          # output (dist/ is NOT gitignored) is never committed; the second add picks
-          # up newly-created CHANGELOG files. The commit is guarded so a no-op version
+          # Stage only `changeset version` output (bumped package.json, CHANGELOGs,
+          # consumed changesets). `git add -u` stages changes to tracked files only,
+          # so it never picks up untracked build artifacts; the second add catches
+          # newly-created CHANGELOG files. The commit is guarded so a no-op version
           # (nothing staged) does not abort the step under `set -e`.
           git add -u
           git add packages/*/CHANGELOG.md 2>/dev/null || true
