@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run auto-changeset + changeset status without publishing"
+        type: boolean
+        default: true
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -91,8 +97,16 @@ jobs:
           AFTER_SHA: ${{ github.event.after }}
         run: node .github/scripts/auto-changeset.mjs
 
+      - name: Dry-run summary (no publish)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          echo "=== Generated changeset(s) ==="
+          cat .changeset/auto-*.md 2>/dev/null || echo "(none)"
+          echo "=== changeset status ==="
+          pnpm changeset status --verbose || true
+
       - name: Version, publish, and push
-        if: steps.auto.outputs.has_changeset == 'true'
+        if: ${{ steps.auto.outputs.has_changeset == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
