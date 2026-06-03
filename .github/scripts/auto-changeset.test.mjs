@@ -4,6 +4,7 @@ import { maxBump } from "./auto-changeset.mjs";
 import { extractBump } from "./auto-changeset.mjs";
 import { computeRange } from "./auto-changeset.mjs";
 import { filesToPackages } from "./auto-changeset.mjs";
+import { computeBumps } from "./auto-changeset.mjs";
 
 test("maxBump picks the higher-ranked bump", () => {
   assert.equal(maxBump("patch", "minor"), "minor");
@@ -69,4 +70,43 @@ test("filesToPackages maps packages/<dir>/** to package names", () => {
 
 test("filesToPackages ignores unknown dirs and root files", () => {
   assert.deepEqual(filesToPackages(["packages/unknown/x.ts", "package.json"], META), []);
+});
+
+const META2 = [
+  { dir: "daemon", name: "spawntree-daemon", private: false, ignored: false },
+  { dir: "core", name: "spawntree-core", private: false, ignored: false },
+  { dir: "browser", name: "spawntree-browser", private: false, ignored: false },
+  { dir: "web", name: "spawntree-web", private: true, ignored: false },
+  { dir: "cloud", name: "@spawntree/cloud", private: true, ignored: true },
+];
+const onNpm = (name) => ["spawntree-daemon", "spawntree-core"].includes(name);
+
+test("computeBumps assigns highest bump per package", () => {
+  const commits = [
+    { message: "feat(daemon): a", files: ["packages/daemon/src/a.ts"] },
+    { message: "fix(daemon): b", files: ["packages/daemon/src/b.ts"] },
+  ];
+  const { bumps } = computeBumps({ commits, packagesMeta: META2, isOnNpm: onNpm });
+  assert.equal(bumps.get("spawntree-daemon"), "minor");
+});
+
+test("computeBumps patch-fallbacks a touched-but-unbumped public package", () => {
+  const commits = [{ message: "chore: tidy", files: ["packages/core/src/x.ts"] }];
+  const { bumps } = computeBumps({ commits, packagesMeta: META2, isOnNpm: onNpm });
+  assert.equal(bumps.get("spawntree-core"), "patch");
+});
+
+test("computeBumps skips private and ignored packages", () => {
+  const commits = [
+    { message: "feat: x", files: ["packages/web/src/x.ts", "packages/cloud/src/y.ts"] },
+  ];
+  const { bumps } = computeBumps({ commits, packagesMeta: META2, isOnNpm: onNpm });
+  assert.equal(bumps.size, 0);
+});
+
+test("computeBumps excludes brand-new (not-on-npm) packages and reports them", () => {
+  const commits = [{ message: "feat(browser): new", files: ["packages/browser/src/x.ts"] }];
+  const { bumps, skippedNew } = computeBumps({ commits, packagesMeta: META2, isOnNpm: onNpm });
+  assert.equal(bumps.has("spawntree-browser"), false);
+  assert.deepEqual(skippedNew, ["spawntree-browser"]);
 });

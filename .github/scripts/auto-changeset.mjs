@@ -42,3 +42,30 @@ export function filesToPackages(files, packagesMeta) {
   }
   return [...out];
 }
+
+export function computeBumps({ commits, packagesMeta, isOnNpm }) {
+  const publishable = new Map();
+  for (const p of packagesMeta) {
+    if (p.private || p.ignored) continue;
+    publishable.set(p.name, p);
+  }
+  const perPkg = new Map();
+  const touched = new Set();
+  for (const c of commits) {
+    const bump = extractBump([c.message]);
+    for (const name of filesToPackages(c.files, packagesMeta)) {
+      if (!publishable.has(name)) continue;
+      touched.add(name);
+      if (bump) perPkg.set(name, maxBump(perPkg.get(name), bump));
+    }
+  }
+  for (const name of touched) if (!perPkg.has(name)) perPkg.set(name, "patch");
+
+  const bumps = new Map();
+  const skippedNew = [];
+  for (const [name, level] of perPkg) {
+    if (isOnNpm(name)) bumps.set(name, level);
+    else skippedNew.push(name);
+  }
+  return { bumps, skippedNew };
+}
