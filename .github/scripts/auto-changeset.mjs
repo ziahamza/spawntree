@@ -79,6 +79,13 @@ export function renderChangeset(bumps, summary) {
   return `---\n${fm}\n---\n\n${summary}\n`;
 }
 
+// A `.changeset/` entry that `changeset version` will consume — any `.md` that
+// isn't the README. Used so the publish gate fires for hand-written changesets
+// too, not only the auto-generated one.
+export function isChangesetFile(name) {
+  return name.endsWith(".md") && name !== "README.md";
+}
+
 // Records are delimited by control chars SOH (\x01, record start), STX (\x02,
 // hash/body separator) and ETX (\x03, body end). These are assumed absent from
 // commit messages — git permits them in theory but they never occur in practice.
@@ -169,8 +176,7 @@ export function main() {
   const ghOut = process.env.GITHUB_OUTPUT;
 
   if (bumps.size === 0) {
-    appendLine(ghOut, "has_changeset=false");
-    console.log(`auto-changeset: nothing to release (range ${range})`);
+    console.log(`auto-changeset: no auto-bumps (range ${range})`);
   } else {
     const after = process.env.AFTER_SHA || "head";
     const summary =
@@ -178,9 +184,14 @@ export function main() {
       commits.map((c) => `- ${c.message.split("\n")[0]}`).join("\n");
     const file = join(root, ".changeset", `auto-${after.slice(0, 12)}.md`);
     writeFileSync(file, renderChangeset(bumps, summary));
-    appendLine(ghOut, "has_changeset=true");
     console.log(`auto-changeset: wrote ${file} -> ${[...bumps.keys()].join(", ")}`);
   }
+
+  // Gate the release on ANY pending changeset — the one we just generated OR a
+  // hand-written one already committed — so manual changesets release too.
+  const pending = readdirSync(join(root, ".changeset")).filter(isChangesetFile);
+  appendLine(ghOut, `has_changeset=${pending.length > 0}`);
+  console.log(`auto-changeset: ${pending.length} pending changeset(s)`);
 
   if (skippedNew.length) {
     // NEW_PACKAGES for the run summary is owned by the workflow's "Check for

@@ -148,3 +148,12 @@ test("parseGitLog tolerates empty input and stray fragments", () => {
   assert.deepEqual(parseGitLog(""), []);
   assert.deepEqual(parseGitLog("\n"), []);
 });
+
+import { isChangesetFile } from "./auto-changeset.mjs";
+
+test("isChangesetFile recognises changeset markdown, not README or config", () => {
+  assert.equal(isChangesetFile("auto-abc123.md"), true);
+  assert.equal(isChangesetFile("brave-lions-jump.md"), true);
+  assert.equal(isChangesetFile("README.md"), false);
+  assert.equal(isChangesetFile("config.json"), false);
+});
