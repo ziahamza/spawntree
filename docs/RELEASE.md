@@ -17,7 +17,7 @@ You can still add a hand-written `.changeset/*.md` for cases the heuristic shoul
 
 ### Dry run
 
-Trigger the **Release** workflow manually (`workflow_dispatch`, `dry_run: true` — the default) to print the generated changeset and `changeset status` **without** publishing. `workflow_dispatch` never publishes, regardless of the input.
+Trigger the **Release** workflow manually (`workflow_dispatch`) to print the generated changeset and `changeset status` **without** publishing. Manual runs are always dry-run — the publish step only runs on a real push to `main`.
 
 ### Pushing the version commit (branch protection)
 

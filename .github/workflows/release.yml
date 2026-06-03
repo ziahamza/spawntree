@@ -3,12 +3,10 @@ name: Release
 on:
   push:
     branches: [main]
+  # Manual runs are ALWAYS dry-run: they print the changeset plan + `changeset
+  # status` and never publish (the publish step is gated to push events). Use it
+  # to preview what the next push to main would release.
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Run auto-changeset + changeset status without publishing"
-        type: boolean
-        default: true
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -101,7 +99,7 @@ jobs:
         run: node .github/scripts/auto-changeset.mjs
 
       - name: Dry-run summary (no publish)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           echo "=== Generated changeset(s) ==="
           cat .changeset/auto-*.md 2>/dev/null || echo "(none)"
