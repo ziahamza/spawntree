@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { maxBump } from "./auto-changeset.mjs";
 import { extractBump } from "./auto-changeset.mjs";
 import { computeRange } from "./auto-changeset.mjs";
+import { filesToPackages } from "./auto-changeset.mjs";
 
 test("maxBump picks the higher-ranked bump", () => {
   assert.equal(maxBump("patch", "minor"), "minor");
@@ -47,4 +48,25 @@ test("computeRange falls back to last tag on zero/empty before", () => {
 test("computeRange falls back to single commit when no tag", () => {
   assert.equal(computeRange("", "bbb", null), "bbb~1..bbb");
   assert.equal(computeRange(null, null, null), "HEAD~1..HEAD");
+});
+
+const META = [
+  { dir: "daemon", name: "spawntree-daemon", private: false },
+  { dir: "core", name: "spawntree-core", private: false },
+  { dir: "web", name: "spawntree-web", private: true },
+];
+
+test("filesToPackages maps packages/<dir>/** to package names", () => {
+  const files = [
+    "packages/daemon/src/storage/manager.ts",
+    "packages/daemon/package.json",
+    "packages/core/src/index.ts",
+    "docs/RELEASE.md",
+    "README.md",
+  ];
+  assert.deepEqual(filesToPackages(files, META).sort(), ["spawntree-core", "spawntree-daemon"]);
+});
+
+test("filesToPackages ignores unknown dirs and root files", () => {
+  assert.deepEqual(filesToPackages(["packages/unknown/x.ts", "package.json"], META), []);
 });

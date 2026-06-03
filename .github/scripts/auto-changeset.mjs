@@ -31,3 +31,14 @@ export function computeRange(before, after, lastTag) {
   if (isZero) return lastTag ? `${lastTag}..${head}` : `${head}~1..${head}`;
   return `${before}..${head}`;
 }
+
+export function filesToPackages(files, packagesMeta) {
+  const out = new Set();
+  for (const f of files) {
+    const m = /^packages\/([^/]+)\//.exec(f);
+    if (!m) continue;
+    const meta = packagesMeta.find((p) => p.dir === m[1]);
+    if (meta) out.add(meta.name);
+  }
+  return [...out];
+}
