@@ -74,3 +74,21 @@ export function renderChangeset(bumps, summary) {
   const fm = [...bumps].map(([name, level]) => `"${name}": ${level}`).join("\n");
   return `---\n${fm}\n---\n\n${summary}\n`;
 }
+
+export function parseGitLog(raw) {
+  return raw
+    .split("\x01")
+    .filter((r) => r.length)
+    .map((r) => {
+      const hashEnd = r.indexOf("\x02");
+      const bodyEnd = r.indexOf("\x03");
+      const hash = r.slice(0, hashEnd);
+      const message = r.slice(hashEnd + 1, bodyEnd);
+      const files = r
+        .slice(bodyEnd + 1)
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      return { hash, message, files };
+    });
+}

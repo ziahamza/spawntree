@@ -6,6 +6,7 @@ import { computeRange } from "./auto-changeset.mjs";
 import { filesToPackages } from "./auto-changeset.mjs";
 import { computeBumps } from "./auto-changeset.mjs";
 import { renderChangeset } from "./auto-changeset.mjs";
+import { parseGitLog } from "./auto-changeset.mjs";
 
 test("maxBump picks the higher-ranked bump", () => {
   assert.equal(maxBump("patch", "minor"), "minor");
@@ -119,4 +120,22 @@ test("renderChangeset writes frontmatter + summary", () => {
   ]);
   const out = renderChangeset(bumps, "Automated release");
   assert.match(out, /^---\n"spawntree-daemon": minor\n"spawntree-core": patch\n---\n\nAutomated release\n$/);
+});
+
+test("parseGitLog parses hash, message, and files", () => {
+  const raw =
+    "\x01abc123\x02feat(daemon): add bin\n\nbody line\x03" +
+    "packages/daemon/package.json\npackages/daemon/src/x.ts\n" +
+    "\x01def456\x02fix(core): tweak\x03packages/core/src/y.ts\n";
+  const commits = parseGitLog(raw);
+  assert.equal(commits.length, 2);
+  assert.equal(commits[0].hash, "abc123");
+  assert.match(commits[0].message, /feat\(daemon\): add bin/);
+  assert.deepEqual(commits[0].files, ["packages/daemon/package.json", "packages/daemon/src/x.ts"]);
+  assert.equal(commits[1].hash, "def456");
+  assert.deepEqual(commits[1].files, ["packages/core/src/y.ts"]);
+});
+
+test("parseGitLog tolerates empty input", () => {
+  assert.deepEqual(parseGitLog(""), []);
 });
