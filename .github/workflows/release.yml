@@ -115,6 +115,7 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
+          NEW_PACKAGES: ${{ env.NEW_PACKAGES }}
         run: |
           set -e
           pnpm changeset version
@@ -126,6 +127,12 @@ jobs:
           git add -u
           git add packages/*/CHANGELOG.md 2>/dev/null || true
           git diff --cached --quiet || git commit -m "chore: version packages [skip-release]"
+          # `changeset publish` tries to publish EVERY public package whose version
+          # isn't on npm yet — including brand-new names it can't create with an
+          # automation token (needs 2FA), which would 403 and fail the whole release.
+          # Mark those private (uncommitted, after the version commit) so publish
+          # skips them; a maintainer first-publishes each once, then it's automatic.
+          node .github/scripts/skip-unpublished.mjs
           pnpm changeset publish
           git push --follow-tags origin HEAD:main
 

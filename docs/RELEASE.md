@@ -25,7 +25,7 @@ The workflow pushes the version commit + tags straight to `main`. If `main` has 
 
 ## Brand-new packages (first publish)
 
-A package whose name does not yet exist on npm is **excluded** from the automatic changeset — npm automation tokens cannot create new packages (see the next section). The workflow lists it under `NEW_PACKAGES` in the run summary. Publish it once manually, then every future bump is automatic.
+A package whose name does not yet exist on npm is handled so it never breaks a release: it's left out of the auto-generated changeset, AND the publish step marks it private for that run only (`.github/scripts/skip-unpublished.mjs`) so `changeset publish` doesn't attempt its first-publish — npm automation tokens cannot create new packages (see the next section). The workflow lists it under `NEW_PACKAGES`. Publish it once manually, then every future bump is automatic.
 
 ## When `NPM_TOKEN` can't publish a package
 
