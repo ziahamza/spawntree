@@ -1,5 +1,13 @@
 # spawntree
 
+## 0.7.1
+
+### Patch Changes
+
+- Updated dependencies [[`dde42a2`](https://github.com/ziahamza/spawntree/commit/dde42a204a9ab2c4bb568f87f8f9029cee6cd4a4)]:
+  - spawntree-daemon@0.6.0
+  - spawntree-core@0.7.1
+
 ## 0.7.0
 
 ### Patch Changes

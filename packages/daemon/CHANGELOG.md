@@ -1,5 +1,16 @@
 # spawntree-daemon
 
+## 0.6.0
+
+### Minor Changes
+
+- [#58](https://github.com/ziahamza/spawntree/pull/58) [`dde42a2`](https://github.com/ziahamza/spawntree/commit/dde42a204a9ab2c4bb568f87f8f9029cee6cd4a4) Thanks [@Toledodev](https://github.com/Toledodev)! - Add `bin` so `npx spawntree-daemon` resolves; ship the FK-order / idempotent / resumable local→turso primary-swap migration fixes.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - spawntree-core@0.7.1
+
 ## 0.5.1
 
 ### Patch Changes

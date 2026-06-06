@@ -1,6 +1,6 @@
 {
   "name": "spawntree",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Isolated environment orchestrator. Docker Compose, but with native processes and per-branch isolation.",
   "keywords": [
     "cli",
