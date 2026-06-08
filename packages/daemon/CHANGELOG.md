@@ -1,5 +1,19 @@
 # spawntree-daemon
 
+## 0.8.0
+
+### Minor Changes
+
+- Automated release from synced changes:
+  - Merge pull request [#60](https://github.com/ziahamza/spawntree/issues/60) from ziahamza/gitenv-upstream
+  - feat(spawntree): `spawntree-daemon install` — run the daemon as an OS service ([#447](https://github.com/ziahamza/spawntree/issues/447))
+  - Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs
+
+### Patch Changes
+
+- Updated dependencies []:
+  - spawntree-core@0.7.3
+
 ## 0.7.0
 
 ### Minor Changes
