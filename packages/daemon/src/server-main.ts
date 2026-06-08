@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { createApp, hasBundledWebApp } from "./server.ts";
 import { DaemonService } from "./services/daemon-service.ts";
 import { SessionManager } from "./sessions/session-manager.ts";
+import { runServiceCommand } from "./service/install.ts";
 import {
   ensureDir,
   type HostBinding,
@@ -20,6 +21,15 @@ import { HostConfigSync } from "./storage/host-sync.ts";
 import { StorageManager } from "./storage/manager.ts";
 
 async function main() {
+  // Service subcommands run + exit before booting the daemon. Bare
+  // `spawntree-daemon` (no subcommand) runs the daemon as before.
+  const argv = process.argv.slice(2);
+  const sub = argv[0];
+  if (sub === "install" || sub === "uninstall" || sub === "status") {
+    await runServiceCommand(sub, argv.slice(1));
+    return;
+  }
+
   ensureDir();
   saveDaemonPid(process.pid);
 
