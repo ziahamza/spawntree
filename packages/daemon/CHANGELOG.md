@@ -1,5 +1,19 @@
 # spawntree-daemon
 
+## 0.7.0
+
+### Minor Changes
+
+- Automated release from synced changes:
+  - Merge pull request [#59](https://github.com/ziahamza/spawntree/issues/59) from ziahamza/gitenv-upstream
+  - fix(spawntree): keep machines online via a dedicated 30s presence heartbeat ([#445](https://github.com/ziahamza/spawntree/issues/445))
+  - Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs
+
+### Patch Changes
+
+- Updated dependencies []:
+  - spawntree-core@0.7.2
+
 ## 0.6.0
 
 ### Minor Changes
