@@ -42,6 +42,12 @@ export interface HostConfigSyncOptions {
   fetch?: typeof fetch;
   /** Steady-state poll interval after a successful sync. Default 5 minutes. */
   pollIntervalMs?: number;
+  /**
+   * Presence-pulse interval — how often the daemon POSTs
+   * `/daemons/me/heartbeat` to refresh `lastSeenAt`, independent of the
+   * config poll. Default 30s, well inside Studio's 2-minute "online" window.
+   */
+  presenceIntervalMs?: number;
   /** Backoff sequence on error. Default 5s, 30s, 2m, 10m (last value repeats). */
   backoffSequenceMs?: ReadonlyArray<number>;
   /** Logger. Defaults to stderr-prefix logger. */
@@ -62,6 +68,7 @@ export interface HostConfigSyncOptions {
 }
 
 const DEFAULT_POLL_MS = 5 * 60 * 1000;
+const DEFAULT_PRESENCE_MS = 30 * 1000;
 const DEFAULT_BACKOFF_MS: ReadonlyArray<number> = [5_000, 30_000, 2 * 60_000, 10 * 60_000];
 
 export class HostConfigSync {
@@ -69,6 +76,7 @@ export class HostConfigSync {
   private readonly manager: StorageManager;
   private readonly fetchImpl: typeof fetch;
   private readonly pollIntervalMs: number;
+  private readonly presenceIntervalMs: number;
   private readonly backoffSequenceMs: ReadonlyArray<number>;
   private readonly logger: NonNullable<HostConfigSyncOptions["logger"]>;
   private readonly fingerprintOverride: string | undefined;
@@ -76,6 +84,8 @@ export class HostConfigSync {
   private status: HostSyncStatus = { state: "idle" };
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inFlight: Promise<void> | null = null;
+  private presenceTimer: ReturnType<typeof setTimeout> | null = null;
+  private presenceInFlight: Promise<void> | null = null;
   private stopped = false;
   private terminal = false;
   private consecutiveErrors = 0;
@@ -86,6 +96,7 @@ export class HostConfigSync {
     this.manager = options.manager;
     this.fetchImpl = options.fetch ?? fetch;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_MS;
+    this.presenceIntervalMs = options.presenceIntervalMs ?? DEFAULT_PRESENCE_MS;
     this.backoffSequenceMs = options.backoffSequenceMs ?? DEFAULT_BACKOFF_MS;
     this.logger =
       options.logger ??
@@ -108,6 +119,7 @@ export class HostConfigSync {
     // any outbound request. Keeps boot logs in the right order.
     queueMicrotask(() => {
       void this.tick();
+      void this.pulsePresence();
     });
   }
 
@@ -121,8 +133,15 @@ export class HostConfigSync {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    if (this.presenceTimer) {
+      clearTimeout(this.presenceTimer);
+      this.presenceTimer = null;
+    }
     if (this.inFlight) {
       await this.inFlight.catch(() => undefined);
+    }
+    if (this.presenceInFlight) {
+      await this.presenceInFlight.catch(() => undefined);
     }
   }
 
@@ -341,6 +360,74 @@ export class HostConfigSync {
   private endpointUrl(): string {
     const base = this.binding.url.replace(/\/+$/, "");
     return `${base}/api/daemons/me/config`;
+  }
+
+  private presenceUrl(): string {
+    const base = this.binding.url.replace(/\/+$/, "");
+    return `${base}/api/daemons/me/heartbeat`;
+  }
+
+  /**
+   * Presence pulse — a lightweight POST to `/daemons/me/heartbeat` on a fast,
+   * fixed cadence (default 30s), independent of the config poll. Keeps the
+   * machine inside Studio's 2-minute "online" window without coupling
+   * presence to the slow config fetch. Coalesces overlapping calls.
+   */
+  private async pulsePresence(): Promise<void> {
+    if (this.stopped || this.terminal) return;
+    if (this.presenceInFlight) return this.presenceInFlight;
+    this.presenceInFlight = this.runPresenceOnce();
+    try {
+      await this.presenceInFlight;
+    } finally {
+      this.presenceInFlight = null;
+    }
+  }
+
+  private async runPresenceOnce(): Promise<void> {
+    let fingerprint: string;
+    try {
+      fingerprint = await this.resolveFingerprint();
+    } catch {
+      // Can't read the fingerprint yet — retry on the steady cadence.
+      this.schedulePresence(this.presenceIntervalMs);
+      return;
+    }
+
+    try {
+      const response = await this.fetchImpl(this.presenceUrl(), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.binding.key}`,
+          "X-Spawntree-Fingerprint": fingerprint,
+        },
+      });
+      if (response.status === 409) {
+        // FINGERPRINT_MISMATCH — same terminal semantics as the config poll:
+        // the key is bound to a different machine. Stop pulsing.
+        this.terminal = true;
+        this.logger("error", "presence pulse rejected (fingerprint mismatch); stopping", {
+          status: response.status,
+        });
+        return;
+      }
+      // 204 success, or any transient non-terminal status: keep pulsing.
+    } catch {
+      // Network blip — do NOT back off like the config poll. Stay on the fast
+      // cadence so presence recovers inside the 2-minute window.
+    }
+    this.schedulePresence(this.presenceIntervalMs);
+  }
+
+  private schedulePresence(delayMs: number): void {
+    if (this.stopped || this.terminal) return;
+    if (this.presenceTimer) clearTimeout(this.presenceTimer);
+    this.presenceTimer = setTimeout(() => {
+      this.presenceTimer = null;
+      void this.pulsePresence();
+    }, delayMs);
+    // Don't keep the event loop alive just to pulse presence.
+    this.presenceTimer.unref?.();
   }
 }
 
