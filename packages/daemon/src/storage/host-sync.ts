@@ -492,17 +492,16 @@ export class HostConfigSync {
     try {
       const db = drizzle(client, { schema: catalogSchema });
       sessions = await db.select().from(catalogSchema.sessions);
-      filesBySession = await collectEditedFiles(db);
+      filesBySession = await collectEditedFiles(db, sessions);
     } catch {
       // Catalog table not bootstrapped yet — skip this cycle.
       this.scheduleSessionsSync(this.sessionsSyncIntervalMs);
       return;
     }
 
-    if (sessions.length === 0) {
-      this.scheduleSessionsSync(this.sessionsSyncIntervalMs);
-      return;
-    }
+    // An empty snapshot is still synced: the host needs to learn when the
+    // last local session was deleted, otherwise its mirror keeps stale rows
+    // forever. (The catalog being unreadable is handled above and skips.)
 
     let fingerprint: string;
     try {
@@ -583,9 +582,15 @@ export class HostConfigSync {
  * Adapters store the tool input under different keys (`path` for Codex
  * file changes, `file_path` / `filePath` for ACP raw inputs), so the
  * extractor tolerates all of them and skips rows it can't interpret.
+ *
+ * Paths are normalized to be relative to the session's working directory:
+ * some adapters report repo-relative paths and others absolute ones, and
+ * cross-session comparison only works when both sessions describe the same
+ * file with the same string.
  */
 async function collectEditedFiles(
   db: ReturnType<typeof drizzle<typeof catalogSchema>>,
+  sessions: Array<typeof catalogSchema.sessions.$inferSelect>,
 ): Promise<Map<string, string[]>> {
   const rows = await db
     .select({
@@ -595,16 +600,19 @@ async function collectEditedFiles(
     .from(catalogSchema.sessionToolCalls)
     .where(eq(catalogSchema.sessionToolCalls.toolKind, "file_edit"));
 
+  const workingDirBySession = new Map(sessions.map((s) => [s.sessionId, s.workingDirectory]));
+
   const filesBySession = new Map<string, Set<string>>();
   for (const row of rows) {
     const file = extractEditedFilePath(row.arguments);
     if (!file) continue;
+    const normalized = normalizeEditedFilePath(file, workingDirBySession.get(row.sessionId));
     let files = filesBySession.get(row.sessionId);
     if (!files) {
       files = new Set();
       filesBySession.set(row.sessionId, files);
     }
-    files.add(file);
+    files.add(normalized);
   }
 
   const result = new Map<string, string[]>();
@@ -612,6 +620,18 @@ async function collectEditedFiles(
     result.set(sessionId, [...files].sort());
   }
   return result;
+}
+
+/**
+ * Make an edited-file path comparable across sessions: absolute paths under
+ * the session's working directory become relative to it; everything else is
+ * passed through unchanged (already-relative paths, or absolute paths
+ * outside the working tree, which are still meaningful as-is).
+ */
+function normalizeEditedFilePath(file: string, workingDirectory: string | undefined): string {
+  if (!workingDirectory) return file;
+  const dir = workingDirectory.endsWith("/") ? workingDirectory : `${workingDirectory}/`;
+  return file.startsWith(dir) ? file.slice(dir.length) : file;
 }
 
 function extractEditedFilePath(args: unknown): string | null {
