@@ -764,6 +764,8 @@ async function collectEditedFiles(
 
   const workingDirBySession = new Map(sessions.map((s) => [s.sessionId, s.workingDirectory]));
 
+  const workingDirBySession = new Map(sessions.map((s) => [s.sessionId, s.workingDirectory]));
+
   const filesBySession = new Map<string, Set<string>>();
   for (const row of rows) {
     const file = extractEditedFilePath(row.arguments);
