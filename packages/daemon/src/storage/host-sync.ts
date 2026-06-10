@@ -520,6 +520,9 @@ export class HostConfigSync {
       gitBranch: s.gitBranch ?? null,
       worktreePath: s.workingDirectory,
       headSha: s.gitHeadCommit ?? null,
+      // The host resolves the remote to its repo record so repo-scoped
+      // consumers (session lists, conflict detection) can find the session.
+      gitRemoteUrl: s.gitRemoteUrl ?? null,
       totalTurns: s.totalTurns,
       startedAt: s.startedAt ?? null,
       workingFiles: filesBySession.get(s.sessionId) ?? [],
