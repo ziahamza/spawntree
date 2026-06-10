@@ -1,4 +1,8 @@
+import type { Client as LibSqlClient } from "@libsql/client";
 import type { StorageConfig } from "spawntree-core";
+import { schema as catalogSchema } from "spawntree-core";
+import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/libsql";
 import type { HostBinding } from "../state/global-state.ts";
 import type { StorageManager } from "./manager.ts";
 
@@ -48,6 +52,11 @@ export interface HostConfigSyncOptions {
    * config poll. Default 30s, well inside Studio's 2-minute "online" window.
    */
   presenceIntervalMs?: number;
+  /**
+   * How often the daemon pushes its session list to the host.
+   * Default 10s — matches the legacy machine-package sync cadence.
+   */
+  sessionsSyncIntervalMs?: number;
   /** Backoff sequence on error. Default 5s, 30s, 2m, 10m (last value repeats). */
   backoffSequenceMs?: ReadonlyArray<number>;
   /** Logger. Defaults to stderr-prefix logger. */
@@ -69,6 +78,7 @@ export interface HostConfigSyncOptions {
 
 const DEFAULT_POLL_MS = 5 * 60 * 1000;
 const DEFAULT_PRESENCE_MS = 30 * 1000;
+const DEFAULT_SESSIONS_SYNC_MS = 10 * 1000;
 const DEFAULT_BACKOFF_MS: ReadonlyArray<number> = [5_000, 30_000, 2 * 60_000, 10 * 60_000];
 
 export class HostConfigSync {
@@ -77,6 +87,7 @@ export class HostConfigSync {
   private readonly fetchImpl: typeof fetch;
   private readonly pollIntervalMs: number;
   private readonly presenceIntervalMs: number;
+  private readonly sessionsSyncIntervalMs: number;
   private readonly backoffSequenceMs: ReadonlyArray<number>;
   private readonly logger: NonNullable<HostConfigSyncOptions["logger"]>;
   private readonly fingerprintOverride: string | undefined;
@@ -86,6 +97,8 @@ export class HostConfigSync {
   private inFlight: Promise<void> | null = null;
   private presenceTimer: ReturnType<typeof setTimeout> | null = null;
   private presenceInFlight: Promise<void> | null = null;
+  private sessionsSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  private sessionsSyncInFlight: Promise<void> | null = null;
   private stopped = false;
   private terminal = false;
   private consecutiveErrors = 0;
@@ -97,6 +110,7 @@ export class HostConfigSync {
     this.fetchImpl = options.fetch ?? fetch;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_MS;
     this.presenceIntervalMs = options.presenceIntervalMs ?? DEFAULT_PRESENCE_MS;
+    this.sessionsSyncIntervalMs = options.sessionsSyncIntervalMs ?? DEFAULT_SESSIONS_SYNC_MS;
     this.backoffSequenceMs = options.backoffSequenceMs ?? DEFAULT_BACKOFF_MS;
     this.logger =
       options.logger ??
@@ -120,6 +134,7 @@ export class HostConfigSync {
     queueMicrotask(() => {
       void this.tick();
       void this.pulsePresence();
+      void this.syncSessions();
     });
   }
 
@@ -137,11 +152,18 @@ export class HostConfigSync {
       clearTimeout(this.presenceTimer);
       this.presenceTimer = null;
     }
+    if (this.sessionsSyncTimer) {
+      clearTimeout(this.sessionsSyncTimer);
+      this.sessionsSyncTimer = null;
+    }
     if (this.inFlight) {
       await this.inFlight.catch(() => undefined);
     }
     if (this.presenceInFlight) {
       await this.presenceInFlight.catch(() => undefined);
+    }
+    if (this.sessionsSyncInFlight) {
+      await this.sessionsSyncInFlight.catch(() => undefined);
     }
   }
 
@@ -429,6 +451,174 @@ export class HostConfigSync {
     // Don't keep the event loop alive just to pulse presence.
     this.presenceTimer.unref?.();
   }
+
+  /**
+   * Session state sync — POST the daemon's current session list to the host
+   * every `sessionsSyncIntervalMs` (default 10s) so the host's ai_sessions
+   * table (and therefore Studio's org-wide session list via PowerSync) stays
+   * current. Coalesces overlapping calls. Skips silently when the storage
+   * primary isn't started yet (the catalog DB isn't available). Non-terminal
+   * errors are swallowed — a missed sync is harmless compared to crashing.
+   *
+   * Stays on the steady cadence regardless of transient errors (unlike the
+   * config poll which backs off). Session data is cheap to re-send and the
+   * host is idempotent on upserts.
+   */
+  private async syncSessions(): Promise<void> {
+    if (this.stopped || this.terminal) return;
+    if (this.sessionsSyncInFlight) return this.sessionsSyncInFlight;
+    this.sessionsSyncInFlight = this.runSessionsSyncOnce();
+    try {
+      await this.sessionsSyncInFlight;
+    } finally {
+      this.sessionsSyncInFlight = null;
+    }
+  }
+
+  private async runSessionsSyncOnce(): Promise<void> {
+    // Only push when we have an active storage primary — the catalog DB
+    // is only available after the primary is started.
+    let client: LibSqlClient;
+    try {
+      client = this.manager.client;
+    } catch {
+      // Primary not started yet — skip this cycle.
+      this.scheduleSessionsSync(this.sessionsSyncIntervalMs);
+      return;
+    }
+
+    let sessions: Array<typeof catalogSchema.sessions.$inferSelect>;
+    let filesBySession = new Map<string, string[]>();
+    try {
+      const db = drizzle(client, { schema: catalogSchema });
+      sessions = await db.select().from(catalogSchema.sessions);
+      filesBySession = await collectEditedFiles(db);
+    } catch {
+      // Catalog table not bootstrapped yet — skip this cycle.
+      this.scheduleSessionsSync(this.sessionsSyncIntervalMs);
+      return;
+    }
+
+    if (sessions.length === 0) {
+      this.scheduleSessionsSync(this.sessionsSyncIntervalMs);
+      return;
+    }
+
+    let fingerprint: string;
+    try {
+      fingerprint = await this.resolveFingerprint();
+    } catch {
+      this.scheduleSessionsSync(this.sessionsSyncIntervalMs);
+      return;
+    }
+
+    const payload = sessions.map((s) => ({
+      sourceId: s.sessionId,
+      provider: s.provider,
+      status: s.status,
+      title: s.title ?? null,
+      gitBranch: s.gitBranch ?? null,
+      worktreePath: s.workingDirectory,
+      headSha: s.gitHeadCommit ?? null,
+      totalTurns: s.totalTurns,
+      startedAt: s.startedAt ?? null,
+      workingFiles: filesBySession.get(s.sessionId) ?? [],
+    }));
+
+    try {
+      const url = this.sessionsSyncUrl();
+      const response = await this.fetchImpl(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.binding.key}`,
+          "Content-Type": "application/json",
+          "X-Spawntree-Fingerprint": fingerprint,
+        },
+        body: JSON.stringify({ sessions: payload }),
+      });
+      if (response.status === 409) {
+        // FINGERPRINT_MISMATCH — terminal, same semantics as the config poll.
+        this.terminal = true;
+        this.logger("error", "sessions sync rejected (fingerprint mismatch); stopping", {
+          status: response.status,
+        });
+        return;
+      }
+      // Any non-2xx is a transient error — stay on the steady cadence.
+    } catch {
+      // Network blip — stay on cadence, no backoff.
+    }
+    this.scheduleSessionsSync(this.sessionsSyncIntervalMs);
+  }
+
+  private sessionsSyncUrl(): string {
+    const base = this.binding.url.replace(/\/+$/, "");
+    // Use the same canonical prefix as the config/heartbeat endpoints.
+    // Hosts that expose a shorter alias at /api/daemons/me/sessions/sync
+    // can override this via subclassing, but the canonical path is always
+    // available and is the safe default.
+    return `${base}/api/daemons/me/sessions/sync`;
+  }
+
+  private scheduleSessionsSync(delayMs: number): void {
+    if (this.stopped || this.terminal) return;
+    if (this.sessionsSyncTimer) clearTimeout(this.sessionsSyncTimer);
+    this.sessionsSyncTimer = setTimeout(() => {
+      this.sessionsSyncTimer = null;
+      void this.syncSessions();
+    }, delayMs);
+    // Don't keep the event loop alive just to sync sessions.
+    this.sessionsSyncTimer.unref?.();
+  }
+}
+
+/**
+ * Collect the set of files each session has edited, derived from
+ * `session_tool_calls` rows with `toolKind = "file_edit"`. The hosting
+ * service uses this to detect concurrent sessions editing the same files.
+ *
+ * Adapters store the tool input under different keys (`path` for Codex
+ * file changes, `file_path` / `filePath` for ACP raw inputs), so the
+ * extractor tolerates all of them and skips rows it can't interpret.
+ */
+async function collectEditedFiles(
+  db: ReturnType<typeof drizzle<typeof catalogSchema>>,
+): Promise<Map<string, string[]>> {
+  const rows = await db
+    .select({
+      sessionId: catalogSchema.sessionToolCalls.sessionId,
+      arguments: catalogSchema.sessionToolCalls.arguments,
+    })
+    .from(catalogSchema.sessionToolCalls)
+    .where(eq(catalogSchema.sessionToolCalls.toolKind, "file_edit"));
+
+  const filesBySession = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const file = extractEditedFilePath(row.arguments);
+    if (!file) continue;
+    let files = filesBySession.get(row.sessionId);
+    if (!files) {
+      files = new Set();
+      filesBySession.set(row.sessionId, files);
+    }
+    files.add(file);
+  }
+
+  const result = new Map<string, string[]>();
+  for (const [sessionId, files] of filesBySession) {
+    result.set(sessionId, [...files].sort());
+  }
+  return result;
+}
+
+function extractEditedFilePath(args: unknown): string | null {
+  if (!args || typeof args !== "object") return null;
+  const record = args as Record<string, unknown>;
+  for (const key of ["path", "file_path", "filePath", "abs_path", "absPath"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return null;
 }
 
 function nowIso(): string {
