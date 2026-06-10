@@ -318,6 +318,57 @@ describe("HostConfigSync", () => {
     await sync.stop();
   });
 
+  it("on 410 GONE from the presence pulse: error status is surfaced, not just the terminal flag", async () => {
+    // The 30s heartbeat usually sees a revocation before the 5-minute config
+    // poll does. Since `terminal` suppresses future config polls, the pulse
+    // itself must set the error status — otherwise /api/v1/storage keeps
+    // reporting the stale pre-revocation state forever. Also guards the
+    // reverse race: an in-flight config fetch finishing AFTER the pulse went
+    // terminal must not overwrite the error with a stale success.
+    let goneCallCount = 0;
+    const urlAwareFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/api/daemons/me/heartbeat")) {
+        return new Response(JSON.stringify({ code: "KEY_REVOKED" }), {
+          status: 410,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      // Config poll: delay past the heartbeat so the success lands after
+      // markTerminal — exercising the stale-overwrite guard in runOne.
+      await new Promise((r) => setTimeout(r, 50));
+      return jsonResponse({
+        config: { primary: { id: "local", config: {} }, replicators: [] },
+      });
+    };
+    const sync = new HostConfigSync({
+      binding: { url: "http://controller:7777", key: TEST_KEY },
+      manager,
+      fetch: urlAwareFetch,
+      pollIntervalMs: 60_000,
+      presenceIntervalMs: 60_000,
+      backoffSequenceMs: [10],
+      logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
+      onGone: () => {
+        goneCallCount++;
+      },
+    });
+
+    sync.start();
+    // Let the heartbeat 410 land and the delayed config fetch complete.
+    await new Promise((r) => setTimeout(r, 150));
+
+    const status = sync.getStatus();
+    expect(status.state).toBe("error");
+    if (status.state === "error") {
+      expect(status.error).toMatch(/revoked/i);
+      expect(status.terminal).toBe(true);
+    }
+    expect(goneCallCount).toBe(1);
+    await sync.stop();
+  });
+
   it("on 5xx: state=error with backoff", async () => {
     const { fetch } = makeStubFetch([new Response("upstream timeout", { status: 503 })]);
     const sync = new HostConfigSync({

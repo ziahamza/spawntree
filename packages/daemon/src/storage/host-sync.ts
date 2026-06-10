@@ -265,6 +265,11 @@ export class HostConfigSync {
       return;
     }
 
+    // The 30s presence pulse may have gone terminal (409/410) while this
+    // config fetch was in flight — don't let a stale success overwrite the
+    // terminal error status.
+    if (this.terminal) return;
+
     if (response.status === 409) {
       // Hard-fail: this dh_ key is bound to a different machine. Do NOT
       // retry — the daemon process must exit (or be restarted with a
@@ -277,20 +282,9 @@ export class HostConfigSync {
       } catch {
         detail = "FINGERPRINT_MISMATCH";
       }
-      const message = `This daemon key is already bound to a different machine. Mint a fresh key on app.gitenv.dev for this box, or have an admin reset the machine fingerprint. (host: ${detail})`;
-      this.terminal = true;
-      this.status = {
-        state: "error",
-        lastErrorAt: nowIso(),
-        error: message,
-        nextRetryAt: nowIso(),
-        terminal: true,
-      };
-      // Cancel any pending retry; this state is final.
-      if (this.timer) {
-        clearTimeout(this.timer);
-        this.timer = null;
-      }
+      this.markTerminal(
+        `This daemon key is already bound to a different machine. Mint a fresh key on app.gitenv.dev for this box, or have an admin reset the machine fingerprint. (host: ${detail})`,
+      );
       this.logger("error", "fingerprint mismatch — host config sync halted", { url });
       return;
     }
@@ -332,19 +326,9 @@ export class HostConfigSync {
       } catch {
         detail = "KEY_REVOKED";
       }
-      const message = `This daemon key has been revoked (machine removed on host). Delete ~/.spawntree/host.json and re-register to continue. (host: ${detail})`;
-      this.terminal = true;
-      this.status = {
-        state: "error",
-        lastErrorAt: nowIso(),
-        error: message,
-        nextRetryAt: nowIso(),
-        terminal: true,
-      };
-      if (this.timer) {
-        clearTimeout(this.timer);
-        this.timer = null;
-      }
+      this.markTerminal(
+        `This daemon key has been revoked (machine removed on host). Delete ~/.spawntree/host.json and re-register to continue. (host: ${detail})`,
+      );
       this.logger("error", "daemon key revoked — host config sync halted; clearing binding", {
         url,
       });
@@ -393,6 +377,27 @@ export class HostConfigSync {
       replicators: payload.config.replicators.length,
       primary: payload.config.primary.id,
     });
+  }
+
+  /**
+   * Enter the final error state: surface `message` via `getStatus()`, set the
+   * terminal flag, and cancel any pending config-poll retry. Used by both the
+   * config poll and the presence pulse — whichever sees the 409/410 first —
+   * so /api/v1/storage never keeps reporting a stale pre-failure state.
+   */
+  private markTerminal(message: string): void {
+    this.terminal = true;
+    this.status = {
+      state: "error",
+      lastErrorAt: nowIso(),
+      error: message,
+      nextRetryAt: nowIso(),
+      terminal: true,
+    };
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
   }
 
   private recordError(message: string): void {
@@ -475,7 +480,9 @@ export class HostConfigSync {
       if (response.status === 409) {
         // FINGERPRINT_MISMATCH — same terminal semantics as the config poll:
         // the key is bound to a different machine. Stop pulsing.
-        this.terminal = true;
+        this.markTerminal(
+          `This daemon key is already bound to a different machine. Mint a fresh key on app.gitenv.dev for this box, or have an admin reset the machine fingerprint. (host: FINGERPRINT_MISMATCH)`,
+        );
         this.logger("error", "presence pulse rejected (fingerprint mismatch); stopping", {
           status: response.status,
         });
@@ -484,7 +491,13 @@ export class HostConfigSync {
       if (response.status === 410) {
         // KEY_REVOKED — same terminal semantics as the config poll: the key
         // was revoked because the machine was removed. Clear the binding.
-        this.terminal = true;
+        // The 30s pulse usually sees the 410 before the 5-minute config poll
+        // does, and `terminal` suppresses future polls — so the error status
+        // must be set HERE or /api/v1/storage keeps reporting the stale
+        // pre-revocation state forever.
+        this.markTerminal(
+          `This daemon key has been revoked (machine removed on host). Delete ~/.spawntree/host.json and re-register to continue. (host: KEY_REVOKED)`,
+        );
         this.logger(
           "error",
           "presence pulse rejected (key revoked — machine removed); clearing binding and stopping",
