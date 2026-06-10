@@ -1,7 +1,7 @@
 import type { Client as LibSqlClient } from "@libsql/client";
 import type { StorageConfig } from "spawntree-core";
 import { schema as catalogSchema } from "spawntree-core";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import type { HostBinding } from "../state/global-state.ts";
 import type { StorageManager } from "./manager.ts";
@@ -592,13 +592,21 @@ async function collectEditedFiles(
   db: ReturnType<typeof drizzle<typeof catalogSchema>>,
   sessions: Array<typeof catalogSchema.sessions.$inferSelect>,
 ): Promise<Map<string, string[]>> {
+  // Only edits that actually ran to completion count: awaiting-approval,
+  // rejected, and errored tool calls never touched the worktree, and two
+  // sessions that merely *requested* the same edit are not a real conflict.
   const rows = await db
     .select({
       sessionId: catalogSchema.sessionToolCalls.sessionId,
       arguments: catalogSchema.sessionToolCalls.arguments,
     })
     .from(catalogSchema.sessionToolCalls)
-    .where(eq(catalogSchema.sessionToolCalls.toolKind, "file_edit"));
+    .where(
+      and(
+        eq(catalogSchema.sessionToolCalls.toolKind, "file_edit"),
+        eq(catalogSchema.sessionToolCalls.status, "completed"),
+      ),
+    );
 
   const workingDirBySession = new Map(sessions.map((s) => [s.sessionId, s.workingDirectory]));
 
@@ -627,11 +635,17 @@ async function collectEditedFiles(
  * the session's working directory become relative to it; everything else is
  * passed through unchanged (already-relative paths, or absolute paths
  * outside the working tree, which are still meaningful as-is).
+ *
+ * Separators are normalized to `/` first so Windows daemons (`C:\repo` +
+ * `C:\repo\src\file.ts`) strip the same way POSIX ones do — and so the
+ * resulting relative paths compare equal across platforms.
  */
 function normalizeEditedFilePath(file: string, workingDirectory: string | undefined): string {
-  if (!workingDirectory) return file;
-  const dir = workingDirectory.endsWith("/") ? workingDirectory : `${workingDirectory}/`;
-  return file.startsWith(dir) ? file.slice(dir.length) : file;
+  const normalizedFile = file.replaceAll("\\", "/");
+  if (!workingDirectory) return normalizedFile;
+  const normalizedDir = workingDirectory.replaceAll("\\", "/");
+  const dir = normalizedDir.endsWith("/") ? normalizedDir : `${normalizedDir}/`;
+  return normalizedFile.startsWith(dir) ? normalizedFile.slice(dir.length) : normalizedFile;
 }
 
 function extractEditedFilePath(args: unknown): string | null {
