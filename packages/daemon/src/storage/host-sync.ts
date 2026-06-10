@@ -74,6 +74,18 @@ export interface HostConfigSyncOptions {
    * CLI entry; tests construct `HostConfigSync` with it directly.
    */
   fingerprintOverride?: string;
+  /**
+   * Called when the host returns **410 Gone** — meaning the daemon's key
+   * has been revoked (typically because the machine was soft-deleted on the
+   * host). The callback should clear the persisted host binding so the next
+   * daemon startup prompts the operator to re-register instead of looping
+   * on rejections.
+   *
+   * In production `server-main.ts` wires this to `clearHostBinding()`. In
+   * tests, pass a spy to assert it is called exactly once on a 410 and
+   * never called on other error codes.
+   */
+  onGone?: () => void;
 }
 
 const DEFAULT_POLL_MS = 5 * 60 * 1000;
@@ -91,6 +103,7 @@ export class HostConfigSync {
   private readonly backoffSequenceMs: ReadonlyArray<number>;
   private readonly logger: NonNullable<HostConfigSyncOptions["logger"]>;
   private readonly fingerprintOverride: string | undefined;
+  private readonly onGone: (() => void) | undefined;
 
   private status: HostSyncStatus = { state: "idle" };
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -120,6 +133,7 @@ export class HostConfigSync {
         );
       });
     this.fingerprintOverride = options.fingerprintOverride;
+    this.onGone = options.onGone;
   }
 
   /**
@@ -306,6 +320,40 @@ export class HostConfigSync {
       return;
     }
 
+    if (response.status === 410) {
+      // The daemon's key has been revoked — the machine was removed on the
+      // host. This is terminal: stop polling and clear the stored binding so
+      // the operator is prompted to re-register on the next daemon start
+      // instead of looping on 410s indefinitely.
+      let detail = "";
+      try {
+        const body = (await response.json()) as { error?: string; code?: string };
+        detail = body.error ?? body.code ?? "KEY_REVOKED";
+      } catch {
+        detail = "KEY_REVOKED";
+      }
+      const message = `This daemon key has been revoked (machine removed on host). Delete ~/.spawntree/host.json and re-register to continue. (host: ${detail})`;
+      this.terminal = true;
+      this.status = {
+        state: "error",
+        lastErrorAt: nowIso(),
+        error: message,
+        nextRetryAt: nowIso(),
+        terminal: true,
+      };
+      if (this.timer) {
+        clearTimeout(this.timer);
+        this.timer = null;
+      }
+      this.logger("error", "daemon key revoked — host config sync halted; clearing binding", {
+        url,
+      });
+      // Clear the persisted binding so the next startup doesn't re-try with
+      // a revoked key. The caller (server-main) wires this to clearHostBinding().
+      this.onGone?.();
+      return;
+    }
+
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       this.recordError(`host returned ${response.status}: ${body.slice(0, 200)}`);
@@ -431,6 +479,18 @@ export class HostConfigSync {
         this.logger("error", "presence pulse rejected (fingerprint mismatch); stopping", {
           status: response.status,
         });
+        return;
+      }
+      if (response.status === 410) {
+        // KEY_REVOKED — same terminal semantics as the config poll: the key
+        // was revoked because the machine was removed. Clear the binding.
+        this.terminal = true;
+        this.logger(
+          "error",
+          "presence pulse rejected (key revoked — machine removed); clearing binding and stopping",
+          { status: response.status },
+        );
+        this.onGone?.();
         return;
       }
       // 204 success, or any transient non-terminal status: keep pulsing.

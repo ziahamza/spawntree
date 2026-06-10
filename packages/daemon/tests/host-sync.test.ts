@@ -236,6 +236,88 @@ describe("HostConfigSync", () => {
     expect(managerStatus.primary.id).toBe("local");
   });
 
+  it("on 410 GONE (key revoked): terminal error state; loop stops; onGone is called once", async () => {
+    // 410 means the dh_ key was revoked on the host (machine soft-deleted).
+    // The daemon must: (a) go terminal so it stops polling, (b) call
+    // onGone() exactly once to clear the persisted binding.
+    const responses = [
+      new Response(
+        JSON.stringify({
+          code: "KEY_REVOKED",
+          error:
+            "This daemon key has been revoked. The machine was removed; re-register to continue.",
+        }),
+        { status: 410, headers: { "content-type": "application/json" } },
+      ),
+      // Second response would be served if the loop kept going. The test
+      // asserts the daemon ignores it (no consecutive call after a 410).
+      jsonResponse({ config: { primary: { id: "local", config: {} }, replicators: [] } }),
+    ];
+    const { fetch, calls } = makeStubFetch(responses);
+    let goneCallCount = 0;
+    const sync = new HostConfigSync({
+      binding: { url: "http://controller:7777", key: TEST_KEY },
+      manager,
+      fetch,
+      pollIntervalMs: 60_000,
+      backoffSequenceMs: [10],
+      logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
+      onGone: () => {
+        goneCallCount++;
+      },
+    });
+
+    await sync.refreshNow();
+    const first = sync.getStatus();
+    expect(first.state).toBe("error");
+    if (first.state === "error") {
+      expect(first.error).toMatch(/revoked/i);
+      expect(first.terminal).toBe(true);
+    }
+
+    // onGone must be called exactly once.
+    expect(goneCallCount).toBe(1);
+
+    // Even an explicit refresh after a 410 is a no-op — terminal.
+    await sync.refreshNow();
+    await sync.stop();
+    expect(calls).toHaveLength(1);
+
+    // onGone must not have been called again.
+    expect(goneCallCount).toBe(1);
+
+    // The persisted config should NOT have been touched by a 410.
+    const managerStatus = await manager.status();
+    expect(managerStatus.primary.id).toBe("local");
+  });
+
+  it("on 410 GONE: onGone is not called when option is absent (no crash)", async () => {
+    // Regression guard: if the caller doesn't pass onGone, the daemon still
+    // goes terminal but does NOT throw a TypeError on `undefined?.()`.
+    const { fetch } = makeStubFetch([
+      new Response(JSON.stringify({ code: "KEY_REVOKED" }), {
+        status: 410,
+        headers: { "content-type": "application/json" },
+      }),
+    ]);
+    const sync = new HostConfigSync({
+      binding: { url: "http://controller:7777", key: TEST_KEY },
+      manager,
+      fetch,
+      pollIntervalMs: 60_000,
+      backoffSequenceMs: [10],
+      logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
+      // intentionally no onGone
+    });
+
+    // Should not throw.
+    await expect(sync.refreshNow()).resolves.toBeUndefined();
+    expect(sync.getStatus().state).toBe("error");
+    await sync.stop();
+  });
+
   it("on 5xx: state=error with backoff", async () => {
     const { fetch } = makeStubFetch([new Response("upstream timeout", { status: 503 })]);
     const sync = new HostConfigSync({

@@ -6,8 +6,9 @@ import { createServer } from "node:http";
 import { createApp, hasBundledWebApp } from "./server.ts";
 import { DaemonService } from "./services/daemon-service.ts";
 import { SessionManager } from "./sessions/session-manager.ts";
-import { runServiceCommand } from "./service/install.ts";
+import { isHostKey, isHttpUrl, runServiceCommand } from "./service/install.ts";
 import {
+  clearHostBinding,
   ensureDir,
   type HostBinding,
   hostBindingPath,
@@ -105,6 +106,16 @@ async function main() {
       manager: storage,
       ...(pollIntervalMs !== undefined ? { pollIntervalMs } : {}),
       ...(fingerprintOverride ? { fingerprintOverride } : {}),
+      // On 410 GONE (key revoked — machine removed on host): clear the
+      // persisted binding so the next startup prompts re-registration
+      // instead of looping on rejected requests indefinitely.
+      onGone: () => {
+        process.stderr.write(
+          "[spawntree-daemon] host: daemon key revoked — clearing ~/.spawntree/host.json. " +
+            "Re-register this machine on the host to continue.\n",
+        );
+        clearHostBinding();
+      },
     });
     hostSync.start();
     process.stderr.write(
@@ -249,16 +260,4 @@ function readFlag(argv: ReadonlyArray<string>, flag: string): string | null {
     }
   }
   return null;
-}
-
-function isHttpUrl(value: string): boolean {
-  // `URL.canParse` (Node 20+) avoids the try/catch the lint rule for this
-  // file forbids; we still need a protocol check after parsing.
-  if (!URL.canParse(value)) return false;
-  const u = new URL(value);
-  return u.protocol === "http:" || u.protocol === "https:";
-}
-
-function isHostKey(value: string): boolean {
-  return /^dh_[A-Za-z0-9_-]{40,}$/.test(value);
 }
