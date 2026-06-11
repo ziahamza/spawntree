@@ -27,10 +27,23 @@ describe("CORS / PNA helpers", () => {
       expect(isAllowedBrowserOrigin("app://gitenv", policy)).toBe(true);
     });
 
+    it("allows any HTTPS per-org subdomain of gitenv.dev", () => {
+      // Org subdomains are minted dynamically, so they can't be in the
+      // static list. Studio served from `{slug}.gitenv.dev` must pass.
+      expect(isAllowedBrowserOrigin("https://toledodev.gitenv.dev", policy)).toBe(true);
+      expect(isAllowedBrowserOrigin("https://matheusbeninif.gitenv.dev", policy)).toBe(true);
+      // HTTPS-only — a plaintext subdomain spoof is rejected.
+      expect(isAllowedBrowserOrigin("http://toledodev.gitenv.dev", policy)).toBe(false);
+    });
+
     it("rejects unknown origins by default", () => {
       expect(isAllowedBrowserOrigin("https://evil.example.com", policy)).toBe(false);
       expect(isAllowedBrowserOrigin("https://gitenv.dev.evil.com", policy)).toBe(false);
       expect(isAllowedBrowserOrigin("http://gitenv.dev", policy)).toBe(false); // wrong scheme
+      // Subdomain look-alike: ends with `.attacker.com`, not `.gitenv.dev`.
+      expect(isAllowedBrowserOrigin("https://evil.gitenv.dev.attacker.com", policy)).toBe(false);
+      // No subdomain boundary — `notgitenv.dev` must not match.
+      expect(isAllowedBrowserOrigin("https://notgitenv.dev", policy)).toBe(false);
     });
 
     it("opens up to any origin when trustRemote is true", () => {
