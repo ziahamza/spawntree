@@ -1,7 +1,7 @@
 import type { Client as LibSqlClient } from "@libsql/client";
 import type { StorageConfig } from "spawntree-core";
 import { schema as catalogSchema } from "spawntree-core";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import type { HostBinding } from "../state/global-state.ts";
 import type { StorageManager } from "./manager.ts";
@@ -592,6 +592,16 @@ async function collectEditedFiles(
   db: ReturnType<typeof drizzle<typeof catalogSchema>>,
   sessions: Array<typeof catalogSchema.sessions.$inferSelect>,
 ): Promise<Map<string, string[]>> {
+  // Working files only feed the host's concurrent-edit conflict detection,
+  // which only considers live sessions — the host zeroes `workingFiles` the
+  // moment a session goes terminal. Scanning tool calls for completed/errored
+  // sessions would make this 10s pulse scale with the daemon's entire
+  // history instead of what's currently running.
+  const liveSessionIds = sessions
+    .filter((s) => s.status === "idle" || s.status === "streaming" || s.status === "waiting")
+    .map((s) => s.sessionId);
+  if (liveSessionIds.length === 0) return new Map();
+
   // Only edits that actually ran to completion count: awaiting-approval,
   // rejected, and errored tool calls never touched the worktree, and two
   // sessions that merely *requested* the same edit are not a real conflict.
@@ -603,6 +613,7 @@ async function collectEditedFiles(
     .from(catalogSchema.sessionToolCalls)
     .where(
       and(
+        inArray(catalogSchema.sessionToolCalls.sessionId, liveSessionIds),
         eq(catalogSchema.sessionToolCalls.toolKind, "file_edit"),
         eq(catalogSchema.sessionToolCalls.status, "completed"),
       ),
