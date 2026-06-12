@@ -612,8 +612,15 @@ export class HostConfigSync {
         body: JSON.stringify({ sessions: payload }),
       });
       if (response.status === 409) {
-        // FINGERPRINT_MISMATCH — terminal, same semantics as the config poll.
-        this.terminal = true;
+        // FINGERPRINT_MISMATCH — terminal, same semantics as the config poll
+        // and presence pulse. Go through markTerminal (not a bare `terminal`
+        // flag) so /api/v1/storage surfaces the hard failure even when the
+        // 10s session sync is the first call to see the 409 — otherwise
+        // `terminal` suppresses the config/presence retries that would have
+        // recorded the error status.
+        this.markTerminal(
+          `This daemon key is already bound to a different machine. Mint a fresh key on app.gitenv.dev for this box, or have an admin reset the machine fingerprint. (host: FINGERPRINT_MISMATCH)`,
+        );
         this.logger("error", "sessions sync rejected (fingerprint mismatch); stopping", {
           status: response.status,
         });
@@ -670,8 +677,18 @@ async function collectEditedFiles(
   // moment a session goes terminal. Scanning tool calls for completed/errored
   // sessions would make this 10s pulse scale with the daemon's entire
   // history instead of what's currently running.
+  // Live set must match the host's reconcile statuses and Studio's conflict
+  // query (`active`, `streaming`, `idle`, `waiting`) — omitting `active` here
+  // would send active sessions with empty workingFiles, so a concurrent edit
+  // from an `active` session never reaches the conflict banner.
   const liveSessionIds = sessions
-    .filter((s) => s.status === "idle" || s.status === "streaming" || s.status === "waiting")
+    .filter(
+      (s) =>
+        s.status === "active" ||
+        s.status === "idle" ||
+        s.status === "streaming" ||
+        s.status === "waiting",
+    )
     .map((s) => s.sessionId);
   if (liveSessionIds.length === 0) return new Map();
 
