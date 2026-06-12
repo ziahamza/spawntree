@@ -23,12 +23,16 @@ export const Route = createFileRoute("/cleanup")({
 });
 
 type ActionKind = "remove" | "clean";
+type LastAction = {
+  kind: ActionKind;
+  result: CleanupActionResult;
+};
 
 function CleanupPage() {
   const { data, isLoading, error, refetch, isFetching } = useWorktreeCleanup();
   const removeWorktrees = useRemoveCleanupWorktrees();
   const cleanIgnored = useCleanIgnoredWorktreeArtifacts();
-  const [lastAction, setLastAction] = useState<CleanupActionResult | null>(null);
+  const [lastAction, setLastAction] = useState<LastAction | null>(null);
 
   const items = data?.items ?? [];
   const mergedClean = useMemo(
@@ -53,7 +57,7 @@ function CleanupPage() {
       kind === "remove"
         ? await removeWorktrees.mutateAsync(paths)
         : await cleanIgnored.mutateAsync(paths);
-    setLastAction(result);
+    setLastAction({ kind, result });
   }
 
   const busy = removeWorktrees.isPending || cleanIgnored.isPending;
@@ -157,7 +161,7 @@ function CleanupPage() {
             )}
           </div>
 
-          {lastAction && <ActionResult result={lastAction} />}
+          {lastAction && <ActionResult action={lastAction} />}
 
           <RepoActionTable repos={data.repos} items={items} busy={busy} onRunAction={runAction} />
 
@@ -546,7 +550,9 @@ function MiniAction({
   );
 }
 
-function ActionResult({ result }: { result: CleanupActionResult }) {
+function ActionResult({ action }: { action: LastAction }) {
+  const { result } = action;
+  const label = action.kind === "remove" ? "Removed" : "Cleaned";
   const failed = result.results.filter((item) => !item.ok);
   return (
     <div
@@ -555,7 +561,7 @@ function ActionResult({ result }: { result: CleanupActionResult }) {
       }`}
     >
       <div className="font-medium text-foreground">
-        Freed {formatBytes(result.freedBytes)}
+        {label} {formatBytes(result.freedBytes)}
         {failed.length > 0 ? ` - ${failed.length} failed` : ""}
       </div>
       {failed.length > 0 && (
