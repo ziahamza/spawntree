@@ -285,7 +285,8 @@ export function useWorktreeCleanup() {
 export function useRemoveCleanupWorktrees() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (paths: Array<string>) => api.removeCleanupWorktrees({ paths }),
+    mutationFn: (paths: ReadonlyArray<string>) =>
+      api.removeCleanupWorktrees({ paths: Array.from(paths) }),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
       void queryClient.invalidateQueries({ queryKey: ["cleanup", "worktrees"] });
@@ -296,7 +297,8 @@ export function useRemoveCleanupWorktrees() {
 export function useCleanIgnoredWorktreeArtifacts() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (paths: Array<string>) => api.cleanIgnoredWorktreeArtifacts({ paths }),
+    mutationFn: (paths: ReadonlyArray<string>) =>
+      api.cleanIgnoredWorktreeArtifacts({ paths: Array.from(paths) }),
     onSuccess: () => {
       invalidateAppQueries(queryClient);
       void queryClient.invalidateQueries({ queryKey: ["cleanup", "worktrees"] });

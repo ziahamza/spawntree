@@ -45,7 +45,7 @@ function CleanupPage() {
     [items],
   );
 
-  async function runAction(kind: ActionKind, paths: Array<string>) {
+  async function runAction(kind: ActionKind, paths: ReadonlyArray<string>) {
     if (paths.length === 0) {
       return;
     }
@@ -271,10 +271,10 @@ function RepoActionTable({
   busy,
   onRunAction,
 }: {
-  repos: Array<CleanupRepoSummary>;
-  items: Array<CleanupWorktree>;
+  repos: ReadonlyArray<CleanupRepoSummary>;
+  items: ReadonlyArray<CleanupWorktree>;
   busy: boolean;
-  onRunAction: (kind: ActionKind, paths: Array<string>) => Promise<void>;
+  onRunAction: (kind: ActionKind, paths: ReadonlyArray<string>) => Promise<void>;
 }) {
   if (repos.length === 0) {
     return null;
@@ -375,11 +375,11 @@ function WorktreeSection({
 }: {
   title: string;
   icon: React.ReactNode;
-  items: Array<CleanupWorktree>;
+  items: ReadonlyArray<CleanupWorktree>;
   primaryBytes: "full" | "ignored";
   empty: string;
   busy: boolean;
-  onRunAction: (kind: ActionKind, paths: Array<string>) => Promise<void>;
+  onRunAction: (kind: ActionKind, paths: ReadonlyArray<string>) => Promise<void>;
 }) {
   const sorted = [...items].sort((left, right) => {
     const rightBytes = primaryBytes === "full" ? right.fullSizeBytes : right.ignoredSizeBytes;
@@ -430,7 +430,7 @@ function WorktreeRow({
 }: {
   item: CleanupWorktree;
   busy: boolean;
-  onRunAction: (kind: ActionKind, paths: Array<string>) => Promise<void>;
+  onRunAction: (kind: ActionKind, paths: ReadonlyArray<string>) => Promise<void>;
 }) {
   const action =
     item.canRemove || item.canCleanIgnored ? (
