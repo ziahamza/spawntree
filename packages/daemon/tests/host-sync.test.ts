@@ -2,9 +2,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { localStorageProvider, StorageRegistry } from "spawntree-core";
+import { localStorageProvider, schema, StorageRegistry } from "spawntree-core";
+import { drizzle } from "drizzle-orm/libsql";
+import { eq } from "drizzle-orm";
 import { StorageManager } from "../src/storage/manager.ts";
 import { HostConfigSync } from "../src/storage/host-sync.ts";
+import { applyCatalogSchema } from "../src/catalog/queries.ts";
 
 /**
  * Cover the daemon-side host-config-sync loop with a stubbed `fetch`:
@@ -578,6 +581,186 @@ describe("HostConfigSync", () => {
     expect(resolved).toBe(false);
 
     await new Promise((r) => setTimeout(r, 100));
+    await sync.stop();
+  });
+});
+
+/**
+ * Bounded session sync (the watermark). syncSessions must:
+ *   - ALWAYS send live sessions, however old their updatedAt is — the host
+ *     reconcile terminates any live ai_sessions row absent from a snapshot,
+ *     so omitting one would false-terminate it.
+ *   - send sessions changed since the last confirmed sync, so completions and
+ *     short-lived sessions still reach the org session list.
+ *   - NOT resend ancient terminal sessions every 10s pulse (the bound).
+ *   - advance the watermark only on a 2xx, so a failed/skipped pulse re-sends
+ *     the same window rather than dropping a change.
+ */
+describe("HostConfigSync — bounded session sync", () => {
+  let tmp: string;
+  let manager: StorageManager;
+
+  const BINDING = { url: "http://controller:7777", key: TEST_KEY };
+  const SYNC_URL = "http://controller:7777/api/daemons/me/sessions/sync";
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  interface SyncedPayload {
+    sessions: Array<{ sourceId: string; status: string }>;
+  }
+
+  function ok(body: unknown = { synced: 0 }): Response {
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  /** Captures the JSON body of every POST to the sessions-sync endpoint. */
+  function makeSessionsSyncFetch(responses: Array<Response>): {
+    fetch: typeof fetch;
+    bodies: Array<SyncedPayload>;
+  } {
+    const bodies: Array<SyncedPayload> = [];
+    let i = 0;
+    const stub: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === SYNC_URL) {
+        const raw = typeof init?.body === "string" ? init.body : "{}";
+        bodies.push(JSON.parse(raw) as SyncedPayload);
+      }
+      return responses[i++] ?? responses[responses.length - 1]!;
+    };
+    return { fetch: stub, bodies };
+  }
+
+  async function seed(
+    rows: Array<{ sessionId: string; status: string; updatedAt: string }>,
+  ): Promise<void> {
+    const db = drizzle(manager.client, { schema });
+    await db.insert(schema.sessions).values(
+      rows.map((r) => ({
+        sessionId: r.sessionId,
+        provider: "fake",
+        status: r.status,
+        workingDirectory: "/tmp/x",
+        updatedAt: r.updatedAt,
+      })),
+    );
+  }
+
+  const sentIds = (p: SyncedPayload | undefined): Array<string> =>
+    (p?.sessions ?? []).map((s) => s.sourceId).sort();
+
+  function newSync(fetch: typeof fetch): HostConfigSync {
+    return new HostConfigSync({
+      binding: BINDING,
+      manager,
+      fetch,
+      sessionsSyncIntervalMs: 60_000,
+      logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
+    });
+  }
+
+  beforeEach(async () => {
+    tmp = mkdtempSync(resolve(tmpdir(), "spawntree-sessions-sync-"));
+    const registry = new StorageRegistry();
+    registry.registerPrimary(localStorageProvider);
+    manager = new StorageManager({ dataDir: tmp, logger: () => undefined, registry });
+    await manager.start();
+    // StorageManager.start() opens the primary DB but does NOT create the
+    // catalog tables — SessionManager.start() normally does that. We don't
+    // use a SessionManager here, so bootstrap the schema directly.
+    await applyCatalogSchema(manager.client);
+  });
+
+  afterEach(async () => {
+    await manager.stop();
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("always sends live sessions of any age + recently-changed terminals, but bounds out ancient terminal ones", async () => {
+    const ancient = "2020-01-01T00:00:00.000Z";
+    const recent = new Date(Date.now() - 1_000).toISOString();
+    await seed([
+      { sessionId: "live-old", status: "active", updatedAt: ancient },
+      { sessionId: "done-old", status: "completed", updatedAt: ancient },
+      { sessionId: "done-recent", status: "completed", updatedAt: recent },
+    ]);
+
+    const { fetch, bodies } = makeSessionsSyncFetch([ok({ synced: 2 })]);
+    const sync = newSync(fetch);
+    await sync.syncSessionsNow();
+    await sync.stop();
+
+    expect(bodies).toHaveLength(1);
+    // live-old: live → always sent despite a 2020 timestamp (otherwise the
+    // host reconcile would false-terminate it). done-recent: terminal but
+    // inside the restart backfill window. done-old: ancient terminal → bounded.
+    expect(sentIds(bodies[0])).toEqual(["done-recent", "live-old"]);
+  });
+
+  it("delivers a session that completes between pulses exactly once, then stops re-sending it", async () => {
+    await seed([
+      { sessionId: "s1", status: "active", updatedAt: new Date(Date.now() - 1_000).toISOString() },
+    ]);
+
+    const { fetch, bodies } = makeSessionsSyncFetch([ok(), ok(), ok()]);
+    const sync = newSync(fetch);
+
+    // Pulse 1: s1 is live → sent; the watermark advances past now.
+    await sync.syncSessionsNow();
+    expect(sentIds(bodies[0])).toEqual(["s1"]);
+
+    // s1 completes strictly AFTER pulse 1's committed watermark.
+    await sleep(20);
+    const db = drizzle(manager.client, { schema });
+    await db
+      .update(schema.sessions)
+      .set({ status: "completed", updatedAt: new Date().toISOString() })
+      .where(eq(schema.sessions.sessionId, "s1"));
+    await sleep(20);
+
+    // Pulse 2: the completion is newer than (cutoff = pulse-1 watermark) → it
+    // is delivered once, now terminal.
+    await sync.syncSessionsNow();
+    expect(sentIds(bodies[1])).toEqual(["s1"]);
+    expect(bodies[1]?.sessions[0]?.status).toBe("completed");
+
+    // Pulse 3: s1 is terminal and older than (cutoff = pulse-2 watermark) →
+    // not re-sent. Steady-state payload tracks current activity, not history.
+    await sleep(20);
+    await sync.syncSessionsNow();
+    expect(sentIds(bodies[2])).toEqual([]);
+
+    await sync.stop();
+  });
+
+  it("does not advance the watermark on a failed POST, so the change is re-sent next pulse", async () => {
+    await seed([
+      {
+        sessionId: "done",
+        status: "completed",
+        updatedAt: new Date(Date.now() - 1_000).toISOString(),
+      },
+    ]);
+
+    const { fetch, bodies } = makeSessionsSyncFetch([
+      new Response("upstream", { status: 503 }),
+      ok(),
+    ]);
+    const sync = newSync(fetch);
+
+    // Pulse 1 (503): recently-completed `done` is in the backfill window → sent,
+    // but the failure must NOT commit the watermark.
+    await sync.syncSessionsNow();
+    expect(sentIds(bodies[0])).toEqual(["done"]);
+
+    // Pulse 2 (200): because the watermark never advanced, `done` is still
+    // inside the window and is re-delivered rather than silently dropped.
+    await sync.syncSessionsNow();
+    expect(sentIds(bodies[1])).toEqual(["done"]);
+
     await sync.stop();
   });
 });

@@ -1,7 +1,7 @@
 import type { Client as LibSqlClient } from "@libsql/client";
 import type { StorageConfig } from "spawntree-core";
 import { schema as catalogSchema } from "spawntree-core";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import type { HostBinding } from "../state/global-state.ts";
 import type { StorageManager } from "./manager.ts";
@@ -93,6 +93,25 @@ const DEFAULT_PRESENCE_MS = 30 * 1000;
 const DEFAULT_SESSIONS_SYNC_MS = 10 * 1000;
 const DEFAULT_BACKOFF_MS: ReadonlyArray<number> = [5_000, 30_000, 2 * 60_000, 10 * 60_000];
 
+/**
+ * Statuses the host treats as "live" — mirrors the host reconcile set
+ * (packages/host/src/routes/spawntree.ts) and Studio's conflict query. A live
+ * session must ALWAYS be in the sync snapshot: the host marks any live
+ * ai_sessions row ABSENT from a snapshot as completed, so omitting one would
+ * false-terminate it. The daemon's own catalog uses `active`; the rest are
+ * accepted for parity with the host-side status vocabulary.
+ */
+const LIVE_SESSION_STATUSES = ["active", "streaming", "idle", "waiting"];
+
+/**
+ * On the first session sync after a daemon (re)start the in-memory watermark
+ * is unknown, so terminal sessions changed within this window are backfilled.
+ * Anything older the host already has terminal (or its reconcile nets it out),
+ * so this bounds the post-restart payload instead of resending the daemon's
+ * entire historical catalog.
+ */
+const SESSIONS_SYNC_RESTART_BACKFILL_MS = 5 * 60 * 1000;
+
 export class HostConfigSync {
   private readonly binding: HostBinding;
   private readonly manager: StorageManager;
@@ -116,6 +135,11 @@ export class HostConfigSync {
   private terminal = false;
   private consecutiveErrors = 0;
   private cachedFingerprint: string | null = null;
+  // Incremental watermark for session sync: the timestamp of the last
+  // CONFIRMED (2xx) sync. Each pulse sends live sessions plus anything changed
+  // since this point, so steady-state cost tracks current activity, not the
+  // daemon's entire history. `undefined` until the first sync seeds it.
+  private sessionsSyncWatermark: string | undefined;
 
   constructor(options: HostConfigSyncOptions) {
     this.binding = options.binding;
@@ -190,6 +214,12 @@ export class HostConfigSync {
   async refreshNow(): Promise<void> {
     if (this.stopped) return;
     await this.tick();
+  }
+
+  /** Force a session sync now. Returns when the POST completes (success or fail). */
+  async syncSessionsNow(): Promise<void> {
+    if (this.stopped) return;
+    await this.syncSessions();
   }
 
   // ─── private ───────────────────────────────────────────────────────────
@@ -560,11 +590,34 @@ export class HostConfigSync {
       return;
     }
 
+    // Bound the snapshot so the 10s pulse doesn't grow with the daemon's
+    // entire history. Always include live sessions (the host reconcile
+    // terminates any live row absent from a snapshot, so they must never be
+    // omitted), plus anything changed since the last confirmed sync — which
+    // catches completions and short-lived sessions for the org session list.
+    // `nextWatermark` is captured before the read and only committed on a 2xx
+    // below, so a failed or skipped pulse never drops a change.
+    if (this.sessionsSyncWatermark === undefined) {
+      this.sessionsSyncWatermark = new Date(
+        Date.now() - SESSIONS_SYNC_RESTART_BACKFILL_MS,
+      ).toISOString();
+    }
+    const cutoff = this.sessionsSyncWatermark;
+    const nextWatermark = nowIso();
+
     let sessions: Array<typeof catalogSchema.sessions.$inferSelect>;
     let filesBySession = new Map<string, string[]>();
     try {
       const db = drizzle(client, { schema: catalogSchema });
-      sessions = await db.select().from(catalogSchema.sessions);
+      sessions = await db
+        .select()
+        .from(catalogSchema.sessions)
+        .where(
+          or(
+            inArray(catalogSchema.sessions.status, LIVE_SESSION_STATUSES),
+            gte(catalogSchema.sessions.updatedAt, cutoff),
+          ),
+        );
       filesBySession = await collectEditedFiles(db, sessions);
     } catch {
       // Catalog table not bootstrapped yet — skip this cycle.
@@ -626,6 +679,12 @@ export class HostConfigSync {
         });
         return;
       }
+      if (response.ok) {
+        // Commit the watermark only on a confirmed sync. A failed POST leaves
+        // it untouched so the same window is re-sent next pulse, and skipped
+        // cycles never advance it — no change is ever dropped.
+        this.sessionsSyncWatermark = nextWatermark;
+      }
       // Any non-2xx is a transient error — stay on the steady cadence.
     } catch {
       // Network blip — stay on cadence, no backoff.
@@ -678,17 +737,11 @@ async function collectEditedFiles(
   // sessions would make this 10s pulse scale with the daemon's entire
   // history instead of what's currently running.
   // Live set must match the host's reconcile statuses and Studio's conflict
-  // query (`active`, `streaming`, `idle`, `waiting`) — omitting `active` here
-  // would send active sessions with empty workingFiles, so a concurrent edit
-  // from an `active` session never reaches the conflict banner.
+  // query (LIVE_SESSION_STATUSES) — omitting `active` here would send active
+  // sessions with empty workingFiles, so a concurrent edit from an `active`
+  // session never reaches the conflict banner.
   const liveSessionIds = sessions
-    .filter(
-      (s) =>
-        s.status === "active" ||
-        s.status === "idle" ||
-        s.status === "streaming" ||
-        s.status === "waiting",
-    )
+    .filter((s) => LIVE_SESSION_STATUSES.includes(s.status))
     .map((s) => s.sessionId);
   if (liveSessionIds.length === 0) return new Map();
 
