@@ -1,7 +1,8 @@
 import { Effect, Layer, ServiceMap } from "effect";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import {
   type AddFolderProbeResult,
   type AddFolderRequest,
@@ -54,6 +55,13 @@ import {
   type WebRepo,
   type WebRepoDetailResponse,
   type WebRepoTreeResponse,
+  type WorktreeCleanupActionResult,
+  type WorktreeCleanupActionRequest,
+  type WorktreeCleanupActionResponse,
+  type WorktreeCleanupCategory,
+  type WorktreeCleanupItem,
+  type WorktreeCleanupResponse,
+  type WorktreeCleanupSource,
   type Worktree,
 } from "spawntree-core";
 import {
@@ -107,6 +115,20 @@ import type { StorageManager } from "../storage/manager.ts";
 const VERSION = "0.4.0";
 const WATCHED_PATH_RESCAN_INTERVAL_MS = 5 * 60 * 1000;
 type DaemonError = BadRequestError | ConflictError | InternalError | NotFoundError;
+type CleanupActionResultRow = WorktreeCleanupActionResult;
+
+interface MutableCleanupRepoSummary {
+  repoId: string;
+  repoSlug: string;
+  repoName: string;
+  worktreeCount: number;
+  mergedCleanCount: number;
+  mergedDirtyCount: number;
+  unmergedCount: number;
+  protectedCount: number;
+  removableBytes: number;
+  ignoredBytes: number;
+}
 
 interface PreviewSession {
   previewId: string;
@@ -163,6 +185,13 @@ export class DaemonService extends ServiceMap.Service<
       repoSlug: string,
       request: ArchiveWorktreeRequest,
     ): Effect.Effect<void, DaemonError>;
+    analyzeWorktreeCleanup(): Effect.Effect<WorktreeCleanupResponse, DaemonError>;
+    removeCleanupWorktrees(
+      request: WorktreeCleanupActionRequest,
+    ): Effect.Effect<WorktreeCleanupActionResponse, DaemonError>;
+    cleanIgnoredWorktreeArtifacts(
+      request: WorktreeCleanupActionRequest,
+    ): Effect.Effect<WorktreeCleanupActionResponse, DaemonError>;
     suggestConfig(request: ConfigSuggestRequest): Effect.Effect<ConfigSuggestResponse, DaemonError>;
     testConfig(request: ConfigTestRequest): Effect.Effect<ConfigTestResponse, DaemonError>;
     startConfigPreview(
@@ -889,6 +918,41 @@ export class DaemonService extends ServiceMap.Service<
           publish({ type: "repo.updated", repoSlug: repoSlugValue });
         });
 
+        const analyzeWorktreeCleanup = Effect.fn("DaemonService.analyzeWorktreeCleanup")(
+          function* () {
+            return yield* Effect.tryPromise({
+              try: () => analyzeWorktreeCleanupAsync(catalog, envManager),
+              catch: (error) => mapInternalError("WORKTREE_CLEANUP_ANALYSIS_FAILED", error),
+            });
+          },
+        );
+
+        const removeCleanupWorktrees = Effect.fn("DaemonService.removeCleanupWorktrees")(function* (
+          request: WorktreeCleanupActionRequest,
+        ) {
+          const response: WorktreeCleanupActionResponse = yield* Effect.tryPromise({
+            try: () => removeCleanupWorktreesAsync(catalog, envManager, request.paths),
+            catch: (error) => mapInternalError("WORKTREE_CLEANUP_REMOVE_FAILED", error),
+          });
+          if (response.results.some((result: CleanupActionResultRow) => result.ok)) {
+            publish({ type: "repo.updated" });
+          }
+          return response;
+        });
+
+        const cleanIgnoredWorktreeArtifacts = Effect.fn(
+          "DaemonService.cleanIgnoredWorktreeArtifacts",
+        )(function* (request: WorktreeCleanupActionRequest) {
+          const response: WorktreeCleanupActionResponse = yield* Effect.tryPromise({
+            try: () => cleanIgnoredWorktreeArtifactsAsync(catalog, envManager, request.paths),
+            catch: (error) => mapInternalError("WORKTREE_CLEANUP_IGNORED_FAILED", error),
+          });
+          if (response.results.some((result: CleanupActionResultRow) => result.ok)) {
+            publish({ type: "repo.updated" });
+          }
+          return response;
+        });
+
         const suggestConfigEffect = Effect.fn("DaemonService.suggestConfig")(function* (
           request: ConfigSuggestRequest,
         ) {
@@ -1055,6 +1119,9 @@ export class DaemonService extends ServiceMap.Service<
           relinkClone,
           deleteClone,
           archiveWorktree,
+          analyzeWorktreeCleanup,
+          removeCleanupWorktrees,
+          cleanIgnoredWorktreeArtifacts,
           suggestConfig: suggestConfigEffect,
           testConfig,
           startConfigPreview,
@@ -1557,6 +1624,484 @@ function normalizeRepoPath(repoPath: string) {
     try: () => normalizeInputPath(repoPath),
     catch: (error) => new BadRequestError({ code: "INVALID_REPO_PATH", message: toMessage(error) }),
   });
+}
+
+async function analyzeWorktreeCleanupAsync(
+  catalog: CatalogDb,
+  envManager: EnvManager,
+): Promise<WorktreeCleanupResponse> {
+  const repos = await catalog
+    .select()
+    .from(reposTable)
+    .orderBy(asc(reposTable.name), asc(reposTable.slug));
+  const items: Array<WorktreeCleanupItem> = [];
+
+  for (const repo of repos) {
+    const clones = await catalog
+      .select()
+      .from(clonesTable)
+      .where(eq(clonesTable.repoId, repo.id))
+      .orderBy(asc(clonesTable.registeredAt));
+    for (const clone of clones) {
+      await syncCloneWorktreesAsync(catalog, clone);
+    }
+
+    const repoEnvs = await listRepoEnvsForRepo(catalog, envManager, repo);
+    const envCounts = new Map<string, number>();
+    for (const env of repoEnvs) {
+      envCounts.set(env.repoPath, (envCounts.get(env.repoPath) ?? 0) + 1);
+    }
+
+    for (const clone of clones) {
+      const worktrees = await catalog
+        .select()
+        .from(worktreesTable)
+        .where(eq(worktreesTable.cloneId, clone.id))
+        .orderBy(asc(worktreesTable.path));
+
+      for (const worktree of worktrees) {
+        if (resolve(worktree.path) === resolve(clone.path)) {
+          continue;
+        }
+        if (!existsSync(worktree.path)) {
+          continue;
+        }
+
+        try {
+          const envCount = envCounts.get(worktree.path) ?? 0;
+          const gitInfo = inspectGitPath(worktree.path, repo.defaultBranch, envCount > 0);
+          const lock = gitWorktreeLock(worktree.path);
+          const fullSizeBytes = diskUsageBytes(worktree.path);
+          const ignoredSizeBytes = ignoredArtifactBytes(worktree.path);
+          const blockedReasons = worktreeRemoveBlockers(gitInfo, envCount, lock.locked);
+          const canRemove = blockedReasons.length === 0;
+          const canCleanIgnored = ignoredSizeBytes > 0 && envCount === 0 && !lock.locked;
+          const category = cleanupCategory(gitInfo, canRemove);
+
+          items.push({
+            repoId: repo.id,
+            repoSlug: repo.slug,
+            repoName: repo.name || repo.slug,
+            cloneId: clone.id,
+            clonePath: clone.path,
+            path: worktree.path,
+            branch: gitInfo.branch || worktree.branch || "detached",
+            headRef: gitInfo.headRef || worktree.headRef,
+            baseRefName: gitInfo.baseRefName,
+            source: cleanupSource(worktree.path),
+            category,
+            discoveredAt: worktree.discoveredAt,
+            activityAt: gitInfo.activityAt,
+            fullSizeBytes,
+            ignoredSizeBytes,
+            envCount,
+            insertions: gitInfo.insertions,
+            deletions: gitInfo.deletions,
+            hasUncommittedChanges: gitInfo.hasUncommittedChanges,
+            isMergedIntoBase: gitInfo.isMergedIntoBase,
+            isBaseOutOfDate: gitInfo.isBaseOutOfDate,
+            locked: lock.locked,
+            lockedReason: lock.reason,
+            canRemove,
+            canCleanIgnored,
+            blockedReasons,
+          });
+        } catch (error) {
+          logDaemonMessage("worktree cleanup skipped path", {
+            path: worktree.path,
+            error: toMessage(error),
+          });
+        }
+      }
+    }
+  }
+
+  items.sort(
+    (left, right) =>
+      Math.max(right.canRemove ? right.fullSizeBytes : 0, right.ignoredSizeBytes) -
+      Math.max(left.canRemove ? left.fullSizeBytes : 0, left.ignoredSizeBytes),
+  );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    totals: cleanupTotals(items),
+    repos: cleanupRepoSummaries(items),
+    items,
+  };
+}
+
+async function removeCleanupWorktreesAsync(
+  catalog: CatalogDb,
+  envManager: EnvManager,
+  paths: ReadonlyArray<string>,
+): Promise<WorktreeCleanupActionResponse> {
+  const report = await analyzeWorktreeCleanupAsync(catalog, envManager);
+  const itemsByPath = cleanupItemsByPath(report.items);
+  const results: Array<CleanupActionResultRow> = [];
+
+  for (const path of uniqueAbsolutePaths(paths)) {
+    const item = itemsByPath.get(path);
+    if (!item) {
+      results.push({
+        path,
+        ok: false,
+        freedBytes: 0,
+        message: "Worktree is not in the current cleanup report.",
+      });
+      continue;
+    }
+    if (!item.canRemove) {
+      results.push({
+        path,
+        ok: false,
+        freedBytes: 0,
+        message: `Blocked: ${item.blockedReasons.join(", ") || "not removable"}.`,
+      });
+      continue;
+    }
+
+    try {
+      removeGitWorktree(item.path);
+      const clone = await getCloneByIdAsync(catalog, item.cloneId);
+      await syncCloneWorktreesAsync(catalog, clone);
+      results.push({
+        path: item.path,
+        ok: true,
+        freedBytes: item.fullSizeBytes,
+        message: "Removed worktree.",
+      });
+    } catch (error) {
+      results.push({
+        path: item.path,
+        ok: false,
+        freedBytes: 0,
+        message: toMessage(error),
+      });
+    }
+  }
+
+  return cleanupActionResponse(results);
+}
+
+async function cleanIgnoredWorktreeArtifactsAsync(
+  catalog: CatalogDb,
+  envManager: EnvManager,
+  paths: ReadonlyArray<string>,
+): Promise<WorktreeCleanupActionResponse> {
+  const report = await analyzeWorktreeCleanupAsync(catalog, envManager);
+  const itemsByPath = cleanupItemsByPath(report.items);
+  const results: Array<CleanupActionResultRow> = [];
+
+  for (const path of uniqueAbsolutePaths(paths)) {
+    const item = itemsByPath.get(path);
+    if (!item) {
+      results.push({
+        path,
+        ok: false,
+        freedBytes: 0,
+        message: "Worktree is not in the current cleanup report.",
+      });
+      continue;
+    }
+    if (!item.canCleanIgnored) {
+      const reason = item.locked
+        ? "worktree is locked"
+        : item.envCount > 0
+          ? "worktree has environments"
+          : "no ignored artifacts";
+      results.push({
+        path: item.path,
+        ok: false,
+        freedBytes: 0,
+        message: `Blocked: ${reason}.`,
+      });
+      continue;
+    }
+
+    try {
+      cleanIgnoredArtifacts(item.path);
+      results.push({
+        path: item.path,
+        ok: true,
+        freedBytes: item.ignoredSizeBytes,
+        message: "Cleaned ignored artifacts.",
+      });
+    } catch (error) {
+      results.push({
+        path: item.path,
+        ok: false,
+        freedBytes: 0,
+        message: toMessage(error),
+      });
+    }
+  }
+
+  return cleanupActionResponse(results);
+}
+
+async function getCloneByIdAsync(catalog: CatalogDb, cloneId: string): Promise<Clone> {
+  const [clone] = await catalog
+    .select()
+    .from(clonesTable)
+    .where(eq(clonesTable.id, cloneId))
+    .limit(1);
+  if (!clone) {
+    throw new Error(`Clone "${cloneId}" not found`);
+  }
+  return clone;
+}
+
+function cleanupTotals(items: Array<WorktreeCleanupItem>): WorktreeCleanupResponse["totals"] {
+  return items.reduce(
+    (total, item) => ({
+      worktreeCount: total.worktreeCount + 1,
+      mergedCleanCount: total.mergedCleanCount + (item.category === "merged-clean" ? 1 : 0),
+      mergedDirtyCount: total.mergedDirtyCount + (item.category === "merged-dirty" ? 1 : 0),
+      unmergedCount: total.unmergedCount + (item.category === "unmerged" ? 1 : 0),
+      protectedCount: total.protectedCount + (item.category === "protected" ? 1 : 0),
+      removableBytes: total.removableBytes + (item.canRemove ? item.fullSizeBytes : 0),
+      ignoredBytes: total.ignoredBytes + (item.canCleanIgnored ? item.ignoredSizeBytes : 0),
+    }),
+    {
+      worktreeCount: 0,
+      mergedCleanCount: 0,
+      mergedDirtyCount: 0,
+      unmergedCount: 0,
+      protectedCount: 0,
+      removableBytes: 0,
+      ignoredBytes: 0,
+    },
+  );
+}
+
+function cleanupRepoSummaries(items: Array<WorktreeCleanupItem>): WorktreeCleanupResponse["repos"] {
+  const summaries = new Map<string, MutableCleanupRepoSummary>();
+
+  for (const item of items) {
+    const current = summaries.get(item.repoId) ?? {
+      repoId: item.repoId,
+      repoSlug: item.repoSlug,
+      repoName: item.repoName,
+      worktreeCount: 0,
+      mergedCleanCount: 0,
+      mergedDirtyCount: 0,
+      unmergedCount: 0,
+      protectedCount: 0,
+      removableBytes: 0,
+      ignoredBytes: 0,
+    };
+
+    current.worktreeCount += 1;
+    current.mergedCleanCount += item.category === "merged-clean" ? 1 : 0;
+    current.mergedDirtyCount += item.category === "merged-dirty" ? 1 : 0;
+    current.unmergedCount += item.category === "unmerged" ? 1 : 0;
+    current.protectedCount += item.category === "protected" ? 1 : 0;
+    current.removableBytes += item.canRemove ? item.fullSizeBytes : 0;
+    current.ignoredBytes += item.canCleanIgnored ? item.ignoredSizeBytes : 0;
+    summaries.set(item.repoId, current);
+  }
+
+  return Array.from(summaries.values()).sort(
+    (left, right) =>
+      Math.max(right.removableBytes, right.ignoredBytes) -
+      Math.max(left.removableBytes, left.ignoredBytes),
+  );
+}
+
+function cleanupActionResponse(
+  results: ReadonlyArray<CleanupActionResultRow>,
+): WorktreeCleanupActionResponse {
+  const freedBytes = results.reduce(
+    (total: number, result: CleanupActionResultRow) => total + result.freedBytes,
+    0,
+  );
+  return {
+    ok: results.every((result: CleanupActionResultRow) => result.ok),
+    freedBytes,
+    results: [...results],
+  };
+}
+
+function cleanupItemsByPath(
+  items: ReadonlyArray<WorktreeCleanupItem>,
+): Map<string, WorktreeCleanupItem> {
+  const byPath = new Map<string, WorktreeCleanupItem>();
+  for (const item of items) {
+    byPath.set(resolve(item.path), item);
+  }
+  return byPath;
+}
+
+function worktreeRemoveBlockers(
+  gitInfo: GitPathInfo,
+  envCount: number,
+  locked: boolean,
+): Array<string> {
+  const blockers: Array<string> = [];
+  if (!gitInfo.isMergedIntoBase) blockers.push("not merged");
+  if (gitInfo.hasUncommittedChanges) blockers.push("dirty");
+  if (envCount > 0) blockers.push("has environments");
+  if (locked) blockers.push("locked");
+  if (gitInfo.isBaseBranch) blockers.push("base branch");
+  return blockers;
+}
+
+function cleanupCategory(gitInfo: GitPathInfo, canRemove: boolean): WorktreeCleanupCategory {
+  if (canRemove) return "merged-clean";
+  if (!gitInfo.isMergedIntoBase) return "unmerged";
+  if (gitInfo.hasUncommittedChanges) return "merged-dirty";
+  return "protected";
+}
+
+function cleanupSource(path: string): WorktreeCleanupSource {
+  const normalized = path.replaceAll("\\", "/");
+  if (normalized.includes("/.codex/worktrees/") || normalized.includes("/Documents/Codex/")) {
+    return "codex";
+  }
+  if (normalized.includes("/.claude/worktrees/") || normalized.includes("/repos/claude/")) {
+    return "claude";
+  }
+  if (normalized.includes("/.spawntree/")) {
+    return "spawntree";
+  }
+  if (normalized.includes("/.git/worktrees/")) {
+    return "git";
+  }
+  return "unknown";
+}
+
+function uniqueAbsolutePaths(paths: ReadonlyArray<string>): Array<string> {
+  const seen = new Set<string>();
+  for (const path of paths) {
+    if (path.trim().length === 0) {
+      continue;
+    }
+    seen.add(resolve(path));
+  }
+  return Array.from(seen.values());
+}
+
+function diskUsageBytes(path: string): number {
+  if (!existsSync(path)) {
+    return 0;
+  }
+  try {
+    const output = execFileSync("du", ["-sk", path], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 120_000,
+    }).trim();
+    const kib = Number.parseInt(output.split(/\s+/)[0] ?? "0", 10);
+    return Number.isFinite(kib) ? kib * 1024 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function ignoredArtifactBytes(path: string): number {
+  const candidates = ignoredArtifactCandidates(path);
+  return candidates.reduce((total, candidate) => total + diskUsageBytes(candidate), 0);
+}
+
+function ignoredArtifactCandidates(path: string): Array<string> {
+  const output = gitCleanDryRun(path);
+  const root = resolve(path);
+  const candidates: Array<string> = [];
+
+  for (const line of output.split("\n")) {
+    const prefix = "Would remove ";
+    if (!line.startsWith(prefix)) {
+      continue;
+    }
+    const relativePath = unquoteGitCleanPath(line.slice(prefix.length).trim());
+    if (!relativePath) {
+      continue;
+    }
+    const candidate = resolve(root, relativePath);
+    if (!pathIsInside(root, candidate) || !existsSync(candidate)) {
+      continue;
+    }
+    candidates.push(candidate);
+  }
+
+  return removeNestedPaths(candidates);
+}
+
+function gitCleanDryRun(path: string): string {
+  try {
+    return execFileSync("git", ["clean", "-ndX"], {
+      cwd: path,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 120_000,
+    });
+  } catch {
+    return "";
+  }
+}
+
+function cleanIgnoredArtifacts(path: string): void {
+  execFileSync("git", ["clean", "-fdX"], {
+    cwd: path,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 120_000,
+  });
+}
+
+function unquoteGitCleanPath(value: string): string {
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try {
+      return JSON.parse(value) as string;
+    } catch {
+      return value.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\");
+    }
+  }
+  return value;
+}
+
+function removeNestedPaths(paths: Array<string>): Array<string> {
+  const sorted = Array.from(new Set(paths.map((path) => resolve(path)))).sort(
+    (left, right) => left.length - right.length,
+  );
+  const kept: Array<string> = [];
+  for (const path of sorted) {
+    if (kept.some((parent) => pathIsInside(parent, path))) {
+      continue;
+    }
+    kept.push(path);
+  }
+  return kept;
+}
+
+function pathIsInside(parent: string, child: string): boolean {
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function gitWorktreeLock(path: string): { locked: boolean; reason?: string } {
+  try {
+    const output = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: path,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 10_000,
+    });
+    let currentPath = "";
+    for (const line of output.split("\n")) {
+      if (line.startsWith("worktree ")) {
+        currentPath = resolve(line.slice("worktree ".length));
+        continue;
+      }
+      if (currentPath === resolve(path) && line.startsWith("locked")) {
+        const reason = line.slice("locked".length).trim();
+        return { locked: true, reason: reason || undefined };
+      }
+    }
+    return { locked: false };
+  } catch {
+    return { locked: false };
+  }
 }
 
 function runConfigTest(repoPath: string, content: string): ConfigTestResponse {

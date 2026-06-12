@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from "./routes/__root";
 import { Route as InfraRouteImport } from "./routes/infra";
+import { Route as CleanupRouteImport } from "./routes/cleanup";
 import { Route as IndexRouteImport } from "./routes/index";
 import { Route as SessionsIndexRouteImport } from "./routes/sessions.index";
 import { Route as SessionsIdRouteImport } from "./routes/sessions.$id";
@@ -19,6 +20,11 @@ import { Route as ReposSlugEnvsEnvIdRouteImport } from "./routes/repos.$slug.env
 const InfraRoute = InfraRouteImport.update({
   id: "/infra",
   path: "/infra",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const CleanupRoute = CleanupRouteImport.update({
+  id: "/cleanup",
+  path: "/cleanup",
   getParentRoute: () => rootRouteImport,
 } as any);
 const IndexRoute = IndexRouteImport.update({
@@ -49,6 +55,7 @@ const ReposSlugEnvsEnvIdRoute = ReposSlugEnvsEnvIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute;
+  "/cleanup": typeof CleanupRoute;
   "/infra": typeof InfraRoute;
   "/repos/$slug": typeof ReposSlugRouteWithChildren;
   "/sessions/$id": typeof SessionsIdRoute;
@@ -57,6 +64,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute;
+  "/cleanup": typeof CleanupRoute;
   "/infra": typeof InfraRoute;
   "/repos/$slug": typeof ReposSlugRouteWithChildren;
   "/sessions/$id": typeof SessionsIdRoute;
@@ -66,6 +74,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
   "/": typeof IndexRoute;
+  "/cleanup": typeof CleanupRoute;
   "/infra": typeof InfraRoute;
   "/repos/$slug": typeof ReposSlugRouteWithChildren;
   "/sessions/$id": typeof SessionsIdRoute;
@@ -76,16 +85,25 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
     | "/"
+    | "/cleanup"
     | "/infra"
     | "/repos/$slug"
     | "/sessions/$id"
     | "/sessions/"
     | "/repos/$slug/envs/$envId";
   fileRoutesByTo: FileRoutesByTo;
-  to: "/" | "/infra" | "/repos/$slug" | "/sessions/$id" | "/sessions" | "/repos/$slug/envs/$envId";
+  to:
+    | "/"
+    | "/cleanup"
+    | "/infra"
+    | "/repos/$slug"
+    | "/sessions/$id"
+    | "/sessions"
+    | "/repos/$slug/envs/$envId";
   id:
     | "__root__"
     | "/"
+    | "/cleanup"
     | "/infra"
     | "/repos/$slug"
     | "/sessions/$id"
@@ -95,6 +113,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute;
+  CleanupRoute: typeof CleanupRoute;
   InfraRoute: typeof InfraRoute;
   ReposSlugRoute: typeof ReposSlugRouteWithChildren;
   SessionsIdRoute: typeof SessionsIdRoute;
@@ -108,6 +127,13 @@ declare module "@tanstack/react-router" {
       path: "/infra";
       fullPath: "/infra";
       preLoaderRoute: typeof InfraRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/cleanup": {
+      id: "/cleanup";
+      path: "/cleanup";
+      fullPath: "/cleanup";
+      preLoaderRoute: typeof CleanupRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/": {
@@ -160,6 +186,7 @@ const ReposSlugRouteWithChildren = ReposSlugRoute._addFileChildren(ReposSlugRout
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CleanupRoute: CleanupRoute,
   InfraRoute: InfraRoute,
   ReposSlugRoute: ReposSlugRouteWithChildren,
   SessionsIdRoute: SessionsIdRoute,

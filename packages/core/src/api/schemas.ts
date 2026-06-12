@@ -433,6 +433,108 @@ export const ArchiveWorktreeRequest = Schema.Struct({
 });
 export type ArchiveWorktreeRequest = Schema.Schema.Type<typeof ArchiveWorktreeRequest>;
 
+export const WorktreeCleanupCategory = Schema.Literals([
+  "merged-clean",
+  "merged-dirty",
+  "unmerged",
+  "protected",
+]);
+export type WorktreeCleanupCategory = Schema.Schema.Type<typeof WorktreeCleanupCategory>;
+
+export const WorktreeCleanupSource = Schema.Literals([
+  "claude",
+  "codex",
+  "spawntree",
+  "git",
+  "unknown",
+]);
+export type WorktreeCleanupSource = Schema.Schema.Type<typeof WorktreeCleanupSource>;
+
+export const WorktreeCleanupItem = Schema.Struct({
+  repoId: Schema.String,
+  repoSlug: RepoSlug,
+  repoName: Schema.String,
+  cloneId: CloneId,
+  clonePath: Schema.String,
+  path: Schema.String,
+  branch: Schema.String,
+  headRef: Schema.String,
+  baseRefName: Schema.optional(Schema.String),
+  source: WorktreeCleanupSource,
+  category: WorktreeCleanupCategory,
+  discoveredAt: Schema.String,
+  activityAt: Schema.String,
+  fullSizeBytes: Schema.Number,
+  ignoredSizeBytes: Schema.Number,
+  envCount: Schema.Number,
+  insertions: Schema.Number,
+  deletions: Schema.Number,
+  hasUncommittedChanges: Schema.Boolean,
+  isMergedIntoBase: Schema.Boolean,
+  isBaseOutOfDate: Schema.Boolean,
+  locked: Schema.Boolean,
+  lockedReason: Schema.optional(Schema.String),
+  canRemove: Schema.Boolean,
+  canCleanIgnored: Schema.Boolean,
+  blockedReasons: Schema.Array(Schema.String),
+});
+export type WorktreeCleanupItem = Schema.Schema.Type<typeof WorktreeCleanupItem>;
+
+export const WorktreeCleanupRepoSummary = Schema.Struct({
+  repoId: Schema.String,
+  repoSlug: RepoSlug,
+  repoName: Schema.String,
+  worktreeCount: Schema.Number,
+  mergedCleanCount: Schema.Number,
+  mergedDirtyCount: Schema.Number,
+  unmergedCount: Schema.Number,
+  protectedCount: Schema.Number,
+  removableBytes: Schema.Number,
+  ignoredBytes: Schema.Number,
+});
+export type WorktreeCleanupRepoSummary = Schema.Schema.Type<typeof WorktreeCleanupRepoSummary>;
+
+export const WorktreeCleanupTotals = Schema.Struct({
+  worktreeCount: Schema.Number,
+  mergedCleanCount: Schema.Number,
+  mergedDirtyCount: Schema.Number,
+  unmergedCount: Schema.Number,
+  protectedCount: Schema.Number,
+  removableBytes: Schema.Number,
+  ignoredBytes: Schema.Number,
+});
+export type WorktreeCleanupTotals = Schema.Schema.Type<typeof WorktreeCleanupTotals>;
+
+export const WorktreeCleanupResponse = Schema.Struct({
+  generatedAt: Schema.String,
+  totals: WorktreeCleanupTotals,
+  repos: Schema.Array(WorktreeCleanupRepoSummary),
+  items: Schema.Array(WorktreeCleanupItem),
+});
+export type WorktreeCleanupResponse = Schema.Schema.Type<typeof WorktreeCleanupResponse>;
+
+export const WorktreeCleanupActionRequest = Schema.Struct({
+  paths: Schema.Array(Schema.String),
+});
+export type WorktreeCleanupActionRequest = Schema.Schema.Type<typeof WorktreeCleanupActionRequest>;
+
+export const WorktreeCleanupActionResult = Schema.Struct({
+  path: Schema.String,
+  ok: Schema.Boolean,
+  freedBytes: Schema.Number,
+  message: Schema.String,
+});
+export type WorktreeCleanupActionResult = Schema.Schema.Type<typeof WorktreeCleanupActionResult>;
+
+export const WorktreeCleanupActionResponse = Schema.Struct({
+  ok: Schema.Boolean,
+  freedBytes: Schema.Number,
+  results: Schema.Array(WorktreeCleanupActionResult),
+});
+export type WorktreeCleanupActionResponse = Schema.Schema.Type<
+  typeof WorktreeCleanupActionResponse
+>;
+
 export const ConfigSignal = Schema.Struct({
   kind: Schema.String,
   label: Schema.String,

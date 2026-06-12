@@ -1,6 +1,13 @@
 import * as Collapsible from "@radix-ui/react-collapsible";
 import { Link, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, FolderOpen, FolderTree, GitBranch, MessagesSquare } from "lucide-react";
+import {
+  ChevronRight,
+  FolderOpen,
+  FolderTree,
+  GitBranch,
+  HardDrive,
+  MessagesSquare,
+} from "lucide-react";
 import { useState } from "react";
 import { deriveEnvStatus, useWebRepoTree, useWebRepos } from "../lib/api";
 import type { Clone, EnvListItem, Worktree } from "../lib/api";
@@ -302,6 +309,18 @@ function UtilityLinks({
       >
         <FolderOpen className="w-3 h-3 flex-shrink-0" />
         <span>Infrastructure</span>
+      </Link>
+      <Link
+        to="/cleanup"
+        onClick={onNavigate}
+        className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs transition-colors ${
+          currentPath === "/cleanup"
+            ? "bg-blue/10 text-blue"
+            : "text-muted hover:text-foreground hover:bg-surface"
+        }`}
+      >
+        <HardDrive className="w-3 h-3 flex-shrink-0" />
+        <span>Save space</span>
       </Link>
     </div>
   );
