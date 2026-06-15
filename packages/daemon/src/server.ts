@@ -18,6 +18,7 @@ import {
   RelinkCloneRequest,
   RestoreDbRequest,
   StopInfraRequest,
+  WorktreeCleanupActionRequest,
 } from "spawntree-core";
 import { BadRequestError } from "./errors.ts";
 import { createCatalogRoutes } from "./routes/catalog.ts";
@@ -367,6 +368,32 @@ export function createApp(
       runtime,
       context,
       DaemonService.use((service) => service.archiveWorktree(context.req.param("repoSlug"), body)),
+    );
+  });
+
+  app.get("/api/v1/cleanup/worktrees", (context) =>
+    runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.analyzeWorktreeCleanup()),
+    ),
+  );
+
+  app.post("/api/v1/cleanup/worktrees/remove", async (context) => {
+    const body = await decodeBody(WorktreeCleanupActionRequest, context);
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.removeCleanupWorktrees(body)),
+    );
+  });
+
+  app.post("/api/v1/cleanup/worktrees/clean-ignored", async (context) => {
+    const body = await decodeBody(WorktreeCleanupActionRequest, context);
+    return runJson(
+      runtime,
+      context,
+      DaemonService.use((service) => service.cleanIgnoredWorktreeArtifacts(body)),
     );
   });
 

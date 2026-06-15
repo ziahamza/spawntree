@@ -24,6 +24,10 @@ import {
   type ServiceInfo,
   type StorageStatusResponse,
   type WebRepo,
+  type WorktreeCleanupActionResponse,
+  type WorktreeCleanupItem,
+  type WorktreeCleanupRepoSummary,
+  type WorktreeCleanupResponse,
 } from "spawntree-core/browser";
 
 /**
@@ -58,6 +62,10 @@ export type ConfigTestResult = ConfigTestResponse;
 export type ConfigPreviewResult = ConfigPreviewResponse;
 export type ConfigSuggestResult = ConfigSuggestResponse;
 export type ConfigSaveResult = ConfigSaveResponse;
+export type CleanupReport = WorktreeCleanupResponse;
+export type CleanupRepoSummary = WorktreeCleanupRepoSummary;
+export type CleanupWorktree = WorktreeCleanupItem;
+export type CleanupActionResult = WorktreeCleanupActionResponse;
 export { ConfigServiceSuggestion, ConfigSignal, ConfigTestServiceResult, GitPathInfo, WebRepo };
 
 export interface Clone {
@@ -262,6 +270,38 @@ export function useDiscover() {
   return useMutation({
     mutationFn: async () => {
       await queryClient.invalidateQueries({ queryKey: ["web", "repos"] });
+    },
+  });
+}
+
+export function useWorktreeCleanup() {
+  return useQuery({
+    queryKey: ["cleanup", "worktrees"],
+    queryFn: () => api.getWorktreeCleanup(),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useRemoveCleanupWorktrees() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (paths: ReadonlyArray<string>) =>
+      api.removeCleanupWorktrees({ paths: Array.from(paths) }),
+    onSuccess: () => {
+      invalidateAppQueries(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ["cleanup", "worktrees"] });
+    },
+  });
+}
+
+export function useCleanIgnoredWorktreeArtifacts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (paths: ReadonlyArray<string>) =>
+      api.cleanIgnoredWorktreeArtifacts({ paths: Array.from(paths) }),
+    onSuccess: () => {
+      invalidateAppQueries(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ["cleanup", "worktrees"] });
     },
   });
 }

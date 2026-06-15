@@ -92,13 +92,20 @@ export function renderLaunchdPlist(spec: ServiceSpec, label: string = LABEL): st
 
 /** Render a systemd --user unit. Pure — unit-testable. */
 export function renderSystemdUnit(spec: ServiceSpec): string {
+  // Both the node binary and the entry script are double-quoted so systemd
+  // does not treat spaces in the path as argument separators. systemd does
+  // NOT perform shell word-splitting on ExecStart; quoting is the only safe
+  // way to handle paths that contain spaces (e.g. a user home directory
+  // under "/Users/First Last/…" on macOS or a path installed under
+  // "/Program Files/…").
+  const q = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
   return `[Unit]
 Description=spawntree daemon (gitenv)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=${spec.node} ${spec.entry}
+ExecStart=${q(spec.node)} ${q(spec.entry)}
 Restart=always
 RestartSec=5
 WorkingDirectory=${spec.home}
@@ -113,9 +120,38 @@ function currentSpec(): ServiceSpec {
 }
 
 /**
+ * Validate that `value` is a well-formed http(s) URL. Intentionally mirrors
+ * the `isHttpUrl` function in `server-main.ts` — both call-sites must use
+ * this shared implementation so the validation stays in sync.
+ *
+ * Uses `URL.canParse` (Node 20+) to avoid try/catch, then confirms the
+ * protocol is http or https. Strips trailing slashes before parsing so
+ * `http://host/` and `http://host` are treated identically.
+ */
+export function isHttpUrl(value: string): boolean {
+  const normalized = value.replace(/\/+$/, "");
+  if (!URL.canParse(normalized)) return false;
+  const u = new URL(normalized);
+  return u.protocol === "http:" || u.protocol === "https:";
+}
+
+/**
+ * Validate that `value` is a well-formed daemon host key. Intentionally
+ * mirrors the `isHostKey` function in `server-main.ts` — both call-sites
+ * must use this shared implementation so the validation stays in sync.
+ *
+ * A valid key is `dh_` followed by at least 40 alphanumeric/underscore/dash
+ * characters (base64url alphabet, 32 random bytes → 43 chars).
+ */
+export function isHostKey(value: string): boolean {
+  return /^dh_[A-Za-z0-9_-]{40,}$/.test(value);
+}
+
+/**
  * Persist a host binding from `--host`/`--host-key` flags if both are present,
- * so `install` can be a one-step `install --host … --host-key …`. Mirrors the
- * validation in server-main's `resolveHostBinding`.
+ * so `install` can be a one-step `install --host … --host-key …`. Uses the
+ * same validation as `server-main.ts`'s `resolveHostBinding` via the shared
+ * `isHttpUrl` and `isHostKey` helpers above.
  */
 function maybeSaveBindingFromArgs(rest: ReadonlyArray<string>): void {
   const host = readFlag(rest, "--host");
@@ -124,13 +160,14 @@ function maybeSaveBindingFromArgs(rest: ReadonlyArray<string>): void {
   if (!host || !key) {
     throw new Error("`--host` and `--host-key` must be passed together.");
   }
-  if (!/^https?:\/\//.test(host)) {
+  const url = host.replace(/\/+$/, "");
+  if (!isHttpUrl(url)) {
     throw new Error(`--host must be an http(s) URL; got ${host}`);
   }
-  if (!key.startsWith("dh_")) {
-    throw new Error("--host-key must look like dh_<token>");
+  if (!isHostKey(key)) {
+    throw new Error("--host-key must look like dh_<token> (dh_ + at least 40 alphanumeric chars)");
   }
-  const binding: HostBinding = { url: host, key };
+  const binding: HostBinding = { url, key };
   saveHostBinding(binding);
 }
 

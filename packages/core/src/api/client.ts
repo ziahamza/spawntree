@@ -27,6 +27,8 @@ import {
   WebListReposResponse,
   WebRepoDetailResponse,
   WebRepoTreeResponse,
+  WorktreeCleanupActionResponse,
+  WorktreeCleanupResponse,
 } from "./schemas.ts";
 import type {
   AddFolderRequest,
@@ -46,6 +48,7 @@ import type {
   RestoreDbRequest,
   SendSessionMessageRequest,
   StopInfraRequest,
+  WorktreeCleanupActionRequest,
 } from "./types.ts";
 
 export interface ApiClientOptions {
@@ -253,6 +256,26 @@ export class ApiClient {
     return this.request(`/api/v1/web/repos/${encodeURIComponent(repoSlug)}/worktrees/archive`, {
       method: "POST",
       body,
+    });
+  }
+
+  async getWorktreeCleanup() {
+    return this.request("/api/v1/cleanup/worktrees", { schema: WorktreeCleanupResponse });
+  }
+
+  async removeCleanupWorktrees(body: WorktreeCleanupActionRequest) {
+    return this.request("/api/v1/cleanup/worktrees/remove", {
+      method: "POST",
+      body,
+      schema: WorktreeCleanupActionResponse,
+    });
+  }
+
+  async cleanIgnoredWorktreeArtifacts(body: WorktreeCleanupActionRequest) {
+    return this.request("/api/v1/cleanup/worktrees/clean-ignored", {
+      method: "POST",
+      body,
+      schema: WorktreeCleanupActionResponse,
     });
   }
 

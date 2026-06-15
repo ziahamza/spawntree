@@ -1,4 +1,8 @@
+import type { Client as LibSqlClient } from "@libsql/client";
 import type { StorageConfig } from "spawntree-core";
+import { schema as catalogSchema } from "spawntree-core";
+import { and, eq, gte, inArray, or } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/libsql";
 import type { HostBinding } from "../state/global-state.ts";
 import type { StorageManager } from "./manager.ts";
 
@@ -48,6 +52,11 @@ export interface HostConfigSyncOptions {
    * config poll. Default 30s, well inside Studio's 2-minute "online" window.
    */
   presenceIntervalMs?: number;
+  /**
+   * How often the daemon pushes its session list to the host.
+   * Default 10s — matches the legacy machine-package sync cadence.
+   */
+  sessionsSyncIntervalMs?: number;
   /** Backoff sequence on error. Default 5s, 30s, 2m, 10m (last value repeats). */
   backoffSequenceMs?: ReadonlyArray<number>;
   /** Logger. Defaults to stderr-prefix logger. */
@@ -65,11 +74,43 @@ export interface HostConfigSyncOptions {
    * CLI entry; tests construct `HostConfigSync` with it directly.
    */
   fingerprintOverride?: string;
+  /**
+   * Called when the host returns **410 Gone** — meaning the daemon's key
+   * has been revoked (typically because the machine was soft-deleted on the
+   * host). The callback should clear the persisted host binding so the next
+   * daemon startup prompts the operator to re-register instead of looping
+   * on rejections.
+   *
+   * In production `server-main.ts` wires this to `clearHostBinding()`. In
+   * tests, pass a spy to assert it is called exactly once on a 410 and
+   * never called on other error codes.
+   */
+  onGone?: () => void;
 }
 
 const DEFAULT_POLL_MS = 5 * 60 * 1000;
 const DEFAULT_PRESENCE_MS = 30 * 1000;
+const DEFAULT_SESSIONS_SYNC_MS = 10 * 1000;
 const DEFAULT_BACKOFF_MS: ReadonlyArray<number> = [5_000, 30_000, 2 * 60_000, 10 * 60_000];
+
+/**
+ * Statuses the host treats as "live" — mirrors the host reconcile set
+ * (packages/host/src/routes/spawntree.ts) and Studio's conflict query. A live
+ * session must ALWAYS be in the sync snapshot: the host marks any live
+ * ai_sessions row ABSENT from a snapshot as completed, so omitting one would
+ * false-terminate it. The daemon's own catalog uses `active`; the rest are
+ * accepted for parity with the host-side status vocabulary.
+ */
+const LIVE_SESSION_STATUSES = ["active", "streaming", "idle", "waiting"];
+
+/**
+ * On the first session sync after a daemon (re)start the in-memory watermark
+ * is unknown, so terminal sessions changed within this window are backfilled.
+ * Anything older the host already has terminal (or its reconcile nets it out),
+ * so this bounds the post-restart payload instead of resending the daemon's
+ * entire historical catalog.
+ */
+const SESSIONS_SYNC_RESTART_BACKFILL_MS = 5 * 60 * 1000;
 
 export class HostConfigSync {
   private readonly binding: HostBinding;
@@ -77,19 +118,28 @@ export class HostConfigSync {
   private readonly fetchImpl: typeof fetch;
   private readonly pollIntervalMs: number;
   private readonly presenceIntervalMs: number;
+  private readonly sessionsSyncIntervalMs: number;
   private readonly backoffSequenceMs: ReadonlyArray<number>;
   private readonly logger: NonNullable<HostConfigSyncOptions["logger"]>;
   private readonly fingerprintOverride: string | undefined;
+  private readonly onGone: (() => void) | undefined;
 
   private status: HostSyncStatus = { state: "idle" };
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inFlight: Promise<void> | null = null;
   private presenceTimer: ReturnType<typeof setTimeout> | null = null;
   private presenceInFlight: Promise<void> | null = null;
+  private sessionsSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  private sessionsSyncInFlight: Promise<void> | null = null;
   private stopped = false;
   private terminal = false;
   private consecutiveErrors = 0;
   private cachedFingerprint: string | null = null;
+  // Incremental watermark for session sync: the timestamp of the last
+  // CONFIRMED (2xx) sync. Each pulse sends live sessions plus anything changed
+  // since this point, so steady-state cost tracks current activity, not the
+  // daemon's entire history. `undefined` until the first sync seeds it.
+  private sessionsSyncWatermark: string | undefined;
 
   constructor(options: HostConfigSyncOptions) {
     this.binding = options.binding;
@@ -97,6 +147,7 @@ export class HostConfigSync {
     this.fetchImpl = options.fetch ?? fetch;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_MS;
     this.presenceIntervalMs = options.presenceIntervalMs ?? DEFAULT_PRESENCE_MS;
+    this.sessionsSyncIntervalMs = options.sessionsSyncIntervalMs ?? DEFAULT_SESSIONS_SYNC_MS;
     this.backoffSequenceMs = options.backoffSequenceMs ?? DEFAULT_BACKOFF_MS;
     this.logger =
       options.logger ??
@@ -106,6 +157,7 @@ export class HostConfigSync {
         );
       });
     this.fingerprintOverride = options.fingerprintOverride;
+    this.onGone = options.onGone;
   }
 
   /**
@@ -120,6 +172,7 @@ export class HostConfigSync {
     queueMicrotask(() => {
       void this.tick();
       void this.pulsePresence();
+      void this.syncSessions();
     });
   }
 
@@ -137,11 +190,18 @@ export class HostConfigSync {
       clearTimeout(this.presenceTimer);
       this.presenceTimer = null;
     }
+    if (this.sessionsSyncTimer) {
+      clearTimeout(this.sessionsSyncTimer);
+      this.sessionsSyncTimer = null;
+    }
     if (this.inFlight) {
       await this.inFlight.catch(() => undefined);
     }
     if (this.presenceInFlight) {
       await this.presenceInFlight.catch(() => undefined);
+    }
+    if (this.sessionsSyncInFlight) {
+      await this.sessionsSyncInFlight.catch(() => undefined);
     }
   }
 
@@ -154,6 +214,12 @@ export class HostConfigSync {
   async refreshNow(): Promise<void> {
     if (this.stopped) return;
     await this.tick();
+  }
+
+  /** Force a session sync now. Returns when the POST completes (success or fail). */
+  async syncSessionsNow(): Promise<void> {
+    if (this.stopped) return;
+    await this.syncSessions();
   }
 
   // ─── private ───────────────────────────────────────────────────────────
@@ -229,6 +295,11 @@ export class HostConfigSync {
       return;
     }
 
+    // The 30s presence pulse may have gone terminal (409/410) while this
+    // config fetch was in flight — don't let a stale success overwrite the
+    // terminal error status.
+    if (this.terminal) return;
+
     if (response.status === 409) {
       // Hard-fail: this dh_ key is bound to a different machine. Do NOT
       // retry — the daemon process must exit (or be restarted with a
@@ -241,20 +312,9 @@ export class HostConfigSync {
       } catch {
         detail = "FINGERPRINT_MISMATCH";
       }
-      const message = `This daemon key is already bound to a different machine. Mint a fresh key on app.gitenv.dev for this box, or have an admin reset the machine fingerprint. (host: ${detail})`;
-      this.terminal = true;
-      this.status = {
-        state: "error",
-        lastErrorAt: nowIso(),
-        error: message,
-        nextRetryAt: nowIso(),
-        terminal: true,
-      };
-      // Cancel any pending retry; this state is final.
-      if (this.timer) {
-        clearTimeout(this.timer);
-        this.timer = null;
-      }
+      this.markTerminal(
+        `This daemon key is already bound to a different machine. Mint a fresh key on app.gitenv.dev for this box, or have an admin reset the machine fingerprint. (host: ${detail})`,
+      );
       this.logger("error", "fingerprint mismatch — host config sync halted", { url });
       return;
     }
@@ -281,6 +341,30 @@ export class HostConfigSync {
         url,
         label,
       });
+      return;
+    }
+
+    if (response.status === 410) {
+      // The daemon's key has been revoked — the machine was removed on the
+      // host. This is terminal: stop polling and clear the stored binding so
+      // the operator is prompted to re-register on the next daemon start
+      // instead of looping on 410s indefinitely.
+      let detail = "";
+      try {
+        const body = (await response.json()) as { error?: string; code?: string };
+        detail = body.error ?? body.code ?? "KEY_REVOKED";
+      } catch {
+        detail = "KEY_REVOKED";
+      }
+      this.markTerminal(
+        `This daemon key has been revoked (machine removed on host). Delete ~/.spawntree/host.json and re-register to continue. (host: ${detail})`,
+      );
+      this.logger("error", "daemon key revoked — host config sync halted; clearing binding", {
+        url,
+      });
+      // Clear the persisted binding so the next startup doesn't re-try with
+      // a revoked key. The caller (server-main) wires this to clearHostBinding().
+      this.onGone?.();
       return;
     }
 
@@ -323,6 +407,27 @@ export class HostConfigSync {
       replicators: payload.config.replicators.length,
       primary: payload.config.primary.id,
     });
+  }
+
+  /**
+   * Enter the final error state: surface `message` via `getStatus()`, set the
+   * terminal flag, and cancel any pending config-poll retry. Used by both the
+   * config poll and the presence pulse — whichever sees the 409/410 first —
+   * so /api/v1/storage never keeps reporting a stale pre-failure state.
+   */
+  private markTerminal(message: string): void {
+    this.terminal = true;
+    this.status = {
+      state: "error",
+      lastErrorAt: nowIso(),
+      error: message,
+      nextRetryAt: nowIso(),
+      terminal: true,
+    };
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
   }
 
   private recordError(message: string): void {
@@ -405,10 +510,30 @@ export class HostConfigSync {
       if (response.status === 409) {
         // FINGERPRINT_MISMATCH — same terminal semantics as the config poll:
         // the key is bound to a different machine. Stop pulsing.
-        this.terminal = true;
+        this.markTerminal(
+          `This daemon key is already bound to a different machine. Mint a fresh key on app.gitenv.dev for this box, or have an admin reset the machine fingerprint. (host: FINGERPRINT_MISMATCH)`,
+        );
         this.logger("error", "presence pulse rejected (fingerprint mismatch); stopping", {
           status: response.status,
         });
+        return;
+      }
+      if (response.status === 410) {
+        // KEY_REVOKED — same terminal semantics as the config poll: the key
+        // was revoked because the machine was removed. Clear the binding.
+        // The 30s pulse usually sees the 410 before the 5-minute config poll
+        // does, and `terminal` suppresses future polls — so the error status
+        // must be set HERE or /api/v1/storage keeps reporting the stale
+        // pre-revocation state forever.
+        this.markTerminal(
+          `This daemon key has been revoked (machine removed on host). Delete ~/.spawntree/host.json and re-register to continue. (host: KEY_REVOKED)`,
+        );
+        this.logger(
+          "error",
+          "presence pulse rejected (key revoked — machine removed); clearing binding and stopping",
+          { status: response.status },
+        );
+        this.onGone?.();
         return;
       }
       // 204 success, or any transient non-terminal status: keep pulsing.
@@ -429,6 +554,262 @@ export class HostConfigSync {
     // Don't keep the event loop alive just to pulse presence.
     this.presenceTimer.unref?.();
   }
+
+  /**
+   * Session state sync — POST the daemon's current session list to the host
+   * every `sessionsSyncIntervalMs` (default 10s) so the host's ai_sessions
+   * table (and therefore Studio's org-wide session list via PowerSync) stays
+   * current. Coalesces overlapping calls. Skips silently when the storage
+   * primary isn't started yet (the catalog DB isn't available). Non-terminal
+   * errors are swallowed — a missed sync is harmless compared to crashing.
+   *
+   * Stays on the steady cadence regardless of transient errors (unlike the
+   * config poll which backs off). Session data is cheap to re-send and the
+   * host is idempotent on upserts.
+   */
+  private async syncSessions(): Promise<void> {
+    if (this.stopped || this.terminal) return;
+    if (this.sessionsSyncInFlight) return this.sessionsSyncInFlight;
+    this.sessionsSyncInFlight = this.runSessionsSyncOnce();
+    try {
+      await this.sessionsSyncInFlight;
+    } finally {
+      this.sessionsSyncInFlight = null;
+    }
+  }
+
+  private async runSessionsSyncOnce(): Promise<void> {
+    // Only push when we have an active storage primary — the catalog DB
+    // is only available after the primary is started.
+    let client: LibSqlClient;
+    try {
+      client = this.manager.client;
+    } catch {
+      // Primary not started yet — skip this cycle.
+      this.scheduleSessionsSync(this.sessionsSyncIntervalMs);
+      return;
+    }
+
+    // Bound the snapshot so the 10s pulse doesn't grow with the daemon's
+    // entire history. Always include live sessions (the host reconcile
+    // terminates any live row absent from a snapshot, so they must never be
+    // omitted), plus anything changed since the last confirmed sync — which
+    // catches completions and short-lived sessions for the org session list.
+    // `nextWatermark` is captured before the read and only committed on a 2xx
+    // below, so a failed or skipped pulse never drops a change.
+    if (this.sessionsSyncWatermark === undefined) {
+      this.sessionsSyncWatermark = new Date(
+        Date.now() - SESSIONS_SYNC_RESTART_BACKFILL_MS,
+      ).toISOString();
+    }
+    const cutoff = this.sessionsSyncWatermark;
+    const nextWatermark = nowIso();
+
+    let sessions: Array<typeof catalogSchema.sessions.$inferSelect>;
+    let filesBySession = new Map<string, string[]>();
+    try {
+      const db = drizzle(client, { schema: catalogSchema });
+      sessions = await db
+        .select()
+        .from(catalogSchema.sessions)
+        .where(
+          or(
+            inArray(catalogSchema.sessions.status, LIVE_SESSION_STATUSES),
+            gte(catalogSchema.sessions.updatedAt, cutoff),
+          ),
+        );
+      filesBySession = await collectEditedFiles(db, sessions);
+    } catch {
+      // Catalog table not bootstrapped yet — skip this cycle.
+      this.scheduleSessionsSync(this.sessionsSyncIntervalMs);
+      return;
+    }
+
+    // An empty snapshot is still synced: the host needs to learn when the
+    // last local session was deleted, otherwise its mirror keeps stale rows
+    // forever. (The catalog being unreadable is handled above and skips.)
+
+    let fingerprint: string;
+    try {
+      fingerprint = await this.resolveFingerprint();
+    } catch {
+      this.scheduleSessionsSync(this.sessionsSyncIntervalMs);
+      return;
+    }
+
+    const payload = sessions.map((s) => ({
+      sourceId: s.sessionId,
+      provider: s.provider,
+      status: s.status,
+      title: s.title ?? null,
+      gitBranch: s.gitBranch ?? null,
+      worktreePath: s.workingDirectory,
+      headSha: s.gitHeadCommit ?? null,
+      // The host resolves the remote to its repo record so repo-scoped
+      // consumers (session lists, conflict detection) can find the session.
+      gitRemoteUrl: s.gitRemoteUrl ?? null,
+      totalTurns: s.totalTurns,
+      startedAt: s.startedAt ?? null,
+      workingFiles: filesBySession.get(s.sessionId) ?? [],
+    }));
+
+    try {
+      const url = this.sessionsSyncUrl();
+      const response = await this.fetchImpl(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.binding.key}`,
+          "Content-Type": "application/json",
+          "X-Spawntree-Fingerprint": fingerprint,
+        },
+        body: JSON.stringify({ sessions: payload }),
+      });
+      if (response.status === 409) {
+        // FINGERPRINT_MISMATCH — terminal, same semantics as the config poll
+        // and presence pulse. Go through markTerminal (not a bare `terminal`
+        // flag) so /api/v1/storage surfaces the hard failure even when the
+        // 10s session sync is the first call to see the 409 — otherwise
+        // `terminal` suppresses the config/presence retries that would have
+        // recorded the error status.
+        this.markTerminal(
+          `This daemon key is already bound to a different machine. Mint a fresh key on app.gitenv.dev for this box, or have an admin reset the machine fingerprint. (host: FINGERPRINT_MISMATCH)`,
+        );
+        this.logger("error", "sessions sync rejected (fingerprint mismatch); stopping", {
+          status: response.status,
+        });
+        return;
+      }
+      if (response.ok) {
+        // Commit the watermark only on a confirmed sync. A failed POST leaves
+        // it untouched so the same window is re-sent next pulse, and skipped
+        // cycles never advance it — no change is ever dropped.
+        this.sessionsSyncWatermark = nextWatermark;
+      }
+      // Any non-2xx is a transient error — stay on the steady cadence.
+    } catch {
+      // Network blip — stay on cadence, no backoff.
+    }
+    this.scheduleSessionsSync(this.sessionsSyncIntervalMs);
+  }
+
+  private sessionsSyncUrl(): string {
+    const base = this.binding.url.replace(/\/+$/, "");
+    // Use the same canonical prefix as the config/heartbeat endpoints.
+    // Hosts that expose a shorter alias at /api/daemons/me/sessions/sync
+    // can override this via subclassing, but the canonical path is always
+    // available and is the safe default.
+    return `${base}/api/daemons/me/sessions/sync`;
+  }
+
+  private scheduleSessionsSync(delayMs: number): void {
+    if (this.stopped || this.terminal) return;
+    if (this.sessionsSyncTimer) clearTimeout(this.sessionsSyncTimer);
+    this.sessionsSyncTimer = setTimeout(() => {
+      this.sessionsSyncTimer = null;
+      void this.syncSessions();
+    }, delayMs);
+    // Don't keep the event loop alive just to sync sessions.
+    this.sessionsSyncTimer.unref?.();
+  }
+}
+
+/**
+ * Collect the set of files each session has edited, derived from
+ * `session_tool_calls` rows with `toolKind = "file_edit"`. The hosting
+ * service uses this to detect concurrent sessions editing the same files.
+ *
+ * Adapters store the tool input under different keys (`path` for Codex
+ * file changes, `file_path` / `filePath` for ACP raw inputs), so the
+ * extractor tolerates all of them and skips rows it can't interpret.
+ *
+ * Paths are normalized to be relative to the session's working directory:
+ * some adapters report repo-relative paths and others absolute ones, and
+ * cross-session comparison only works when both sessions describe the same
+ * file with the same string.
+ */
+async function collectEditedFiles(
+  db: ReturnType<typeof drizzle<typeof catalogSchema>>,
+  sessions: Array<typeof catalogSchema.sessions.$inferSelect>,
+): Promise<Map<string, string[]>> {
+  // Working files only feed the host's concurrent-edit conflict detection,
+  // which only considers live sessions — the host zeroes `workingFiles` the
+  // moment a session goes terminal. Scanning tool calls for completed/errored
+  // sessions would make this 10s pulse scale with the daemon's entire
+  // history instead of what's currently running.
+  // Live set must match the host's reconcile statuses and Studio's conflict
+  // query (LIVE_SESSION_STATUSES) — omitting `active` here would send active
+  // sessions with empty workingFiles, so a concurrent edit from an `active`
+  // session never reaches the conflict banner.
+  const liveSessionIds = sessions
+    .filter((s) => LIVE_SESSION_STATUSES.includes(s.status))
+    .map((s) => s.sessionId);
+  if (liveSessionIds.length === 0) return new Map();
+
+  // Only edits that actually ran to completion count: awaiting-approval,
+  // rejected, and errored tool calls never touched the worktree, and two
+  // sessions that merely *requested* the same edit are not a real conflict.
+  const rows = await db
+    .select({
+      sessionId: catalogSchema.sessionToolCalls.sessionId,
+      arguments: catalogSchema.sessionToolCalls.arguments,
+    })
+    .from(catalogSchema.sessionToolCalls)
+    .where(
+      and(
+        inArray(catalogSchema.sessionToolCalls.sessionId, liveSessionIds),
+        eq(catalogSchema.sessionToolCalls.toolKind, "file_edit"),
+        eq(catalogSchema.sessionToolCalls.status, "completed"),
+      ),
+    );
+
+  const workingDirBySession = new Map(sessions.map((s) => [s.sessionId, s.workingDirectory]));
+
+  const filesBySession = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const file = extractEditedFilePath(row.arguments);
+    if (!file) continue;
+    const normalized = normalizeEditedFilePath(file, workingDirBySession.get(row.sessionId));
+    let files = filesBySession.get(row.sessionId);
+    if (!files) {
+      files = new Set();
+      filesBySession.set(row.sessionId, files);
+    }
+    files.add(normalized);
+  }
+
+  const result = new Map<string, string[]>();
+  for (const [sessionId, files] of filesBySession) {
+    result.set(sessionId, [...files].sort());
+  }
+  return result;
+}
+
+/**
+ * Make an edited-file path comparable across sessions: absolute paths under
+ * the session's working directory become relative to it; everything else is
+ * passed through unchanged (already-relative paths, or absolute paths
+ * outside the working tree, which are still meaningful as-is).
+ *
+ * Separators are normalized to `/` first so Windows daemons (`C:\repo` +
+ * `C:\repo\src\file.ts`) strip the same way POSIX ones do — and so the
+ * resulting relative paths compare equal across platforms.
+ */
+function normalizeEditedFilePath(file: string, workingDirectory: string | undefined): string {
+  const normalizedFile = file.replaceAll("\\", "/");
+  if (!workingDirectory) return normalizedFile;
+  const normalizedDir = workingDirectory.replaceAll("\\", "/");
+  const dir = normalizedDir.endsWith("/") ? normalizedDir : `${normalizedDir}/`;
+  return normalizedFile.startsWith(dir) ? normalizedFile.slice(dir.length) : normalizedFile;
+}
+
+function extractEditedFilePath(args: unknown): string | null {
+  if (!args || typeof args !== "object") return null;
+  const record = args as Record<string, unknown>;
+  for (const key of ["path", "file_path", "filePath", "abs_path", "absPath"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return null;
 }
 
 function nowIso(): string {

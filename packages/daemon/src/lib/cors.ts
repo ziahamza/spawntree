@@ -63,6 +63,20 @@ export function isAllowedBrowserOrigin(origin: string, policy: CorsPolicy): bool
 
   if (LOOPBACK_HOSTNAMES.has(url.hostname)) return true;
 
+  // Any HTTPS subdomain of gitenv.dev. Per-org subdomains
+  // (`{slug}.gitenv.dev`) are minted dynamically, so they can't be
+  // enumerated in the static list below — without this, Studio served
+  // from an org subdomain fails the daemon's CORS/PNA preflight and the
+  // AI chat silently degrades to the read-only host mirror.
+  //
+  // `endsWith(".gitenv.dev")` requires a real subdomain boundary (the
+  // leading dot), so it rejects look-alikes: `evil.gitenv.dev.attacker.com`
+  // ends with `.attacker.com`, and `notgitenv.dev` has no leading dot.
+  // HTTPS-only so a plaintext `http://x.gitenv.dev` spoof can't slip in.
+  if (url.protocol === "https:" && url.hostname.endsWith(".gitenv.dev")) {
+    return true;
+  }
+
   const normalized = `${url.protocol}//${url.host}`;
   if (DEFAULT_APP_ORIGINS.includes(normalized as (typeof DEFAULT_APP_ORIGINS)[number])) {
     return true;
