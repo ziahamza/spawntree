@@ -1,5 +1,13 @@
 # spawntree
 
+## 0.8.0
+
+### Patch Changes
+
+- Updated dependencies []:
+  - spawntree-core@0.8.0
+  - spawntree-daemon@0.9.0
+
 ## 0.7.3
 
 ### Patch Changes

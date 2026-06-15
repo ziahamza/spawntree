@@ -1,5 +1,32 @@
 # spawntree-daemon
 
+## 0.9.0
+
+### Minor Changes
+
+- Automated release from synced changes:
+  - Sync from gitenv main
+  - fix: polish cleanup desktop QA issues
+  - fix: accept readonly cleanup arrays
+  - feat: add spawntree worktree cleanup dashboard
+  - perf(daemon): bound session-sync to live + recently-changed rows
+  - fix: address PR [#459](https://github.com/ziahamza/spawntree/issues/459) Codex review round 6 (daemon host-sync)
+  - fix(spawntree): surface terminal error status from the presence pulse
+  - fix(spawntree): quote systemd ExecStart paths + share binding validators
+  - feat(host,spawntree): 410 KEY_REVOKED clears daemon binding and triggers re-register
+  - fix(spawntree): allow \*.gitenv.dev org subdomains through daemon CORS ([#465](https://github.com/ziahamza/spawntree/issues/465))
+  - fix: address PR [#459](https://github.com/ziahamza/spawntree/issues/459) review round 5
+  - fix: address PR [#459](https://github.com/ziahamza/spawntree/issues/459) review round 4
+  - fix: address PR [#459](https://github.com/ziahamza/spawntree/issues/459) review round 2
+  - fix: address PR [#459](https://github.com/ziahamza/spawntree/issues/459) review findings
+  - feat(daemon): auto Turso provisioning + ai_sessions summary sync
+  - Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs
+
+### Patch Changes
+
+- Updated dependencies []:
+  - spawntree-core@0.8.0
+
 ## 0.8.0
 
 ### Minor Changes
