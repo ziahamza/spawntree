@@ -1,5 +1,23 @@
 # spawntree-daemon
 
+## 0.10.0
+
+### Minor Changes
+
+- Automated release from synced changes:
+  - Merge pull request [#62](https://github.com/ziahamza/spawntree/issues/62) from ziahamza/gitenv-upstream
+  - fix: repair gitenv upstream sync build
+  - fix: address PR [#459](https://github.com/ziahamza/spawntree/issues/459) review round 2
+  - feat(spawntree/daemon): make local→turso migration resumable
+  - Revert "feat(spawntree/daemon): make local→turso migration resumable"
+  - fix(spawntree/daemon): size-bounded migration batches for large catalogs
+  - Merge branch 'main' of https://github.com/GitStartHQ/gitenv into feat/local-folder-diffs
+
+### Patch Changes
+
+- Updated dependencies []:
+  - spawntree-core@0.8.1
+
 ## 0.9.0
 
 ### Minor Changes
