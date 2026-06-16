@@ -18,8 +18,8 @@ import { Route as ReposSlugRouteImport } from './routes/repos.$slug'
 import { Route as ReposSlugEnvsEnvIdRouteImport } from './routes/repos.$slug.envs.$envId'
 
 const InfraRoute = InfraRouteImport.update({
-  id: "/infra",
-  path: "/infra",
+  id: '/infra',
+  path: '/infra',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CleanupRoute = CleanupRouteImport.update({
@@ -28,30 +28,30 @@ const CleanupRoute = CleanupRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
-  id: "/",
-  path: "/",
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const SessionsIndexRoute = SessionsIndexRouteImport.update({
-  id: "/sessions/",
-  path: "/sessions/",
+  id: '/sessions/',
+  path: '/sessions/',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const SessionsIdRoute = SessionsIdRouteImport.update({
-  id: "/sessions/$id",
-  path: "/sessions/$id",
+  id: '/sessions/$id',
+  path: '/sessions/$id',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const ReposSlugRoute = ReposSlugRouteImport.update({
-  id: "/repos/$slug",
-  path: "/repos/$slug",
+  id: '/repos/$slug',
+  path: '/repos/$slug',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const ReposSlugEnvsEnvIdRoute = ReposSlugEnvsEnvIdRouteImport.update({
-  id: "/envs/$envId",
-  path: "/envs/$envId",
+  id: '/envs/$envId',
+  path: '/envs/$envId',
   getParentRoute: () => ReposSlugRoute,
-} as any);
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -82,7 +82,7 @@ export interface FileRoutesById {
   '/repos/$slug/envs/$envId': typeof ReposSlugEnvsEnvIdRoute
 }
 export interface FileRouteTypes {
-  fileRoutesByFullPath: FileRoutesByFullPath;
+  fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/cleanup'
@@ -120,7 +120,7 @@ export interface RootRouteChildren {
   SessionsIndexRoute: typeof SessionsIndexRoute
 }
 
-declare module "@tanstack/react-router" {
+declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
     '/infra': {
       id: '/infra'
@@ -175,14 +175,16 @@ declare module "@tanstack/react-router" {
 }
 
 interface ReposSlugRouteChildren {
-  ReposSlugEnvsEnvIdRoute: typeof ReposSlugEnvsEnvIdRoute;
+  ReposSlugEnvsEnvIdRoute: typeof ReposSlugEnvsEnvIdRoute
 }
 
 const ReposSlugRouteChildren: ReposSlugRouteChildren = {
   ReposSlugEnvsEnvIdRoute: ReposSlugEnvsEnvIdRoute,
-};
+}
 
-const ReposSlugRouteWithChildren = ReposSlugRoute._addFileChildren(ReposSlugRouteChildren);
+const ReposSlugRouteWithChildren = ReposSlugRoute._addFileChildren(
+  ReposSlugRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -191,7 +193,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReposSlugRoute: ReposSlugRouteWithChildren,
   SessionsIdRoute: SessionsIdRoute,
   SessionsIndexRoute: SessionsIndexRoute,
-};
+}
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>();
+  ._addFileTypes<FileRouteTypes>()
