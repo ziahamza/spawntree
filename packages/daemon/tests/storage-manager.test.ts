@@ -40,9 +40,11 @@ describe("StorageManager", () => {
     }
   });
 
-  it("throws on client access before start", () => {
+  it("throws on client use before start", () => {
     const m = makeManager(tmp);
-    expect(() => m.client).toThrow(/must be called before accessing client/);
+    // `m.client` is now a stable proxy, so merely capturing it never throws;
+    // the guard fires when a consumer actually uses the client.
+    expect(() => m.client.execute("SELECT 1")).toThrow(/must be called before accessing client/);
   });
 
   it("reconfigures from local-only to turso without moving the sqlite source of truth", async () => {
@@ -74,6 +76,38 @@ describe("StorageManager", () => {
       });
 
       const rows = await m.client.execute("SELECT id FROM repos WHERE id = 'r1'");
+      expect(rows.rows).toHaveLength(1);
+    } finally {
+      await m.stop();
+    }
+  });
+
+  it("keeps a client captured before reconfiguration usable afterwards", async () => {
+    const m = makeManager(tmp);
+    await m.start();
+    try {
+      await applyCatalogSchema(m.client);
+      // Capture the client ONCE, the way DaemonService binds its Drizzle catalog
+      // at layer construction. The stable-proxy fix makes this follow the handle
+      // swap; without it, the captured reference would point at the closed
+      // pre-reconfiguration connection and every catalog read/write would fail.
+      const captured = m.client;
+      await captured.execute({
+        sql: "INSERT INTO repos (id, slug, name, provider, registered_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        args: ["r1", "r1", "r1", "github", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z"],
+      });
+
+      await m.applyConfig({
+        syncMethod: "turso",
+        turso: {
+          url: "http://127.0.0.1:9",
+          authToken: "rw-token",
+          syncIntervalSec: 0,
+          requestTimeoutMs: 50,
+        },
+      });
+
+      const rows = await captured.execute("SELECT id FROM repos WHERE id = 'r1'");
       expect(rows.rows).toHaveLength(1);
     } finally {
       await m.stop();

@@ -113,6 +113,15 @@ export async function createSqliteStorage(
   });
   remoteSyncEnabled = true;
 
+  // The background sync loop applies remote WAL frames (db.pull/checkpoint)
+  // without the transactionMutex that serializes local statements, so a local
+  // write can collide with a sync frame-apply. The MVCC engine never corrupts
+  // or loses data, but without a busy timeout that collision surfaces as a
+  // transient "database is locked" thrown out of a local query. A busy timeout
+  // makes the engine retry the acquisition internally (a bounded local wait)
+  // instead — it never blocks on the network pull, which touches no local pages.
+  await db.exec("PRAGMA busy_timeout = 5000");
+
   const openedAt = new Date().toISOString();
   let stopped = false;
   let closed = false;
