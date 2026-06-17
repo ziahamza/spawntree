@@ -2,28 +2,17 @@ import { Schema } from "effect";
 import type { Client } from "@libsql/client";
 
 /**
- * Storage provider contracts for the spawntree daemon.
+ * Storage contracts for the SpawnTree catalog.
  *
- * The daemon's database layer is pluggable along two axes:
- *
- *   1. **Primary storage** (exactly one active): owns the libSQL client the
- *      daemon reads and writes through. Default impl is `local` (plain SQLite
- *      file). Optional impls (e.g. `turso-embedded`) swap in a syncing client.
- *
- *   2. **Replicators** (zero or more active): background jobs that copy the
- *      primary's data somewhere else (S3, a Turso read-replica, etc.) for
- *      backup or cross-host read access. They observe the primary; they never
- *      substitute for it.
- *
- * Providers are resolved from a `StorageRegistry`. Built-ins register
- * themselves; third parties call `registry.registerPrimary(...)` or
- * `registry.registerReplicator(...)` before the daemon boots the active
- * configuration.
+ * There is exactly one local catalog: `<dataDir>/spawntree.db`, opened through
+ * Turso Sync's local SQLite engine. `syncMethod` controls only what background
+ * process, if any, copies that local catalog elsewhere.
  */
 
-// ─── Provider status ─────────────────────────────────────────────────────
+export const SyncMethod = Schema.Literals(["none", "turso", "s3"]);
+export type SyncMethod = Schema.Schema.Type<typeof SyncMethod>;
 
-export const ProviderStatus = Schema.Struct({
+export const StorageHealth = Schema.Struct({
   healthy: Schema.Boolean,
   lagMs: Schema.optional(Schema.Number),
   lastOkAt: Schema.optional(Schema.String),
@@ -31,14 +20,12 @@ export const ProviderStatus = Schema.Struct({
   error: Schema.optional(Schema.String),
   info: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 });
-export type ProviderStatus = Schema.Schema.Type<typeof ProviderStatus>;
-
-// ─── Shared context passed to every provider ─────────────────────────────
+export type StorageHealth = Schema.Schema.Type<typeof StorageHealth>;
 
 export interface StorageContext {
   /** Absolute path to the spawntree data directory (e.g. ~/.spawntree). */
   readonly dataDir: string;
-  /** Structured log emitter. Providers should use this, not console.*. */
+  /** Structured log emitter. Storage code should use this, not console.*. */
   readonly logger: (
     level: "info" | "warn" | "error",
     message: string,
@@ -46,92 +33,66 @@ export interface StorageContext {
   ) => void;
 }
 
-// ─── Primary storage ──────────────────────────────────────────────────────
-
-export interface PrimaryStorageHandle {
-  /** Active libSQL client. All daemon DB access routes through this. */
-  readonly client: Client;
-  /** Absolute path to the local database file, if the provider has one. */
-  readonly dbPath: string | null;
-  /** Current health / lag / last-sync metadata. */
-  status(): Promise<ProviderStatus>;
-  /** Force an immediate sync round-trip, if the provider supports it. No-op otherwise. */
-  syncNow(): Promise<void>;
-  /** Release resources. Called on shutdown and when swapping primaries. */
-  shutdown(): Promise<void>;
-}
-
-export interface PrimaryStorageProvider<Config = unknown> {
-  readonly id: string;
-  readonly kind: "primary";
-  /**
-   * Effect Schema describing valid config for this provider. Validated before
-   * `create()` is called. Omit if the provider takes no config.
-   */
-  readonly configSchema?: Schema.Top;
-  /** Open the connection. Must be idempotent if called twice with the same config. */
-  create(config: Config, ctx: StorageContext): Promise<PrimaryStorageHandle>;
-}
-
-// ─── Replicators ──────────────────────────────────────────────────────────
-
-export interface ReplicatorHandle {
-  /** Current health / last success timestamp / error. */
-  status(): Promise<ProviderStatus>;
-  /** Run one replication pass immediately. Resolves when done (success or failure). */
-  trigger(): Promise<ProviderStatus>;
-  /**
-   * Temporarily suspend the background loop and wait for any in-flight run
-   * to drain. Safe to call repeatedly. Optional — providers that don't have
-   * a background loop (pure on-demand replicators) can omit it.
-   *
-   * Used by `StorageManager` to quiesce replicators while a primary swap
-   * is in progress so the replicator doesn't VACUUM the old DB mid-migration.
-   */
-  pause?(): Promise<void>;
-  /** Resume the background loop after a pause. Optional; pairs with `pause`. */
-  resume?(): Promise<void>;
-  /** Stop the background loop and release resources. */
-  stop(): Promise<void>;
-}
-
-export interface ReplicatorProvider<Config = unknown> {
-  readonly id: string;
-  readonly kind: "replicator";
-  readonly configSchema?: Schema.Top;
-  /**
-   * Begin replicating. The provider is handed the active `PrimaryStorageHandle`
-   * and can read `handle.dbPath` (for snapshot-style replicators) or
-   * `handle.client` (for query-driven replication) as appropriate.
-   */
-  start(
-    config: Config,
-    primary: PrimaryStorageHandle,
-    ctx: StorageContext,
-  ): Promise<ReplicatorHandle>;
-}
-
-// ─── Persisted config shape ───────────────────────────────────────────────
-
-export const StorageConfigEntry = Schema.Struct({
-  id: Schema.String,
-  config: Schema.Unknown,
+export const TursoUpstreamConfig = Schema.Struct({
+  /** libsql:// URL for the per-machine Turso database. */
+  url: Schema.String,
+  /** Read/write auth token used only by the background push/pull loop. */
+  authToken: Schema.String,
+  /** Background sync cadence in seconds. `0` disables the loop. Default: 5. */
+  syncIntervalSec: Schema.optional(Schema.Number),
+  /** Abort individual sync HTTP requests after this many milliseconds. */
+  requestTimeoutMs: Schema.optional(Schema.Number),
+  /** Optional client label visible to the Turso sync backend. */
+  clientName: Schema.optional(Schema.String),
 });
-export type StorageConfigEntry = Schema.Schema.Type<typeof StorageConfigEntry>;
+export type TursoUpstreamConfig = Schema.Schema.Type<typeof TursoUpstreamConfig>;
+
+export const S3SnapshotConfig = Schema.Struct({
+  endpoint: Schema.optional(Schema.String),
+  region: Schema.optional(Schema.String),
+  bucket: Schema.String,
+  keyPrefix: Schema.optional(Schema.String),
+  accessKeyId: Schema.String,
+  secretAccessKey: Schema.String,
+  forcePathStyle: Schema.optional(Schema.Boolean),
+  intervalSec: Schema.optional(Schema.Number),
+});
+export type S3SnapshotConfigInput = Schema.Schema.Type<typeof S3SnapshotConfig>;
+export type S3SnapshotConfig = S3SnapshotConfigInput & {
+  region: string;
+  keyPrefix: string;
+  forcePathStyle: boolean;
+  intervalSec: number;
+};
 
 export const StorageConfig = Schema.Struct({
-  primary: StorageConfigEntry,
-  replicators: Schema.Array(
-    Schema.Struct({
-      rid: Schema.String, // stable replicator instance id ("s3-prod", "s3-backup")
-      id: Schema.String, // provider id ("s3-snapshot")
-      config: Schema.Unknown,
-    }),
-  ),
+  syncMethod: SyncMethod,
+  turso: Schema.optional(TursoUpstreamConfig),
+  s3: Schema.optional(S3SnapshotConfig),
 });
 export type StorageConfig = Schema.Schema.Type<typeof StorageConfig>;
 
 export const DEFAULT_STORAGE_CONFIG: StorageConfig = {
-  primary: { id: "local", config: {} },
-  replicators: [],
+  syncMethod: "none",
 };
+
+export interface SqliteStorageHandle {
+  /** Active libSQL-compatible client. All daemon catalog access routes through this. */
+  readonly client: Client;
+  /** Absolute path to the local SQLite database file. */
+  readonly dbPath: string;
+  /** Start background sync after the owner commits this handle as authoritative. */
+  activateSync(): void;
+  /** Current health / lag / last-sync metadata. */
+  status(): Promise<StorageHealth>;
+  /** Force an immediate background sync, if configured. No-op for local-only mode. */
+  syncNow(): Promise<void>;
+  /** Release resources. Called on shutdown and when reconfiguring sync. */
+  shutdown(): Promise<void>;
+}
+
+export interface SnapshotSyncHandle {
+  status(): Promise<StorageHealth>;
+  trigger(): Promise<StorageHealth>;
+  stop(): Promise<void>;
+}

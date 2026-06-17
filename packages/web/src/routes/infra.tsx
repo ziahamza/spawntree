@@ -213,7 +213,7 @@ function StorageCard({ storage }: { storage: StorageStatus | undefined }) {
     );
   }
   const sync = summarizeHostSync(storage.hostSync);
-  // The Storage card stays high-level: primary + replicator count + a
+  // The Storage card stays high-level: local catalog + sync method + a
   // ONE-line host status. The detailed host-sync state lives in the
   // dedicated Host binding card (only rendered when actually bound),
   // so we don't show two timestamp rows on the same card.
@@ -225,11 +225,11 @@ function StorageCard({ storage }: { storage: StorageStatus | undefined }) {
     <InfraCard
       title="Storage"
       icon={<HardDrive className="w-5 h-5" />}
-      status={storage.migrating ? "starting" : "running"}
+      status={storage.reconfiguring ? "starting" : "running"}
       details={[
-        { label: "Primary", value: storage.primary.id },
-        { label: "Replicators", value: storage.replicators.length || "none" },
-        { label: "Migrating", value: storage.migrating ? "yes" : undefined },
+        { label: "Catalog", value: storage.storage.id },
+        { label: "Sync", value: storage.sync.method },
+        { label: "Changing", value: storage.reconfiguring ? "yes" : undefined },
         { label: "Host", value: hostLine, title: sync.whenIso },
       ]}
     />

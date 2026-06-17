@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
@@ -52,8 +53,7 @@ async function waitForReady(origin: string, maxMs = 20_000): Promise<boolean> {
   return false;
 }
 
-const BUILD_NEEDED_MSG =
-  "Daemon entrypoint missing. Run `pnpm build` first — smoke tests exercise the compiled daemon.";
+const READY_TIMEOUT_MS = 60_000;
 
 describe("dashboard smoke (requires prior `pnpm build`)", () => {
   if (!existsSync(daemonEntry)) {
@@ -64,31 +64,39 @@ describe("dashboard smoke (requires prior `pnpm build`)", () => {
   let proc: ChildProcess;
   let origin: string;
   let stderrLines: string[] = [];
+  let dataDir: string | undefined;
 
   beforeAll(async () => {
     const port = await pickPort();
     origin = `http://127.0.0.1:${port}`;
+    dataDir = mkdtempSync(resolve(tmpdir(), "spawntree-dashboard-smoke-"));
 
     proc = spawn("node", [daemonEntry], {
-      env: { ...process.env, SPAWNTREE_PORT: String(port) },
+      env: {
+        ...process.env,
+        SPAWNTREE_HOME: dataDir,
+        SPAWNTREE_PORT: String(port),
+        SPAWNTREE_DISCOVERY_INTERVAL_MS: "0",
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     stderrLines = [];
     proc.stderr?.on("data", (d: Buffer) => stderrLines.push(d.toString()));
 
-    const ready = await waitForReady(origin);
+    const ready = await waitForReady(origin, READY_TIMEOUT_MS);
     if (!ready) {
       proc.kill("SIGTERM");
       const tail = stderrLines.join("").split("\n").slice(-40).join("\n");
       throw new Error(
-        `daemon did not become ready on ${origin} within 20s.\n--- daemon stderr (tail) ---\n${tail}`,
+        `daemon did not become ready on ${origin} within ${READY_TIMEOUT_MS / 1000}s.\n--- daemon stderr (tail) ---\n${tail}`,
       );
     }
-  }, 30_000);
+  }, READY_TIMEOUT_MS + 10_000);
 
   afterAll(async () => {
     proc?.kill("SIGTERM");
     await once(proc, "exit").catch(() => {});
+    if (dataDir) rmSync(dataDir, { recursive: true, force: true });
   });
 
   it("GET /health returns 'ok'", async () => {

@@ -477,8 +477,7 @@ async function handleAdmin(
         }
         if (!isPlausibleStorageConfig(body.config)) {
           json(res, 400, {
-            error:
-              "config must be a StorageConfig (`{ primary: {id, config}, replicators: [...] }`)",
+            error: "config must be a StorageConfig (`{ syncMethod: 'none' | 'turso' | 's3' }`)",
             code: "INVALID_CONFIG",
           });
           return true;
@@ -505,26 +504,30 @@ async function handleAdmin(
  * Loose structural check on the operator-supplied config payload. The
  * daemon does proper Effect Schema validation when it actually applies
  * the config, so we don't need to be exhaustive here — just reject the
- * obvious wrong shapes (string instead of object, missing required keys,
- * `replicators` not an array) so the operator gets a clear error
- * synchronously instead of a misleading 200.
+ * obvious wrong shapes so the operator gets a clear error synchronously
+ * instead of a misleading 200.
  */
 function isPlausibleStorageConfig(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
   const c = value as Record<string, unknown>;
-  if (typeof c["primary"] !== "object" || c["primary"] === null) return false;
-  const p = c["primary"] as Record<string, unknown>;
-  if (typeof p["id"] !== "string") return false;
-  if (!("config" in p)) return false;
-  if (!Array.isArray(c["replicators"])) return false;
-  for (const r of c["replicators"] as Array<unknown>) {
-    if (typeof r !== "object" || r === null) return false;
-    const rr = r as Record<string, unknown>;
-    if (typeof rr["rid"] !== "string") return false;
-    if (typeof rr["id"] !== "string") return false;
-    if (!("config" in rr)) return false;
+  if (c["syncMethod"] === "none") return true;
+  if (c["syncMethod"] === "turso") {
+    const turso = c["turso"];
+    if (typeof turso !== "object" || turso === null) return false;
+    const t = turso as Record<string, unknown>;
+    return typeof t["url"] === "string" && typeof t["authToken"] === "string";
   }
-  return true;
+  if (c["syncMethod"] === "s3") {
+    const s3 = c["s3"];
+    if (typeof s3 !== "object" || s3 === null) return false;
+    const s = s3 as Record<string, unknown>;
+    return (
+      typeof s["bucket"] === "string" &&
+      typeof s["accessKeyId"] === "string" &&
+      typeof s["secretAccessKey"] === "string"
+    );
+  }
+  return false;
 }
 
 async function probeHealth(baseUrl: string): Promise<boolean> {

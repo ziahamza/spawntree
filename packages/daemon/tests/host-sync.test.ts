@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { localStorageProvider, schema, StorageRegistry } from "spawntree-core";
+import { schema } from "spawntree-core";
 import { drizzle } from "drizzle-orm/libsql";
 import { eq } from "drizzle-orm";
 import { StorageManager } from "../src/storage/manager.ts";
@@ -70,6 +70,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const TEST_KEY = "dh_TESTxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 const TEST_FINGERPRINT = "0123456789abcdef0123456789abcdef";
+const LOCAL_SYNC_CONFIG = { config: { syncMethod: "none" } };
 
 describe("HostConfigSync", () => {
   let tmp: string;
@@ -77,12 +78,9 @@ describe("HostConfigSync", () => {
 
   beforeEach(async () => {
     tmp = mkdtempSync(resolve(tmpdir(), "spawntree-host-sync-"));
-    const registry = new StorageRegistry();
-    registry.registerPrimary(localStorageProvider);
     manager = new StorageManager({
       dataDir: tmp,
       logger: () => undefined,
-      registry,
     });
     await manager.start();
   });
@@ -95,7 +93,7 @@ describe("HostConfigSync", () => {
   it("hits <host>/api/daemons/me/config with the bearer key + fingerprint header", async () => {
     const { fetch, calls } = makeStubFetch([
       jsonResponse({
-        config: { primary: { id: "local", config: {} }, replicators: [] },
+        config: { syncMethod: "none" },
         daemon: { label: "laptop" },
       }),
     ]);
@@ -126,9 +124,7 @@ describe("HostConfigSync", () => {
   });
 
   it("strips trailing slash from the binding URL", async () => {
-    const { fetch, calls } = makeStubFetch([
-      jsonResponse({ config: { primary: { id: "local", config: {} }, replicators: [] } }),
-    ]);
+    const { fetch, calls } = makeStubFetch([jsonResponse(LOCAL_SYNC_CONFIG)]);
     const sync = new HostConfigSync({
       binding: { url: "http://controller:7777/", key: TEST_KEY },
       manager,
@@ -145,7 +141,7 @@ describe("HostConfigSync", () => {
   it("on success: applies the config and reports state=synced", async () => {
     const { fetch } = makeStubFetch([
       jsonResponse({
-        config: { primary: { id: "local", config: {} }, replicators: [] },
+        config: { syncMethod: "none" },
         daemon: { label: "ci-runner" },
       }),
     ]);
@@ -188,8 +184,8 @@ describe("HostConfigSync", () => {
     }
 
     const managerStatus = await manager.status();
-    expect(managerStatus.primary.id).toBe("local");
-    expect(managerStatus.replicators).toEqual([]);
+    expect(managerStatus.storage.id).toBe("sqlite");
+    expect(managerStatus.sync.method).toBe("none");
   });
 
   it("on 409 FINGERPRINT_MISMATCH: terminal error state; loop will not retry", async () => {
@@ -207,7 +203,7 @@ describe("HostConfigSync", () => {
       ),
       // Second response would be served if the loop kept going. The test
       // asserts the daemon ignores it (no consecutive call after a 409).
-      jsonResponse({ config: { primary: { id: "local", config: {} }, replicators: [] } }),
+      jsonResponse(LOCAL_SYNC_CONFIG),
     ];
     const { fetch, calls } = makeStubFetch(responses);
     const sync = new HostConfigSync({
@@ -236,7 +232,8 @@ describe("HostConfigSync", () => {
 
     // The persisted config should NOT have been touched by a 409.
     const managerStatus = await manager.status();
-    expect(managerStatus.primary.id).toBe("local");
+    expect(managerStatus.storage.id).toBe("sqlite");
+    expect(managerStatus.sync.method).toBe("none");
   });
 
   it("on 410 GONE (key revoked): terminal error state; loop stops; onGone is called once", async () => {
@@ -254,7 +251,7 @@ describe("HostConfigSync", () => {
       ),
       // Second response would be served if the loop kept going. The test
       // asserts the daemon ignores it (no consecutive call after a 410).
-      jsonResponse({ config: { primary: { id: "local", config: {} }, replicators: [] } }),
+      jsonResponse(LOCAL_SYNC_CONFIG),
     ];
     const { fetch, calls } = makeStubFetch(responses);
     let goneCallCount = 0;
@@ -292,7 +289,8 @@ describe("HostConfigSync", () => {
 
     // The persisted config should NOT have been touched by a 410.
     const managerStatus = await manager.status();
-    expect(managerStatus.primary.id).toBe("local");
+    expect(managerStatus.storage.id).toBe("sqlite");
+    expect(managerStatus.sync.method).toBe("none");
   });
 
   it("on 410 GONE: onGone is not called when option is absent (no crash)", async () => {
@@ -340,9 +338,7 @@ describe("HostConfigSync", () => {
       // Config poll: delay past the heartbeat so the success lands after
       // markTerminal — exercising the stale-overwrite guard in runOne.
       await new Promise((r) => setTimeout(r, 50));
-      return jsonResponse({
-        config: { primary: { id: "local", config: {} }, replicators: [] },
-      });
+      return jsonResponse(LOCAL_SYNC_CONFIG);
     };
     const sync = new HostConfigSync({
       binding: { url: "http://controller:7777", key: TEST_KEY },
@@ -497,7 +493,7 @@ describe("HostConfigSync", () => {
   it("after a success, the consecutive-error counter resets", async () => {
     const { fetch } = makeStubFetch([
       new Response("oops", { status: 500 }),
-      jsonResponse({ config: { primary: { id: "local", config: {} }, replicators: [] } }),
+      jsonResponse(LOCAL_SYNC_CONFIG),
       new Response("oops", { status: 500 }),
     ]);
     const sync = new HostConfigSync({
@@ -547,9 +543,7 @@ describe("HostConfigSync", () => {
     const stop1 = sync.stop();
     const stop2 = sync.stop();
 
-    resolveFetch!(
-      jsonResponse({ config: { primary: { id: "local", config: {} }, replicators: [] } }),
-    );
+    resolveFetch!(jsonResponse(LOCAL_SYNC_CONFIG));
 
     await Promise.all([stop1, stop2]);
     expect(sync.getStatus().state).not.toBe("error");
@@ -560,7 +554,7 @@ describe("HostConfigSync", () => {
     const blocked = new Promise<Response>((res) => {
       setTimeout(() => {
         resolved = true;
-        res(jsonResponse({ config: { primary: { id: "local", config: {} }, replicators: [] } }));
+        res(jsonResponse(LOCAL_SYNC_CONFIG));
       }, 50);
     });
     const { fetch } = makeStubFetch([() => blocked]);
@@ -664,11 +658,9 @@ describe("HostConfigSync — bounded session sync", () => {
 
   beforeEach(async () => {
     tmp = mkdtempSync(resolve(tmpdir(), "spawntree-sessions-sync-"));
-    const registry = new StorageRegistry();
-    registry.registerPrimary(localStorageProvider);
-    manager = new StorageManager({ dataDir: tmp, logger: () => undefined, registry });
+    manager = new StorageManager({ dataDir: tmp, logger: () => undefined });
     await manager.start();
-    // StorageManager.start() opens the primary DB but does NOT create the
+    // StorageManager.start() opens sqlite storage but does NOT create the
     // catalog tables — SessionManager.start() normally does that. We don't
     // use a SessionManager here, so bootstrap the schema directly.
     await applyCatalogSchema(manager.client);

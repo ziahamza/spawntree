@@ -79,8 +79,8 @@ export class SessionManager {
 
   /**
    * When present, session events are mirrored into the catalog DB so
-   * sessions survive daemon restart, ride along with the s3-snapshot
-   * replicator, and are queryable by external Drizzle clients.
+   * sessions survive daemon restart, ride along with S3 snapshot sync when
+   * enabled, and are queryable by external Drizzle clients.
    *
    * Null when the manager is built without a StorageManager (older test
    * code paths) — in that case sessions are in-memory only.
@@ -687,8 +687,8 @@ export class SessionManager {
         }
 
         // Mirror discovered sessions into the catalog so external Drizzle
-        // readers (Studio via the catalog HTTP endpoint, the s3-snapshot
-        // replicator's Turso target, third-party tools) see the same set
+        // readers (Studio via the catalog HTTP endpoint, Turso/S3 sync
+        // targets, third-party tools) see the same set
         // of sessions the daemon sees over ACP. Without this hop, sessions
         // started outside the daemon (e.g. `codex exec ...` from a terminal)
         // are invisible to anything that queries `SELECT * FROM sessions`.
@@ -816,8 +816,8 @@ export class SessionManager {
     this.discoveryCacheAt = 0;
 
     // Mirror the session row into the catalog so list/get can come from
-    // Drizzle without bouncing through the adapter subprocess, and so the
-    // s3-snapshot replicator captures session metadata.
+    // Drizzle without bouncing through the adapter subprocess, and so
+    // configured upstream sync captures session metadata.
     if (this.catalog) {
       await upsertSession(this.catalog, {
         sessionId: result.sessionId,

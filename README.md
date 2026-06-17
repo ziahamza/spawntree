@@ -27,10 +27,10 @@ spawntree down      # stop everything
 - **Drive AI coding agents** — first-class session API for Claude Code and Codex
   via a normalized ACP adapter layer. One SSE stream for turns, tool calls, and
   message deltas. ([docs](./docs/sessions.md))
-- **Pluggable storage + replication** — daemon catalog runs on libSQL with
-  swappable primaries (`local`, `turso-embedded`) and replicators (`s3-snapshot`
-  works against R2, B2, MinIO, plain S3). Configure once, your repo + session
-  history rides along. ([architecture](./packages/core/src/storage/README.md))
+- **Local-first catalog sync** — daemon catalog lives in one Turso-managed
+  SQLite file. Optional background sync pushes/pulls to Turso Cloud or uploads
+  whole-file S3 snapshots. Configure once, your repo + session history rides
+  along. ([architecture](./packages/core/src/storage/README.md))
 - **Typed SQL access from any tool** — the catalog schema is exported via
   Drizzle. External tools (CLIs, dashboards, backup verifiers) run typed
   queries against a live daemon over HTTP without re-implementing read
@@ -44,11 +44,11 @@ spawntree down      # stop everything
 ## Architecture
 
 - `packages/daemon` runs the single Node.js control plane (envs, infra,
-  sessions, storage providers, SSE event bus)
+  sessions, SQLite catalog sync, SSE event bus)
 - `packages/core` exposes the shared typed client, the Drizzle catalog
-  schema (`spawntree-core/db`), the storage provider contracts
-  (`spawntree-core/storage`), and the `ACPAdapter` layer for driving
-  coding agents
+  schema (`spawntree-core/db`), the storage sync surface
+  (`spawntree-core/storage`), and the `ACPAdapter` layer for driving coding
+  agents
 - `packages/cli` is a thin client that auto-starts the daemon
 - `packages/web` is the browser client and listens for daemon events over SSE
 - `packages/host` is an optional federation server (published as
@@ -183,9 +183,10 @@ const lastClaude = await db.query.sessions.findFirst({
 If your tool already has direct file access (a backup verifier, a CLI on
 the same machine), skip HTTP entirely — `createCatalogClient({ url:
 "file:~/.spawntree/spawntree.db" })` returns the same typed Drizzle db
-against the SQLite file. And against a `turso-embedded` primary, point at
-the Turso replica URL — same schema, same types, fed by the daemon's
-ongoing writes.
+against the SQLite file. That local file is the Turso Sync-managed source of
+truth in every mode; remote dashboards can point at the Turso replica URL
+when `syncMethod: "turso"` is configured — same schema, same types, fed by
+the daemon's background push/pull loop.
 
 Useful patterns this unlocks:
 
@@ -198,8 +199,7 @@ Useful patterns this unlocks:
   HTTP serialisation.
 
 See [the storage architecture doc](./packages/core/src/storage/README.md) for
-the full schema, the replicator providers, and the `/api/v1/catalog/*`
-endpoint shape.
+the catalog sync model and the `/api/v1/catalog/*` endpoint shape.
 
 ## Browser-only tools: `spawntree-browser`
 
@@ -236,9 +236,9 @@ See [docs/embedding.md](./docs/embedding.md) for the full API.
 - [CLI Reference](./docs/cli-reference.md)
 - [Agent Sessions](./docs/sessions.md) — driving Claude Code / Codex through the
   daemon
-- [Storage providers + typed catalog](./packages/core/src/storage/README.md) —
-  primary/replicator architecture, the Drizzle schema, and the `/api/v1/catalog/*`
-  HTTP endpoints
+- [SQLite catalog sync + typed catalog](./packages/core/src/storage/README.md) —
+  the single-catalog storage model, the Drizzle schema, and the
+  `/api/v1/catalog/*` HTTP endpoints
 - [Releasing](./docs/RELEASE.md) — how the changesets-driven release flow works
 - [Federation host](./packages/host/README.md) — published as
   `spawntree-host`, lets one dashboard drive multiple daemons
