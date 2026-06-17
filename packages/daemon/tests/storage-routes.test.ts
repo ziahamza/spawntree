@@ -18,10 +18,8 @@ import { createStorageRoutes } from "../src/routes/storage.ts";
  * actual GET would return without an `Access-Control-Allow-Origin`
  * header — also a CORS failure).
  *
- * Admin write methods (PUT/POST/DELETE) stay loopback-gated by the
- * existing `requireLocalOrigin` IP check — CORS opens the door for the
- * preflight, but the IP check still 403s actual mutations from a
- * non-loopback peer.
+ * The route is read-mostly; POST /sync only triggers the configured
+ * background sync.
  */
 
 describe("storage routes CORS", () => {
@@ -65,9 +63,8 @@ describe("storage routes CORS", () => {
     expect(res.status).toBe(204);
     expect(res.headers.get("access-control-allow-origin")).toBe("https://gitenv.dev");
     expect(res.headers.get("access-control-allow-private-network")).toBe("true");
-    // Storage routes accept PUT (the catalog default doesn't), so confirm
-    // it shows up in the allow-methods list.
-    expect(res.headers.get("access-control-allow-methods")).toContain("PUT");
+    expect(res.headers.get("access-control-allow-methods")).toContain("POST");
+    expect(res.headers.get("access-control-allow-methods")).not.toContain("PUT");
   });
 
   it("GET / from gitenv.dev returns the status snapshot with ACAO", async () => {
@@ -77,9 +74,12 @@ describe("storage routes CORS", () => {
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("access-control-allow-origin")).toBe("https://gitenv.dev");
-    const body = (await res.json()) as { primary: { id: string }; replicators: unknown[] };
-    expect(body.primary.id).toBe("local");
-    expect(Array.isArray(body.replicators)).toBe(true);
+    const body = (await res.json()) as {
+      storage: { id: string };
+      sync: { method: string };
+    };
+    expect(body.storage.id).toBe("sqlite");
+    expect(body.sync.method).toBe("none");
   });
 
   it("preflight from an unknown origin returns 404 (no allow-list match)", async () => {

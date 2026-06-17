@@ -169,10 +169,7 @@ export class ApiClient {
   }
 
   /**
-   * Snapshot of the daemon's storage subsystem: primary, replicators, and
-   * (when the daemon was booted with `--host`) the host-config-sync state.
-   * Used by the dashboard's infra page to surface host binding status next
-   * to postgres/redis without a separate admin UI.
+   * Snapshot of the daemon's sqlite catalog and upstream sync state.
    */
   async getStorageStatus() {
     return this.request("/api/v1/storage", { schema: StorageStatusResponse });

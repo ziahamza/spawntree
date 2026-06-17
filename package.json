@@ -38,6 +38,10 @@
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
   },
+  "optionalDependencies": {
+    "@tursodatabase/database-darwin-x64": "https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-database-darwin-x64-0.6.1.tgz",
+    "@tursodatabase/sync-darwin-x64": "https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-sync-darwin-x64-0.6.1.tgz"
+  },
   "engines": {
     "node": ">=20"
   },

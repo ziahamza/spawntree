@@ -43,12 +43,23 @@ async function main() {
   const port = Number.parseInt(process.env.SPAWNTREE_PORT ?? "2222", 10) || 2222;
 
   // StorageManager is the source of truth for the daemon's libSQL client.
-  // Boot it BEFORE the DaemonService so the catalog can open against the
-  // live primary (local, turso-embedded, or whatever the user configured in
-  // ~/.spawntree/storage.json). This way the replicator loop snapshots the
-  // real catalog DB, not an empty sidecar.
+  // Boot it before the DaemonService so the catalog can open against the
+  // local SQLite file managed by Turso Sync's local engine.
   const storage = new StorageManager({ dataDir: spawntreeHome() });
   await storage.start();
+
+  // If a host binding is in effect, reconcile the managed sync config before
+  // catalog DDL. Terminal host rejections abort startup; non-terminal missing
+  // config leaves the current local sqlite catalog untouched while polling.
+  let hostSync: HostConfigSync | null = null;
+  if (hostBinding) {
+    hostSync = createHostConfigSync(hostBinding, storage);
+    await hostSync.refreshNow();
+    const status = hostSync.getStatus();
+    if (status.state === "error" && status.terminal) {
+      throw new Error(status.error);
+    }
+  }
 
   const runtime = ManagedRuntime.make(DaemonService.makeLayer(storage), {
     memoMap: Layer.makeMemoMapUnsafe(),
@@ -57,18 +68,24 @@ async function main() {
   // Build the DomainEvents instance from the runtime so SessionManager can
   // publish into the same bus the existing /api/v1/events SSE stream uses.
   // SessionManager also persists session metadata through the same
-  // StorageManager client so sessions land in the replicated catalog DB.
+  // StorageManager client so sessions land in the local catalog DB and ride
+  // whatever background sync method is configured.
   const domainEvents = await runtime.runPromise(
     DaemonService.use((service) => service.domainEvents),
   );
   const sessionManager = new SessionManager(domainEvents, { storage });
   await sessionManager.start();
+  void storage.syncNow().catch((error) => {
+    process.stderr.write(
+      `[spawntree-daemon] storage initial sync failed: ${formatFatalError(error)}\n`,
+    );
+  });
 
   // Background discovery: every N seconds, ask each adapter what sessions
   // exist and mirror them into the catalog. Without this, sessions started
   // outside the daemon (e.g. `codex exec ...` from a terminal) never make
-  // it into the `sessions` table that Studio + the s3-snapshot replicator
-  // read from. Cadence is configurable via SPAWNTREE_DISCOVERY_INTERVAL_MS;
+  // it into the `sessions` table that Studio + background sync read from.
+  // Cadence is configurable via SPAWNTREE_DISCOVERY_INTERVAL_MS;
   // set to 0 to disable the loop entirely (useful for tests).
   const discoveryIntervalMs = Number.parseInt(
     process.env.SPAWNTREE_DISCOVERY_INTERVAL_MS ?? "30000",
@@ -78,46 +95,8 @@ async function main() {
     sessionManager.startDiscoveryLoop(discoveryIntervalMs);
   }
 
-  // If a host binding is in effect, kick off the background config sync.
-  // Daemon boot does NOT wait on the host being reachable — the loop
-  // retries with backoff and reconciles when the host comes online.
-  //
-  // SPAWNTREE_HOST_POLL_INTERVAL_MS: internal/test debugging knob — overrides
-  // the default 5-minute poll interval. No CLI flag; env-only on purpose so
-  // it stays an off-the-beaten-path debugging affordance.
-  let hostSync: HostConfigSync | null = null;
   if (hostBinding) {
-    const pollIntervalMsRaw = process.env.SPAWNTREE_HOST_POLL_INTERVAL_MS;
-    const pollIntervalMs = pollIntervalMsRaw ? Number.parseInt(pollIntervalMsRaw, 10) : undefined;
-    if (pollIntervalMsRaw && (Number.isNaN(pollIntervalMs) || (pollIntervalMs ?? 0) <= 0)) {
-      process.stderr.write(
-        `[spawntree-daemon] invalid SPAWNTREE_HOST_POLL_INTERVAL_MS: ${pollIntervalMsRaw}\n`,
-      );
-      process.exit(2);
-    }
-
-    // SPAWNTREE_FINGERPRINT_OVERRIDE: test-only escape hatch for the
-    // wrong-fingerprint hard-error E2E. Production NEVER sets this — the
-    // daemon reads its OS machine id via `node-machine-id`. Documented in
-    // host-sync.ts.
-    const fingerprintOverride = process.env.SPAWNTREE_FINGERPRINT_OVERRIDE;
-    hostSync = new HostConfigSync({
-      binding: hostBinding,
-      manager: storage,
-      ...(pollIntervalMs !== undefined ? { pollIntervalMs } : {}),
-      ...(fingerprintOverride ? { fingerprintOverride } : {}),
-      // On 410 GONE (key revoked — machine removed on host): clear the
-      // persisted binding so the next startup prompts re-registration
-      // instead of looping on rejected requests indefinitely.
-      onGone: () => {
-        process.stderr.write(
-          "[spawntree-daemon] host: daemon key revoked — clearing ~/.spawntree/host.json. " +
-            "Re-register this machine on the host to continue.\n",
-        );
-        clearHostBinding();
-      },
-    });
-    hostSync.start();
+    hostSync?.start();
     process.stderr.write(
       `[spawntree-daemon] host: bound to ${hostBinding.url} (key dh_…${hostBinding.key.slice(-6)})\n`,
     );
@@ -197,6 +176,63 @@ function formatFatalError(error: unknown) {
     Match.when(Match.instanceOf(Error), (cause) => cause.stack ?? cause.message),
     Match.orElse((cause) => String(cause)),
   );
+}
+
+function createHostConfigSync(hostBinding: HostBinding, storage: StorageManager): HostConfigSync {
+  // SPAWNTREE_HOST_POLL_INTERVAL_MS: internal/test debugging knob — overrides
+  // the default 5-minute poll interval. No CLI flag; env-only on purpose so
+  // it stays an off-the-beaten-path debugging affordance.
+  const pollIntervalMs = readPositiveIntEnv("SPAWNTREE_HOST_POLL_INTERVAL_MS");
+  const requestTimeoutMs = readPositiveIntEnv("SPAWNTREE_HOST_REQUEST_TIMEOUT_MS", 30_000);
+
+  // SPAWNTREE_FINGERPRINT_OVERRIDE: test-only escape hatch for the
+  // wrong-fingerprint hard-error E2E. Production NEVER sets this — the
+  // daemon reads its OS machine id via `node-machine-id`. Documented in
+  // host-sync.ts.
+  const fingerprintOverride = process.env.SPAWNTREE_FINGERPRINT_OVERRIDE;
+
+  return new HostConfigSync({
+    binding: hostBinding,
+    manager: storage,
+    fetch: createTimeoutFetch(requestTimeoutMs),
+    ...(pollIntervalMs !== undefined ? { pollIntervalMs } : {}),
+    ...(fingerprintOverride ? { fingerprintOverride } : {}),
+    // On 410 GONE (key revoked — machine removed on host): clear the
+    // persisted binding so the next startup prompts re-registration
+    // instead of looping on rejected requests indefinitely.
+    onGone: () => {
+      process.stderr.write(
+        "[spawntree-daemon] host: daemon key revoked — clearing ~/.spawntree/host.json. " +
+          "Re-register this machine on the host to continue.\n",
+      );
+      clearHostBinding();
+    },
+  });
+}
+
+function readPositiveIntEnv(name: string): number | undefined;
+function readPositiveIntEnv(name: string, fallback: number): number;
+function readPositiveIntEnv(name: string, fallback?: number): number | undefined {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const value = Number.parseInt(raw, 10);
+  if (Number.isNaN(value) || value <= 0) {
+    process.stderr.write(`[spawntree-daemon] invalid ${name}: ${raw}\n`);
+    process.exit(2);
+  }
+  return value;
+}
+
+function createTimeoutFetch(timeoutMs: number): typeof fetch {
+  return async (input, init) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(input, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 }
 
 /**

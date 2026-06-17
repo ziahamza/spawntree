@@ -9,9 +9,9 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  localStorageProvider,
-  s3SnapshotProvider,
-  type PrimaryStorageHandle,
+  createSqliteStorage,
+  startS3SnapshotSync,
+  type SqliteStorageHandle,
   type StorageContext,
 } from "../src/storage/index.ts";
 
@@ -46,12 +46,12 @@ const secretAccessKey = process.env["SPAWNTREE_S3_TEST_SECRET_KEY"];
 
 const SHOULD_RUN = Boolean(endpoint && bucket && accessKeyId && secretAccessKey);
 
-describe.skipIf(!SHOULD_RUN)("s3SnapshotProvider against MinIO", () => {
+describe.skipIf(!SHOULD_RUN)("S3 snapshot sync against MinIO", () => {
   let tmp: string;
   let ctx: StorageContext;
   let s3: S3Client;
   let keyPrefix: string;
-  let primary: PrimaryStorageHandle;
+  let storage: SqliteStorageHandle;
 
   beforeEach(async () => {
     tmp = mkdtempSync(resolve(tmpdir(), "spawntree-s3-test-"));
@@ -66,13 +66,13 @@ describe.skipIf(!SHOULD_RUN)("s3SnapshotProvider against MinIO", () => {
         secretAccessKey: secretAccessKey!,
       },
     });
-    primary = await localStorageProvider.create({}, ctx);
-    await primary.client.execute(`CREATE TABLE sessions (id TEXT PRIMARY KEY, data TEXT)`);
-    await primary.client.execute(`INSERT INTO sessions VALUES ('s1', 'hello'), ('s2', 'world')`);
+    storage = await createSqliteStorage({}, ctx);
+    await storage.client.execute(`CREATE TABLE sessions (id TEXT PRIMARY KEY, data TEXT)`);
+    await storage.client.execute(`INSERT INTO sessions VALUES ('s1', 'hello'), ('s2', 'world')`);
   });
 
   afterEach(async () => {
-    await primary.shutdown().catch(() => undefined);
+    await storage.shutdown().catch(() => undefined);
     try {
       const list = await s3.send(new ListObjectsV2Command({ Bucket: bucket!, Prefix: keyPrefix }));
       if (list.Contents?.length) {
@@ -91,7 +91,7 @@ describe.skipIf(!SHOULD_RUN)("s3SnapshotProvider against MinIO", () => {
   });
 
   it("uploads canonical key with slash-containing prefix (regression: CopySource encoding)", async () => {
-    const handle = await s3SnapshotProvider.start(
+    const handle = await startS3SnapshotSync(
       {
         endpoint,
         region: "us-east-1",
@@ -103,7 +103,7 @@ describe.skipIf(!SHOULD_RUN)("s3SnapshotProvider against MinIO", () => {
         forcePathStyle: true,
         intervalSec: 0,
       },
-      primary,
+      storage,
       ctx,
     );
     try {
@@ -133,7 +133,7 @@ describe.skipIf(!SHOULD_RUN)("s3SnapshotProvider against MinIO", () => {
   });
 
   it("populates lastOkBytes + etag in status info", async () => {
-    const handle = await s3SnapshotProvider.start(
+    const handle = await startS3SnapshotSync(
       {
         endpoint,
         region: "us-east-1",
@@ -144,7 +144,7 @@ describe.skipIf(!SHOULD_RUN)("s3SnapshotProvider against MinIO", () => {
         forcePathStyle: true,
         intervalSec: 0,
       },
-      primary,
+      storage,
       ctx,
     );
     try {
@@ -160,7 +160,7 @@ describe.skipIf(!SHOULD_RUN)("s3SnapshotProvider against MinIO", () => {
   });
 
   it("classifies bad credentials as fatal", async () => {
-    const handle = await s3SnapshotProvider.start(
+    const handle = await startS3SnapshotSync(
       {
         endpoint,
         region: "us-east-1",
@@ -171,7 +171,7 @@ describe.skipIf(!SHOULD_RUN)("s3SnapshotProvider against MinIO", () => {
         forcePathStyle: true,
         intervalSec: 0,
       },
-      primary,
+      storage,
       ctx,
     );
     try {
@@ -185,9 +185,9 @@ describe.skipIf(!SHOULD_RUN)("s3SnapshotProvider against MinIO", () => {
     }
   });
 
-  it("pause() drains in-flight and halts the background loop", async () => {
+  it("stop() drains in-flight work and halts the background loop", async () => {
     // Short interval so a tick fires while we're waiting.
-    const handle = await s3SnapshotProvider.start(
+    const handle = await startS3SnapshotSync(
       {
         endpoint,
         region: "us-east-1",
@@ -198,24 +198,20 @@ describe.skipIf(!SHOULD_RUN)("s3SnapshotProvider against MinIO", () => {
         forcePathStyle: true,
         intervalSec: 1,
       },
-      primary,
+      storage,
       ctx,
     );
     try {
-      // Kick a manual trigger, then pause while it runs.
       const t = handle.trigger();
-      expect(typeof handle.pause).toBe("function");
-      await handle.pause?.();
+      await handle.stop();
       await t;
 
       const status = await handle.status();
       const info = status.info as Record<string, unknown>;
-      expect(info["paused"]).toBe(true);
       expect(info["inFlight"]).toBe(false);
 
-      // Triggering while paused should return an explicit "paused" status.
       const triggered = await handle.trigger();
-      expect(triggered.error).toBe("paused");
+      expect(triggered.error).toBe("stopped");
     } finally {
       await handle.stop();
     }

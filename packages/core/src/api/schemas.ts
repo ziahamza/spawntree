@@ -127,30 +127,30 @@ export const HostSyncState = Schema.Union([
 ]);
 export type HostSyncState = Schema.Schema.Type<typeof HostSyncState>;
 
+const StorageHealthShape = Schema.Struct({
+  healthy: Schema.Boolean,
+  lagMs: Schema.optional(Schema.Number),
+  lastOkAt: Schema.optional(Schema.String),
+  lastErrorAt: Schema.optional(Schema.String),
+  error: Schema.optional(Schema.String),
+  info: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+});
+
 /**
- * `GET /api/v1/storage` shape consumed by the dashboard's infra page.
- * Loose on `config` shapes since they vary per provider — we only need
- * IDs for display.
+ * `GET /api/v1/storage` shape consumed by dashboards.
  */
 export const StorageStatusResponse = Schema.Struct({
-  primary: Schema.Struct({
-    id: Schema.String,
+  storage: Schema.Struct({
+    id: Schema.Literal("sqlite"),
     config: Schema.Unknown,
-    status: Schema.Unknown,
+    status: StorageHealthShape,
   }),
-  replicators: Schema.Array(
-    Schema.Struct({
-      rid: Schema.String,
-      id: Schema.String,
-      config: Schema.Unknown,
-      status: Schema.Unknown,
-    }),
-  ),
-  availableProviders: Schema.Struct({
-    primaries: Schema.Array(Schema.Struct({ id: Schema.String })),
-    replicators: Schema.Array(Schema.Struct({ id: Schema.String })),
+  sync: Schema.Struct({
+    method: Schema.Literals(["none", "turso", "s3"]),
+    config: Schema.Unknown,
+    status: StorageHealthShape,
   }),
-  migrating: Schema.Boolean,
+  reconfiguring: Schema.Boolean,
   hostSync: Schema.NullOr(HostSyncState),
 });
 export type StorageStatusResponse = Schema.Schema.Type<typeof StorageStatusResponse>;

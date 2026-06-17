@@ -122,7 +122,7 @@ export const registeredRepos = sqliteTable("registered_repos", {
 // ─── ACP sessions ────────────────────────────────────────────────────────
 //
 // Persist ACP session metadata + turn log + tool-call log in the catalog so
-// sessions survive daemon restart, ride along with the S3 snapshot replicator,
+// sessions survive daemon restart, ride along with S3 snapshot sync,
 // and are queryable directly by external Drizzle clients (no "does the
 // subprocess know about this session anymore" lookups required).
 //

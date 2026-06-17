@@ -19,7 +19,7 @@ const SESSION_TURN_INSERT_CHUNK_SIZE = 50;
  * durable projection, so:
  *
  *   - sessions survive daemon restart,
- *   - the s3-snapshot replicator captures conversation history end-to-end,
+ *   - S3 snapshot sync captures conversation history end-to-end when enabled,
  *   - external Drizzle clients can query turns and tool calls directly via
  *     `POST /api/v1/catalog/query` or a direct libSQL connection.
  *

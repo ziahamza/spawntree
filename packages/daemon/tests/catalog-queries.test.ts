@@ -6,13 +6,13 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   clones as clonesTable,
-  localStorageProvider,
+  createSqliteStorage,
   repos as reposTable,
   schema as catalogSchema,
   watchedPaths as watchedPathsTable,
   worktrees as worktreesTable,
   type CatalogDb,
-  type PrimaryStorageHandle,
+  type SqliteStorageHandle,
 } from "spawntree-core";
 import {
   applyCatalogSchema,
@@ -35,12 +35,12 @@ import {
 
 describe("catalog/queries helpers", () => {
   let tmp: string;
-  let handle: PrimaryStorageHandle;
+  let handle: SqliteStorageHandle;
   let db: CatalogDb;
 
   beforeEach(async () => {
     tmp = mkdtempSync(resolve(tmpdir(), "spawntree-cat-q-"));
-    handle = await localStorageProvider.create({}, { dataDir: tmp, logger: () => undefined });
+    handle = await createSqliteStorage({}, { dataDir: tmp, logger: () => undefined });
     await applyCatalogSchema(handle.client);
     db = drizzle(handle.client, { schema: catalogSchema });
   });

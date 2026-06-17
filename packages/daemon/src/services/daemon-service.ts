@@ -204,8 +204,7 @@ export class DaemonService extends ServiceMap.Service<
   /**
    * Factory that binds the service to a live `StorageManager`. The catalog
    * is opened against `storage.client` during layer construction, so every
-   * read/write the daemon does flows through the active primary provider —
-   * which is exactly what replicators snapshot.
+   * read/write the daemon does flows through the single sqlite catalog.
    */
   static readonly makeLayer = (storage: StorageManager) =>
     Layer.effect(
@@ -218,7 +217,7 @@ export class DaemonService extends ServiceMap.Service<
         const proxyManager = new ProxyManager();
         const prepareManager = new PrepareManager();
         const envManager = new EnvManager(portRegistry, logStreamer, infraManager, proxyManager);
-        // Catalog talks to the active storage primary via Drizzle directly —
+        // Catalog talks to the single SQLite storage client via Drizzle directly —
         // no wrapper class, no domain-type mappers. Drizzle's $inferSelect
         // row types match the Effect Schema domain types structurally.
         yield* Effect.promise(() => applyCatalogSchema(storage.client));

@@ -13,7 +13,7 @@ import { applyCatalogSchema, upsertClone, upsertRepo } from "../src/catalog/quer
 import { drizzle } from "drizzle-orm/libsql";
 
 /**
- * End-to-end: daemon opens a storage primary, mounts the catalog HTTP
+ * End-to-end: daemon opens the SQLite catalog, mounts the catalog HTTP
  * routes, and an external Drizzle client queries it over HTTP.
  *
  * Proves that a downstream tool can:

@@ -50,6 +50,13 @@ importers:
       vitest:
         specifier: ^3.1.0
         version: 3.2.4(@types/node@25.5.0)(jiti@2.6.1)(jsdom@29.0.1)(lightningcss@1.32.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.3)
+    optionalDependencies:
+      '@tursodatabase/database-darwin-x64':
+        specifier: https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-database-darwin-x64-0.6.1.tgz
+        version: '@tursodatabase/database-darwin-x64@https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-database-darwin-x64-0.6.1.tgz'
+      '@tursodatabase/sync-darwin-x64':
+        specifier: https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-sync-darwin-x64-0.6.1.tgz
+        version: '@tursodatabase/sync-darwin-x64@https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-sync-darwin-x64-0.6.1.tgz'
 
   packages/browser:
     dependencies:
@@ -101,6 +108,9 @@ importers:
       '@libsql/client':
         specifier: ^0.15.4
         version: 0.15.15
+      '@tursodatabase/sync':
+        specifier: 0.6.1
+        version: 0.6.1
       '@zed-industries/agent-client-protocol':
         specifier: ^0.4.5
         version: 0.4.5
@@ -126,6 +136,13 @@ importers:
       drizzle-kit:
         specifier: ^0.31.10
         version: 0.31.10
+    optionalDependencies:
+      '@tursodatabase/database-darwin-x64':
+        specifier: https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-database-darwin-x64-0.6.1.tgz
+        version: '@tursodatabase/database-darwin-x64@https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-database-darwin-x64-0.6.1.tgz'
+      '@tursodatabase/sync-darwin-x64':
+        specifier: https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-sync-darwin-x64-0.6.1.tgz
+        version: '@tursodatabase/sync-darwin-x64@https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-sync-darwin-x64-0.6.1.tgz'
 
   packages/daemon:
     dependencies:
@@ -2676,6 +2693,50 @@ packages:
         optional: true
       '@types/react-dom':
         optional: true
+
+  '@tursodatabase/database-common@0.6.1':
+    resolution: {integrity: sha512-fkmkhgSUDg3MXkcziTG9Ime3AY5+YvvDN7VvUDEMNV7MP+XgwE/i5tU6eQP1EKa/zDkdSYPq8gPcmROmKmKL8Q==}
+
+  '@tursodatabase/database-darwin-x64@https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-database-darwin-x64-0.6.1.tgz':
+    resolution: {integrity: sha512-HkmjhIv0ythfyC/e0TZtFuclOMy9w5ke/ftS35IPAi3ocdUYZeQNNck3tF14o6/kSi/CMH6E6iWKM7kafqjubA==, tarball: https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-database-darwin-x64-0.6.1.tgz}
+    version: 0.6.1
+    cpu: [x64]
+    os: [darwin]
+
+  '@tursodatabase/serverless@0.2.4':
+    resolution: {integrity: sha512-kqf3FINvTGx8N1iH/4e1Dkbr/om5q9qitshzvljtQXwZFQIsVP/mDE76mGg9U2dg/ElOZKFKtT1VXDgd39Dr1w==}
+
+  '@tursodatabase/sync-common@0.6.1':
+    resolution: {integrity: sha512-QjImpfwGomXRPmr7+KQUxN1RHslOCY77ElHgmAdpDy0IAqp4WDO12waPpzV45hxoVb6tlmuArFEDdBGdiq9npQ==}
+
+  '@tursodatabase/sync-darwin-arm64@0.6.1':
+    resolution: {integrity: sha512-OneZUhTPTPkf048nu2rr39YLM2+CnAcY9oJUsAJvUc2ClLUIvFQtHSgTP7L13LtaLXLjR6Htzy77jKz+0hF4Tw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@tursodatabase/sync-darwin-x64@https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-sync-darwin-x64-0.6.1.tgz':
+    resolution: {integrity: sha512-llZY8RGqI08Tbv3or+6cpuGmeC2pI4MmrBtjvwRXMcCHXeR7piONOhNxwsISiP45nezPbWuwuaEAs++7CWXtOQ==, tarball: https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-sync-darwin-x64-0.6.1.tgz}
+    version: 0.6.1
+    cpu: [x64]
+    os: [darwin]
+
+  '@tursodatabase/sync-linux-arm64-gnu@0.6.1':
+    resolution: {integrity: sha512-Rs2Pei/sxBKma9Wfq5MNpUMLrfCxzx3qxiBEZcrfDsiBPkXCoU2F9GUzRKUo24pRcmKaZCCfSx0zLs1FFgt68A==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@tursodatabase/sync-linux-x64-gnu@0.6.1':
+    resolution: {integrity: sha512-YWCt0SPi5imXGdVYBFao0Y8jYlkxh4TLBdHNw5QBffbxOKFwV5+ur2qf9rD1hTaY1SLxrosiWvygPAE/1DCUTA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@tursodatabase/sync-win32-x64-msvc@0.6.1':
+    resolution: {integrity: sha512-KGTcLjN46laYBZCFm3F972e/mn6t8XPbm5zx34r1C7UC17GC5ONlDA5ArWegLfFAL5wuRbUjkk1kYFRIKAsPiw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@tursodatabase/sync@0.6.1':
+    resolution: {integrity: sha512-FsyiVFdi6ufPy/l00XryacTLG/hpc7gum7JjhRvWGbABDqOiZL2WI4V/hPf3iu0eppWuU5PS6gHvIBm+DyCdiQ==}
 
   '@tybys/wasm-util@0.10.1':
     resolution: {integrity: sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg==}
@@ -7188,6 +7249,43 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.14
       '@types/react-dom': 19.2.3(@types/react@19.2.14)
+
+  '@tursodatabase/database-common@0.6.1': {}
+
+  '@tursodatabase/database-darwin-x64@https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-database-darwin-x64-0.6.1.tgz':
+    optional: true
+
+  '@tursodatabase/serverless@0.2.4': {}
+
+  '@tursodatabase/sync-common@0.6.1':
+    dependencies:
+      '@tursodatabase/database-common': 0.6.1
+      '@tursodatabase/serverless': 0.2.4
+
+  '@tursodatabase/sync-darwin-arm64@0.6.1':
+    optional: true
+
+  '@tursodatabase/sync-darwin-x64@https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-sync-darwin-x64-0.6.1.tgz':
+    optional: true
+
+  '@tursodatabase/sync-linux-arm64-gnu@0.6.1':
+    optional: true
+
+  '@tursodatabase/sync-linux-x64-gnu@0.6.1':
+    optional: true
+
+  '@tursodatabase/sync-win32-x64-msvc@0.6.1':
+    optional: true
+
+  '@tursodatabase/sync@0.6.1':
+    dependencies:
+      '@tursodatabase/database-common': 0.6.1
+      '@tursodatabase/sync-common': 0.6.1
+    optionalDependencies:
+      '@tursodatabase/sync-darwin-arm64': 0.6.1
+      '@tursodatabase/sync-linux-arm64-gnu': 0.6.1
+      '@tursodatabase/sync-linux-x64-gnu': 0.6.1
+      '@tursodatabase/sync-win32-x64-msvc': 0.6.1
 
   '@tybys/wasm-util@0.10.1':
     dependencies:

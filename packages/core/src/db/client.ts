@@ -72,7 +72,7 @@ export interface CreateCatalogClientOptions {
  * }
  * ```
  *
- * Also works against a Turso replica that spawntree's `turso-embedded`
+ * Also works against a Turso replica fed by spawntree's sqlite sync
  * primary is syncing to — pass `url: "libsql://..."` + `authToken`. The
  * schema is shared, so the rows are typed identically.
  */

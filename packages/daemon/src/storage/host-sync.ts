@@ -9,8 +9,8 @@ import type { StorageManager } from "./manager.ts";
 /**
  * Pulls the daemon's storage config from a `spawntree-host` server and
  * applies it via `StorageManager.applyConfig`. Designed for daemons that
- * want their replication setup centrally managed: the host owns the
- * canonical config, every daemon boot reconciles to it, and the daemon
+ * want their upstream sync setup centrally managed: the host owns the
+ * canonical sync config, every daemon boot reconciles to it, and the daemon
  * stays useful when the host is unreachable (it just keeps running with
  * whatever was last applied).
  *
@@ -401,11 +401,10 @@ export class HostConfigSync {
     };
     this.consecutiveErrors = 0;
     this.scheduleNext(this.pollIntervalMs);
-    this.logger("info", "host config applied", {
+    this.logger("info", "host sync config applied", {
       url,
       label: payload.daemon?.label,
-      replicators: payload.config.replicators.length,
-      primary: payload.config.primary.id,
+      syncMethod: payload.config.syncMethod,
     });
   }
 
@@ -559,8 +558,8 @@ export class HostConfigSync {
    * Session state sync — POST the daemon's current session list to the host
    * every `sessionsSyncIntervalMs` (default 10s) so the host's ai_sessions
    * table (and therefore Studio's org-wide session list via PowerSync) stays
-   * current. Coalesces overlapping calls. Skips silently when the storage
-   * primary isn't started yet (the catalog DB isn't available). Non-terminal
+   * current. Coalesces overlapping calls. Skips silently when sqlite storage
+   * isn't started yet (the catalog DB isn't available). Non-terminal
    * errors are swallowed — a missed sync is harmless compared to crashing.
    *
    * Stays on the steady cadence regardless of transient errors (unlike the
@@ -579,13 +578,12 @@ export class HostConfigSync {
   }
 
   private async runSessionsSyncOnce(): Promise<void> {
-    // Only push when we have an active storage primary — the catalog DB
-    // is only available after the primary is started.
+    // Only push when we have an active sqlite catalog DB.
     let client: LibSqlClient;
     try {
       client = this.manager.client;
     } catch {
-      // Primary not started yet — skip this cycle.
+      // Storage not started yet — skip this cycle.
       this.scheduleSessionsSync(this.sessionsSyncIntervalMs);
       return;
     }

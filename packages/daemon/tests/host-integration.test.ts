@@ -4,13 +4,6 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  localStorageProvider,
-  StorageRegistry,
-  type ProviderStatus,
-  type ReplicatorHandle,
-  type ReplicatorProvider,
-} from "spawntree-core";
 import { createApp, openStore, type Store } from "spawntree-host";
 import { HostConfigSync } from "../src/storage/host-sync.ts";
 import { StorageManager } from "../src/storage/manager.ts";
@@ -67,60 +60,19 @@ async function stopHost(handle: HostHandle): Promise<void> {
   rmSync(handle.dbDir, { recursive: true, force: true });
 }
 
-/**
- * Fixture replicator. We assert reconciliation by counting active handles
- * and observing config the manager applied — same shape as the unit tests
- * in `storage-apply-config.test.ts`.
- */
-function makeRecordingProvider(): {
-  provider: ReplicatorProvider<{ tag?: string }>;
-  active: () => Array<{ id: string }>;
-} {
-  const live: Array<{ id: string }> = [];
-  let counter = 0;
-  const provider: ReplicatorProvider<{ tag?: string }> = {
-    id: "recording",
-    kind: "replicator",
-    async start(_config) {
-      const id = `h${counter++}`;
-      const handle: ReplicatorHandle = {
-        async status(): Promise<ProviderStatus> {
-          return { healthy: true };
-        },
-        async trigger(): Promise<ProviderStatus> {
-          return { healthy: true };
-        },
-        async stop(): Promise<void> {
-          const idx = live.findIndex((h) => h.id === id);
-          if (idx >= 0) live.splice(idx, 1);
-        },
-      };
-      live.push({ id });
-      return handle;
-    },
-  };
-  return { provider, active: () => [...live] };
-}
-
 describe("HostConfigSync end-to-end against in-process spawntree-host", () => {
   // Initialize to null so cleanup is safe even if setup fails partway.
   let host: HostHandle | null = null;
   let dataDir: string | null = null;
   let manager: StorageManager | null = null;
-  let recording: ReturnType<typeof makeRecordingProvider>;
 
   beforeAll(async () => {
     host = await startHost();
 
     dataDir = mkdtempSync(resolve(tmpdir(), "spawntree-int-data-"));
-    recording = makeRecordingProvider();
-    const registry = new StorageRegistry();
-    registry.registerPrimary(localStorageProvider);
-    registry.registerReplicator(recording.provider);
     manager = new StorageManager({
       dataDir,
       logger: () => undefined,
-      registry,
     });
     await manager.start();
   });
@@ -182,8 +134,13 @@ describe("HostConfigSync end-to-end against in-process spawntree-host", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         config: {
-          primary: { id: "local", config: {} },
-          replicators: [{ rid: "from-host", id: "recording", config: { tag: "alpha" } }],
+          syncMethod: "turso",
+          turso: {
+            url: "http://127.0.0.1:9",
+            authToken: "rw-token",
+            syncIntervalSec: 0,
+            requestTimeoutMs: 50,
+          },
         },
       }),
     });
@@ -200,10 +157,10 @@ describe("HostConfigSync end-to-end against in-process spawntree-host", () => {
     await sync.refreshNow();
     await sync.stop();
 
-    // 4. The replicator declared by the host should now be live.
+    // 4. The sync method declared by the host should now be active.
     const status = await manager!.status();
-    expect(status.replicators.map((r) => r.rid)).toContain("from-host");
-    expect(recording.active().length).toBeGreaterThanOrEqual(1);
+    expect(status.storage.id).toBe("sqlite");
+    expect(status.sync.method).toBe("turso");
   });
 
   it("GET / renders the landing page including the daemons section (UX wired up)", async () => {

@@ -25,6 +25,7 @@
     }
   },
   "scripts": {
+    "prebuild": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "prepublishOnly": "pnpm build"
@@ -32,6 +33,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.670.0",
     "@libsql/client": "^0.15.4",
+    "@tursodatabase/sync": "0.6.1",
     "@zed-industries/agent-client-protocol": "^0.4.5",
     "dotenv": "^16.5.0",
     "dotenv-expand": "^12.0.0",
@@ -42,5 +44,9 @@
   },
   "devDependencies": {
     "drizzle-kit": "^0.31.10"
+  },
+  "optionalDependencies": {
+    "@tursodatabase/database-darwin-x64": "https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-database-darwin-x64-0.6.1.tgz",
+    "@tursodatabase/sync-darwin-x64": "https://github.com/ziahamza/spawntree/releases/download/turso-native-0.6.1/tursodatabase-sync-darwin-x64-0.6.1.tgz"
   }
 }
