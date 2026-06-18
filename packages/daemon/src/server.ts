@@ -22,8 +22,10 @@ import {
 } from "spawntree-core";
 import { BadRequestError } from "./errors.ts";
 import { createCatalogRoutes } from "./routes/catalog.ts";
+import { createSandboxRoutes } from "./routes/sandboxes.ts";
 import { createSessionRoutes } from "./routes/sessions.ts";
 import { createStorageRoutes } from "./routes/storage.ts";
+import type { SandboxManager } from "./sandbox/manager.ts";
 import { DaemonService } from "./services/daemon-service.ts";
 import type { SessionManager } from "./sessions/session-manager.ts";
 import type { HostConfigSync } from "./storage/host-sync.ts";
@@ -64,6 +66,8 @@ export function createApp(
      * endpoint.
      */
     hostSync?: HostConfigSync | null;
+    /** Sandbox lifecycle manager. Enables the /api/v1/sandboxes route group. */
+    sandboxManager?: SandboxManager;
   } = {},
 ) {
   const app = new Hono();
@@ -102,6 +106,11 @@ export function createApp(
   // Session manager routes (ACP agent sessions).
   if (options.sessionManager) {
     app.route("/api/v1/sessions", createSessionRoutes(options.sessionManager));
+  }
+
+  // Sandbox lifecycle routes (managed containers/VMs).
+  if (options.sandboxManager) {
+    app.route("/api/v1/sandboxes", createSandboxRoutes(options.sandboxManager));
   }
 
   app.get("/api/v1/daemon", (context) =>

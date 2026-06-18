@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import type * as acp from "@zed-industries/agent-client-protocol";
 import { detectGitMetadata } from "../../lib/git.ts";
+import type { ProcessSpawner } from "../../sandbox/types.ts";
 import { ACPConnection } from "../client.ts";
 import { SessionBusyError, SessionResumeFailedError } from "../adapter.ts";
 import type {
@@ -44,10 +45,23 @@ export interface ClaudeCodeAdapterOptions {
   permissionHandler?: (
     params: acp.RequestPermissionRequest,
   ) => Promise<acp.RequestPermissionResponse>;
+  /**
+   * Resolves a `ProcessSpawner` bound to a sandbox, so a session created with
+   * `{ sandboxId }` runs its agent inside that container. Wired by the daemon
+   * to `SandboxManager.spawnerFor`. Absent in host-only setups (older tests),
+   * where requesting a sandbox session throws.
+   */
+  sandboxSpawnerProvider?: (sandboxId: string) => Promise<ProcessSpawner>;
 }
 
 interface TrackedSession {
   sourceId: string;
+  /**
+   * Which runtime the session's agent runs in: `"host"` (a process on the
+   * daemon host, the default) or `"sandbox:<id>"` (exec'd into a container).
+   * Determines which pooled `ACPConnection` carries this session.
+   */
+  target: string;
   cwd: string;
   status: SessionStatus;
   title: string | null;
@@ -94,34 +108,54 @@ interface TrackedSession {
   resumeFailed: boolean;
 }
 
+/** Per-runtime-target connection state (one ACP subprocess per target). */
+interface ConnectionState {
+  connection: ACPConnection | null;
+  started: boolean;
+  /**
+   * In-flight start promise for this target. Concurrent callers piggyback
+   * on it instead of racing the `initialize()` handshake.
+   */
+  startPromise: Promise<void> | null;
+  /** Capabilities from this target's agent `initialize()` handshake. */
+  agentCapabilities: acp.AgentCapabilities | null;
+}
+
+const HOST_TARGET = "host";
+
+function targetForSandbox(sandboxId: string | undefined): string {
+  return sandboxId ? `sandbox:${sandboxId}` : HOST_TARGET;
+}
+
+function sandboxIdFromTarget(target: string): string | null {
+  return target.startsWith("sandbox:") ? target.slice("sandbox:".length) : null;
+}
+
 export class ClaudeCodeAdapter implements ACPAdapter {
   readonly name = "claude-code";
 
   private readonly options: ClaudeCodeAdapterOptions;
   private readonly sessions = new Map<string, TrackedSession>();
   private eventHandlers: Array<(event: SessionEvent) => void> = [];
-  private connection: ACPConnection | null = null;
-  private started = false;
   /**
-   * Capabilities returned by the agent in the `initialize()` handshake.
-   * Captured so `ensureSubprocessHasSession` can short-circuit with a
-   * clear error when the agent doesn't support `loadSession` (rather than
-   * failing later inside the ACP wire call). Null until the first
-   * successful handshake.
+   * One ACP subprocess per runtime target. Key is `"host"` or
+   * `"sandbox:<id>"`. Sessions on the same target multiplex over one
+   * connection, exactly as the single-host model did before — the host
+   * target preserves the old behavior byte-for-byte.
    */
-  private agentCapabilities: acp.AgentCapabilities | null = null;
-  /**
-   * In-flight start promise. Concurrent `ensureStarted()` callers (e.g.
-   * the two arms of `Promise.all([getSessionInfo, getSessionDetail])`
-   * in the GET /:id route) await the same promise instead of racing the
-   * `initialize()` handshake. Without this guard the second caller
-   * could see `this.connection.isAlive` true while `initialize()` is
-   * still in flight, and send prompts against an un-initialized link.
-   */
-  private startPromise: Promise<void> | null = null;
+  private readonly connections = new Map<string, ConnectionState>();
 
   constructor(options: ClaudeCodeAdapterOptions = {}) {
     this.options = options;
+  }
+
+  private stateFor(target: string): ConnectionState {
+    let state = this.connections.get(target);
+    if (!state) {
+      state = { connection: null, started: false, startPromise: null, agentCapabilities: null };
+      this.connections.set(target, state);
+    }
+    return state;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -133,24 +167,47 @@ export class ClaudeCodeAdapter implements ACPAdapter {
     }
   }
 
+  /** Public entry retained for the ACP adapter surface — starts the host target. */
   async start(): Promise<void> {
-    if (this.started && this.connection?.isAlive) return;
-    // Concurrent callers piggyback on the in-flight start so the
-    // initialize() handshake doesn't race.
-    if (this.startPromise) return this.startPromise;
-
-    this.startPromise = this.doStart().finally(() => {
-      this.startPromise = null;
-    });
-    return this.startPromise;
+    await this.ensureConnection(HOST_TARGET);
   }
 
-  private async doStart(): Promise<void> {
-    // If a previous start() threw before `this.started = true`, shut down
-    // the stale connection so we don't leak its subprocess on retry.
-    if (this.connection) {
-      await this.connection.shutdown().catch(() => {});
-      this.connection = null;
+  /** Ensure the connection for `target` is live, starting it if needed. */
+  private async ensureConnection(target: string): Promise<ACPConnection> {
+    const state = this.stateFor(target);
+    if (!state.started || !state.connection?.isAlive) {
+      // Concurrent callers piggyback on the in-flight start so the
+      // initialize() handshake doesn't race.
+      if (!state.startPromise) {
+        state.startPromise = this.doStart(target, state).finally(() => {
+          state.startPromise = null;
+        });
+      }
+      await state.startPromise;
+    }
+    if (!state.connection) throw new Error("Claude Code adapter not started");
+    return state.connection;
+  }
+
+  private async doStart(target: string, state: ConnectionState): Promise<void> {
+    // If a previous start() threw before `started`, shut down the stale
+    // connection so we don't leak its subprocess on retry.
+    if (state.connection) {
+      await state.connection.shutdown().catch(() => {});
+      state.connection = null;
+    }
+
+    // For a sandbox target, resolve a spawner that runs the agent inside the
+    // container. Host target uses the default (node spawn on the daemon host).
+    let spawner: ProcessSpawner | undefined;
+    const sandboxId = sandboxIdFromTarget(target);
+    if (sandboxId) {
+      if (!this.options.sandboxSpawnerProvider) {
+        throw new Error(
+          "Cannot start a sandbox session: adapter built without a sandbox spawner provider",
+        );
+      }
+      spawner = await this.options.sandboxSpawnerProvider(sandboxId);
     }
 
     const command = this.options.command ?? "npx";
@@ -159,27 +216,19 @@ export class ClaudeCodeAdapter implements ACPAdapter {
       command,
       args,
       // Strip env vars that signal "we're already inside a Claude Code
-      // session" before spawning claude-code-acp. Without this, when the
-      // spawntree daemon is launched from inside Claude Code (common
-      // during development on the spawntree codebase itself), the
-      // subprocess inherits CLAUDECODE=1 from the harness and refuses
-      // to start with: "Claude Code cannot be launched inside another
-      // Claude Code session." Setting these to `undefined` makes Node's
-      // child_process spawn treat them as unset in the child, regardless
-      // of what's in the daemon's own process.env.
-      //
-      // Custom `env` from `this.options.env` is spread FIRST so the
-      // explicit unsets win the merge — callers that pass through
-      // `process.env` (or any env carrying these keys) would otherwise
-      // reintroduce CLAUDECODE and hit the nested-Claude refusal this
-      // block exists to prevent.
+      // session" before spawning claude-code-acp, so a daemon launched from
+      // inside Claude Code doesn't hit the nested-session refusal. For the
+      // host spawner, `undefined` makes Node treat them as unset; sandbox
+      // spawners drop undefined-valued entries, so they stay unset inside the
+      // container (where they were never set to begin with).
       env: {
         ...this.options.env,
         CLAUDECODE: undefined,
         CLAUDE_CODE_ENTRYPOINT: undefined,
         CLAUDE_CODE_SSE_PORT: undefined,
       },
-      label: "claude-code",
+      ...(spawner ? { spawner } : {}),
+      label: sandboxId ? `claude-code (sandbox ${sandboxId})` : "claude-code",
       defaultClient: {
         permissionPolicy: this.options.permissionPolicy ?? "allow_once",
         permissionHandler: this.options.permissionHandler,
@@ -205,19 +254,19 @@ export class ClaudeCodeAdapter implements ACPAdapter {
       // Cache capabilities so `ensureSubprocessHasSession` can pre-check
       // `loadSession` support and produce a clear error instead of a
       // generic ACP failure when adopting a session from the catalog.
-      this.agentCapabilities = initResponse.agentCapabilities ?? null;
+      state.agentCapabilities = initResponse.agentCapabilities ?? null;
 
       // Publish connection + started AFTER the handshake so concurrent
-      // callers entering ensureStarted() during initialize() correctly
-      // see started === false and wait on the shared startPromise.
-      this.connection = connection;
-      this.started = true;
+      // callers entering ensureConnection() during initialize() correctly
+      // wait on the shared startPromise.
+      state.connection = connection;
+      state.started = true;
     } catch (err) {
       // Handshake failed — kill the subprocess so a retry creates a fresh one
-      // instead of overwriting this.connection and leaking the old process.
+      // instead of leaking the old process.
       await connection.shutdown().catch(() => {});
-      this.connection = null;
-      this.started = false;
+      state.connection = null;
+      state.started = false;
       throw err;
     }
   }
@@ -225,9 +274,10 @@ export class ClaudeCodeAdapter implements ACPAdapter {
   async createSession(params: {
     cwd: string;
     mcpServers?: unknown[];
+    sandboxId?: string;
   }): Promise<{ sessionId: string }> {
-    await this.ensureStarted();
-    const conn = this.requireConnection();
+    const target = targetForSandbox(params.sandboxId);
+    const conn = await this.ensureConnection(target);
 
     const mcpServers = (params.mcpServers as acp.McpServer[] | undefined) ?? [];
     const response = await conn.newSession({
@@ -239,6 +289,7 @@ export class ClaudeCodeAdapter implements ACPAdapter {
     const git = detectGitMetadata(params.cwd);
     this.sessions.set(response.sessionId, {
       sourceId: response.sessionId,
+      target,
       cwd: params.cwd,
       status: "idle",
       title: null,
@@ -293,6 +344,11 @@ export class ClaudeCodeAdapter implements ACPAdapter {
 
     this.sessions.set(input.sessionId, {
       sourceId: input.sessionId,
+      // The catalog's AdoptedSession doesn't carry the sandbox target yet, so
+      // re-adopted sessions resume on the host. For mount-mode sandboxes the
+      // worktree lives on the host at the same path, so host-resume still
+      // works; clone-mode sandboxed sessions become read-only after restart.
+      target: HOST_TARGET,
       cwd: input.cwd,
       // Anything that was streaming when the previous daemon died is
       // stuck — the subprocess is gone. Mark idle so the UI doesn't show
@@ -340,7 +396,7 @@ export class ClaudeCodeAdapter implements ACPAdapter {
       throw new SessionResumeFailedError(sessionId, this.name);
     }
 
-    if (!this.agentCapabilities?.loadSession) {
+    if (!this.stateFor(session.target).agentCapabilities?.loadSession) {
       // Map capability-missing to the same typed error as a runtime
       // "session not found", so the HTTP layer returns 409 Conflict and
       // the Studio renders the read-only banner instead of treating it
@@ -351,7 +407,7 @@ export class ClaudeCodeAdapter implements ACPAdapter {
       throw new SessionResumeFailedError(sessionId, this.name);
     }
 
-    const conn = this.requireConnection();
+    const conn = this.requireConnection(session.target);
     // Replay the original MCP server list when we know it so the resumed
     // session keeps the same tool surface; fall back to empty when the
     // session was adopted from the catalog (where this list isn't yet
@@ -437,12 +493,11 @@ export class ClaudeCodeAdapter implements ACPAdapter {
   }
 
   async sendMessage(sessionId: string, content: string): Promise<void> {
-    await this.ensureStarted();
-    const conn = this.requireConnection();
     const session = this.sessions.get(sessionId);
     if (!session) {
       throw new Error(`Unknown session: ${sessionId}. Call createSession first.`);
     }
+    const conn = await this.ensureConnection(session.target);
     // Adopted sessions need a one-shot loadSession before the subprocess
     // accepts prompts referencing this id. Throws if the agent doesn't
     // advertise the loadSession capability.
@@ -554,21 +609,21 @@ export class ClaudeCodeAdapter implements ACPAdapter {
   }
 
   async interruptSession(sessionId: string): Promise<void> {
-    const conn = this.connection;
-    if (!conn) return;
     // Cancelling a session the subprocess never heard of is a no-op on
     // the agent side and on ours — only flush the wire when the session
     // is actually loaded there. Adopted-but-never-touched sessions never
     // had an active turn anyway, so there's nothing to cancel.
     const session = this.sessions.get(sessionId);
     if (!session || !session.loadedInSubprocess) return;
+    const conn = this.connections.get(session.target)?.connection;
+    if (!conn) return;
     await conn.cancel({ sessionId } satisfies acp.CancelNotification);
   }
 
   async resumeSession(sessionId: string): Promise<void> {
-    await this.ensureStarted();
     const s = this.sessions.get(sessionId);
     if (!s) throw new Error(`Unknown session: ${sessionId}`);
+    await this.ensureConnection(s.target);
     // Idempotent: if the session is already loaded into the subprocess,
     // ensureSubprocessHasSession is a no-op. Otherwise it sends the
     // ACP loadSession RPC.
@@ -589,8 +644,9 @@ export class ClaudeCodeAdapter implements ACPAdapter {
       return;
     }
 
-    if (session.activeTurnId && this.connection?.isAlive) {
-      await this.connection.cancel({ sessionId } satisfies acp.CancelNotification).catch(() => {});
+    const conn = this.connections.get(session.target)?.connection;
+    if (session.activeTurnId && conn?.isAlive) {
+      await conn.cancel({ sessionId } satisfies acp.CancelNotification).catch(() => {});
     }
 
     this.sessions.delete(sessionId);
@@ -605,23 +661,18 @@ export class ClaudeCodeAdapter implements ACPAdapter {
   }
 
   async shutdown(): Promise<void> {
-    await this.connection?.shutdown();
-    this.connection = null;
-    this.started = false;
+    for (const state of this.connections.values()) {
+      await state.connection?.shutdown().catch(() => {});
+    }
+    this.connections.clear();
     this.eventHandlers = [];
     this.sessions.clear();
-    this.agentCapabilities = null;
   }
 
-  private async ensureStarted(): Promise<void> {
-    if (!this.started || !this.connection?.isAlive) {
-      await this.start();
-    }
-  }
-
-  private requireConnection(): ACPConnection {
-    if (!this.connection) throw new Error("Claude Code adapter not started");
-    return this.connection;
+  private requireConnection(target: string): ACPConnection {
+    const conn = this.connections.get(target)?.connection;
+    if (!conn) throw new Error("Claude Code adapter not started");
+    return conn;
   }
 
   private emitEvent(event: SessionEvent): void {

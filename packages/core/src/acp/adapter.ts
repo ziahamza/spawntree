@@ -22,7 +22,12 @@ export interface ACPAdapter {
    * Code). Codex-style adapters where sessions are created implicitly by
    * the agent and discovered afterwards may leave this undefined.
    */
-  createSession?(params: { cwd: string; mcpServers?: unknown[] }): Promise<{ sessionId: string }>;
+  createSession?(params: {
+    cwd: string;
+    mcpServers?: unknown[];
+    /** Run the session's agent inside this sandbox (container/VM) instead of the host. */
+    sandboxId?: string;
+  }): Promise<{ sessionId: string }>;
 
   /** Full detail for a single session: turns, tool calls, interleaved content. */
   getSessionDetail(sessionId: string): Promise<SessionDetail>;

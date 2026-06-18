@@ -109,7 +109,7 @@ export async function createSqliteStorage(
     url: () => (remoteSyncEnabled && config.turso ? config.turso.url : null),
     authToken: config.turso?.authToken,
     clientName: config.turso?.clientName ?? "spawntree-daemon",
-    fetch: createTimeoutFetch(config.requestTimeoutMs),
+    fetch: createRetryingFetch(createTimeoutFetch(config.requestTimeoutMs)),
   });
   remoteSyncEnabled = true;
 
@@ -120,7 +120,7 @@ export async function createSqliteStorage(
   // transient "database is locked" thrown out of a local query. A busy timeout
   // makes the engine retry the acquisition internally (a bounded local wait)
   // instead — it never blocks on the network pull, which touches no local pages.
-  await db.exec("PRAGMA busy_timeout = 5000");
+  await db.exec("PRAGMA busy_timeout = 15000");
 
   const openedAt = new Date().toISOString();
   let stopped = false;
@@ -207,7 +207,7 @@ export async function createSqliteStorage(
     dbPath: config.path,
     status: async function status(): Promise<StorageHealth> {
       const now = new Date().toISOString();
-      const stats = await db.stats().catch((err) => ({
+      const stats = await db.stats().catch((err: unknown) => ({
         error: toMessage(err),
       }));
       return {
@@ -583,6 +583,42 @@ function createTimeoutFetch(timeoutMs: number): typeof fetch {
     } finally {
       clearTimeout(timeout);
     }
+  };
+}
+
+/**
+ * Retry a sync fetch a few times on transient failures — a network blip, a 5xx
+ * or 429, or a timeout-abort while a freshly-provisioned Turso DB is still
+ * warming its sync endpoints (observed: a brand-new DB answers `/health` 200 in
+ * under a second but aborts the sync push/pull for the first couple of minutes).
+ * Keeps a transient hiccup from failing the whole sync cycle. A caller-initiated
+ * abort (daemon shutdown) is never retried.
+ */
+export function createRetryingFetch(inner: typeof fetch, attempts = 3): typeof fetch {
+  return async (input, init) => {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        const res = await inner(input, init);
+        if ((res.status >= 500 || res.status === 429) && attempt < attempts - 1) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 250 * (attempt + 1));
+          });
+          continue;
+        }
+        return res;
+      } catch (err) {
+        lastErr = err;
+        if (init?.signal?.aborted) throw err;
+        if (attempt < attempts - 1) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 250 * (attempt + 1));
+          });
+          continue;
+        }
+      }
+    }
+    throw lastErr;
   };
 }
 

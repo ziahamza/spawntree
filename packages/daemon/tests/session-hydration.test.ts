@@ -15,6 +15,8 @@ import {
 import { DomainEvents } from "../src/events/domain-events.ts";
 import { SessionManager } from "../src/sessions/session-manager.ts";
 import { StorageManager } from "../src/storage/manager.ts";
+import { applyCatalogSchema } from "../src/catalog/queries.ts";
+import { upsertSession } from "../src/sessions/persistence.ts";
 
 /**
  * Prove the hydration path: `persistSessionEvent` deliberately skips
@@ -204,5 +206,80 @@ describe("SessionManager turn hydration", () => {
     // Both turns should still have been persisted — hydration failure
     // doesn't block other writes.
     expect(ids).toEqual(["t-after", "t-fail"]);
+  });
+});
+
+describe("SessionManager boot-import bound (large-history safety)", () => {
+  let tmp: string;
+  let storage: StorageManager;
+  let manager: SessionManager | undefined;
+  let originalClaudeHome: string | undefined;
+  let originalMax: string | undefined;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(resolve(tmpdir(), "spawntree-bootbound-"));
+    originalClaudeHome = process.env["CLAUDE_CONFIG_DIR"];
+    originalMax = process.env["SPAWNTREE_BOOT_IMPORT_MAX"];
+    // Isolate disk discovery from the developer's real ~/.claude/projects.
+    process.env["CLAUDE_CONFIG_DIR"] = resolve(tmp, "claude");
+    process.env["SPAWNTREE_BOOT_IMPORT_MAX"] = "2";
+  });
+
+  afterEach(async () => {
+    await manager?.shutdown().catch(() => undefined);
+    await storage.stop().catch(() => undefined);
+    rmSync(tmp, { recursive: true, force: true });
+    if (originalClaudeHome === undefined) delete process.env["CLAUDE_CONFIG_DIR"];
+    else process.env["CLAUDE_CONFIG_DIR"] = originalClaudeHome;
+    if (originalMax === undefined) delete process.env["SPAWNTREE_BOOT_IMPORT_MAX"];
+    else process.env["SPAWNTREE_BOOT_IMPORT_MAX"] = originalMax;
+  });
+
+  it("only adopts the most-recent N catalog sessions on boot, leaving the rest catalog-only", async () => {
+    storage = new StorageManager({ dataDir: tmp, logger: () => undefined });
+    await storage.start();
+    await applyCatalogSchema(storage.client);
+    const catalog = drizzle(storage.client, { schema });
+    // Seed 3 claude-code sessions (ascending updatedAt; the cap keeps the newest).
+    for (let i = 0; i < 3; i++) {
+      await upsertSession(catalog, {
+        sessionId: `boot-s${i}`,
+        provider: "claude-code",
+        status: "idle",
+        workingDirectory: "/tmp/x",
+        title: `t${i}`,
+        totalTurns: 0,
+        startedAt: new Date(Date.UTC(2026, 0, i + 1)).toISOString(),
+        updatedAt: new Date(Date.UTC(2026, 0, i + 1)).toISOString(),
+        overwriteMetrics: true,
+      });
+    }
+
+    // Capture the boot logs to prove the cap fired (the adapter map is private).
+    const writes: string[] = [];
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+      writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const events = new DomainEvents();
+      manager = new SessionManager(events, { storage });
+      await manager.start();
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+
+    const out = writes.join("");
+    // Boot adopts only SPAWNTREE_BOOT_IMPORT_MAX (2) of the 3 catalog sessions.
+    expect(out).toContain("adopting the 2 most-recent of 3");
+    expect(out).toContain("adopted 2/2");
+    // The catalog keeps all 3 rows (they persist + sync to Turso, so the
+    // Studio's session list — which reads the catalog via the host fallback —
+    // still shows them). Only the live in-memory adapter view is bounded.
+    const catalogRows = await catalog.select().from(schema.sessions);
+    expect(catalogRows).toHaveLength(3);
+    const listed = await manager.listSessions();
+    expect(listed.filter((s) => s.provider === "claude-code")).toHaveLength(2);
   });
 });

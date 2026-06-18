@@ -15,5 +15,6 @@ export { findVarRefs, substituteVars } from "./config/substitution.ts";
 export * from "./db/index.ts";
 export { WorktreeManager } from "./env/worktree.ts";
 export { detectGitMetadata, type GitMetadata } from "./lib/git.ts";
+export * from "./sandbox/index.ts";
 export { type Service, type ServiceStatus } from "./services/interface.ts";
 export * from "./storage/index.ts";

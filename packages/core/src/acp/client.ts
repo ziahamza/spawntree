@@ -1,5 +1,3 @@
-import { spawn } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { Readable, Writable } from "node:stream";
 import type {
@@ -7,6 +5,8 @@ import type {
   WritableStream as NodeWritableStream,
 } from "node:stream/web";
 import * as acp from "@zed-industries/agent-client-protocol";
+import { hostSpawner } from "../sandbox/host-spawner.ts";
+import type { ProcessSpawner, SpawnedProcess } from "../sandbox/types.ts";
 
 /**
  * Zed Agent Client Protocol connection.
@@ -34,6 +34,14 @@ export interface ACPConnectionOptions {
   onStderr?: (line: string) => void;
   /** Default client options; ignored if `client` is provided. */
   defaultClient?: DefaultClientOptions;
+  /**
+   * Where to spawn the agent subprocess. Defaults to the host (today's
+   * behavior). Pass a sandbox-bound spawner to run the agent inside a
+   * container/VM — the ACP layer above is unchanged.
+   */
+  spawner?: ProcessSpawner;
+  /** Working directory for the spawned agent. Forwarded to the spawner. */
+  cwd?: string;
 }
 
 export interface DefaultClientOptions {
@@ -68,7 +76,7 @@ export type SessionUpdateDispatch = (notification: acp.SessionNotification) => v
 export class ACPConnection {
   private readonly options: ACPConnectionOptions;
   private readonly sessionUpdateHandlers = new Set<SessionUpdateDispatch>();
-  private proc: ChildProcess | null = null;
+  private proc: SpawnedProcess | null = null;
   private conn: acp.ClientSideConnection | null = null;
 
   constructor(options: ACPConnectionOptions) {
@@ -79,9 +87,10 @@ export class ACPConnection {
     if (this.isAlive) return;
 
     const label = this.options.label ?? this.options.command;
-    this.proc = spawn(this.options.command, (this.options.args ?? []) as string[], {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...this.options.env },
+    const spawner = this.options.spawner ?? hostSpawner;
+    this.proc = await spawner.spawn(this.options.command, this.options.args ?? [], {
+      env: this.options.env,
+      cwd: this.options.cwd,
     });
 
     if (!this.proc.stdout || !this.proc.stdin) {

@@ -1,4 +1,12 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { ContentBlock, SessionTurnData } from "spawntree-core";
@@ -341,13 +349,25 @@ export function listDiscoverableClaudeSessions(): DiscoverableClaudeSession[] {
  * something other than the agent).
  */
 function readCwdFromTranscript(jsonlPath: string): string | null {
-  let raw: string;
+  // The cwd lives on the first JSON line, so read only the head of the file
+  // instead of the whole thing. This runs for EVERY discoverable session on
+  // the boot discovery pass, and transcripts run to tens of MB — reading them
+  // all in full blocked the event loop long enough to abort the Turso sync and
+  // starve the heartbeat on a machine with a large history.
+  let head: string;
   try {
-    raw = readFileSync(jsonlPath, "utf8");
+    const fd = openSync(jsonlPath, "r");
+    try {
+      const buf = Buffer.alloc(65536);
+      const bytesRead = readSync(fd, buf, 0, buf.length, 0);
+      head = buf.toString("utf8", 0, bytesRead);
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     return null;
   }
-  for (const line of raw.split("\n")) {
+  for (const line of head.split("\n")) {
     if (line.trim().length === 0) continue;
     try {
       const parsed = JSON.parse(line) as { cwd?: unknown };
@@ -355,7 +375,8 @@ function readCwdFromTranscript(jsonlPath: string): string | null {
         return parsed.cwd;
       }
     } catch {
-      // Corrupt line — keep scanning; valid lines may follow.
+      // Corrupt line, or a line truncated at the 64KB head boundary — keep
+      // scanning the lines we did read (the cwd is on the first line anyway).
     }
   }
   return null;

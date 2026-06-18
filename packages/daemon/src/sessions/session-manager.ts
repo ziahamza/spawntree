@@ -22,9 +22,11 @@ import {
   SessionDeleteUnsupportedError,
   UnknownProviderError,
 } from "spawntree-core";
+import type { NewSessionSandbox } from "spawntree-core";
 import { drizzle } from "drizzle-orm/libsql";
 import type { DomainEvents } from "../events/domain-events.ts";
 import { applyCatalogSchema } from "../catalog/queries.ts";
+import type { SandboxManager } from "../sandbox/manager.ts";
 import type { StorageManager } from "../storage/manager.ts";
 import {
   abortPendingApprovalsOnRestart,
@@ -43,6 +45,37 @@ import {
   parseClaudeJsonl,
   resolveClaudeJsonlPath,
 } from "./claude-jsonl.ts";
+
+/**
+ * Cap on how many sessions are eagerly adopted into the live adapter on boot.
+ * Adopting every session retains its full transcript in memory (a large
+ * history OOMs the daemon — `invalid array length` at ~2.4GB on a 1430-session
+ * box) and the synchronous parse/import blocks the single event loop, which
+ * aborts the Turso sync fetch and starves the host heartbeat. Sessions past
+ * the cap stay in the catalog — still listed via `listSessions()` and readable
+ * via `getPersistedSessionDetail()` (both query the catalog, not the adapter
+ * map) — and are re-adopted lazily on access. Override with
+ * `SPAWNTREE_BOOT_IMPORT_MAX`.
+ */
+function bootImportMax(): number {
+  const raw = Number.parseInt(process.env["SPAWNTREE_BOOT_IMPORT_MAX"] ?? "", 10);
+  // Default 200: ~200 retained transcripts stays well under the default V8 heap
+  // (~2GB). 500 reached ~1.9GB on a 1430-session box, where the GC pressure
+  // stalled the loop and aborted the sync. Raise it when the daemon runs with
+  // more --max-old-space-size headroom.
+  return Number.isFinite(raw) && raw > 0 ? raw : 200;
+}
+
+/** How many boot-import iterations to run before yielding to the event loop. */
+const BOOT_IMPORT_YIELD_EVERY = 25;
+
+/** Yield control so a long boot import doesn't starve the HTTP server, the
+ *  Turso background sync, or the host heartbeat. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
 
 /** Pending approval entry held while a tool call awaits user response. */
 interface PendingApproval {
@@ -87,6 +120,8 @@ export class SessionManager {
    */
   private readonly catalog: CatalogDb | null;
   private readonly storage: StorageManager | null;
+  /** When present, sessions can be created inside provider-managed sandboxes. */
+  private readonly sandboxManager: SandboxManager | null;
   /**
    * Per-session promise chain so adapter events land in the catalog in
    * the order they were emitted. Without this, `turn_completed` may
@@ -134,19 +169,29 @@ export class SessionManager {
    */
   private readonly gitMetadataCache = new Map<string, GitMetadata>();
 
-  constructor(events: DomainEvents, options: { storage?: StorageManager } = {}) {
+  constructor(
+    events: DomainEvents,
+    options: { storage?: StorageManager; sandboxManager?: SandboxManager } = {},
+  ) {
     this.events = events;
     this.storage = options.storage ?? null;
+    this.sandboxManager = options.sandboxManager ?? null;
     this.catalog = options.storage
       ? drizzle(options.storage.client, { schema: catalogSchema })
       : null;
 
     // Register built-in adapters. Additional adapters can be added via
-    // `registerAdapter()` before the manager is used.
+    // `registerAdapter()` before the manager is used. When a SandboxManager
+    // is present, wire the Claude adapter so `{ sandboxId }` sessions exec
+    // their agent inside the container instead of on the host.
+    const sandboxManager = options.sandboxManager;
     this.adapters.set(
       "claude-code",
       new ClaudeCodeAdapter({
         permissionHandler: (params) => this.handlePermissionRequest(params),
+        ...(sandboxManager
+          ? { sandboxSpawnerProvider: (id: string) => sandboxManager.spawnerFor(id) }
+          : {}),
       }),
     );
     this.adapters.set("codex", new CodexACPAdapter());
@@ -216,9 +261,20 @@ export class SessionManager {
     const ids = await listPersistedSessionIdsByProvider(this.catalog, "claude-code");
     if (ids.length === 0) return;
 
+    // Bound boot adoption + yield between sessions so a large history doesn't
+    // OOM or block the loop. `ids` is ordered most-recent-first, so the tail
+    // stays catalog-only until accessed (see `bootImportMax`).
+    const maxAdopt = bootImportMax();
+    const adoptIds = ids.length > maxAdopt ? ids.slice(0, maxAdopt) : ids;
+    if (adoptIds.length < ids.length) {
+      process.stderr.write(
+        `[spawntree-daemon] adopting the ${adoptIds.length} most-recent of ${ids.length} catalog sessions on boot (SPAWNTREE_BOOT_IMPORT_MAX=${maxAdopt}); the rest stay catalog-only until accessed\n`,
+      );
+    }
+
     let adopted = 0;
     let backfilled = 0;
-    for (const sessionId of ids) {
+    for (const [adoptIndex, sessionId] of adoptIds.entries()) {
       try {
         const snapshot = await loadAdoptableSession(this.catalog, sessionId);
         if (!snapshot) continue;
@@ -329,9 +385,10 @@ export class SessionManager {
           `[spawntree-daemon] adopt failed for session ${sessionId}: ${String(err)}\n`,
         );
       }
+      if ((adoptIndex + 1) % BOOT_IMPORT_YIELD_EVERY === 0) await yieldToEventLoop();
     }
     process.stderr.write(
-      `[spawntree-daemon] adopted ${adopted}/${ids.length} Claude Code sessions from catalog (backfilled ${backfilled} from .jsonl)\n`,
+      `[spawntree-daemon] adopted ${adopted}/${adoptIds.length} Claude Code sessions from catalog (backfilled ${backfilled} from .jsonl)\n`,
     );
   }
 
@@ -365,6 +422,19 @@ export class SessionManager {
     const candidates = listDiscoverableClaudeSessions();
     if (candidates.length === 0) return;
 
+    // Bound the on-disk import + yield, same rationale as catalog hydration.
+    // Already-known sessions are skipped below, so on a re-boot this mostly
+    // imports only new ones; the cap caps the first-boot burst on a machine
+    // with a large ~/.claude/projects history.
+    const maxImport = bootImportMax();
+    const importCandidates =
+      candidates.length > maxImport ? candidates.slice(0, maxImport) : candidates;
+    if (importCandidates.length < candidates.length) {
+      process.stderr.write(
+        `[spawntree-daemon] importing ${importCandidates.length} of ${candidates.length} on-disk Claude sessions this pass (SPAWNTREE_BOOT_IMPORT_MAX=${maxImport})\n`,
+      );
+    }
+
     // Cache git metadata per cwd — every session inside the same
     // `~/.claude/projects/<encoded-cwd>/` folder shares the same cwd, so
     // we avoid spawning N git invocations for N sessions.
@@ -372,7 +442,7 @@ export class SessionManager {
     let imported = 0;
     let skipped = 0;
 
-    for (const candidate of candidates) {
+    for (const [importIndex, candidate] of importCandidates.entries()) {
       try {
         const existing = await getPersistedSession(this.catalog, candidate.sessionId);
         if (existing) {
@@ -463,6 +533,7 @@ export class SessionManager {
           `[spawntree-daemon] discover failed for session ${candidate.sessionId}: ${String(err)}\n`,
         );
       }
+      if ((importIndex + 1) % BOOT_IMPORT_YIELD_EVERY === 0) await yieldToEventLoop();
     }
 
     process.stderr.write(
@@ -796,14 +867,33 @@ export class SessionManager {
    */
   async createSession(
     provider: string,
-    params: { cwd: string; mcpServers?: unknown[] },
+    params: {
+      cwd: string;
+      mcpServers?: unknown[];
+      sandboxId?: string;
+      newSandbox?: NewSessionSandbox;
+    },
   ): Promise<{ sessionId: string }> {
     const adapter = this.requireAdapter(provider);
     if (!adapter.createSession) {
       throw new ProviderCapabilityError(provider, "createSession");
     }
     this.subscribeToAdapter(provider, adapter);
-    const result = await adapter.createSession(params);
+
+    // Resolve the sandbox: attach to an existing one, or spin up an ephemeral
+    // sandbox for this session (mount-mode at the session cwd, so the agent
+    // sees the same worktree at the same path inside the container).
+    const sandboxId = await this.resolveSessionSandbox(
+      params.sandboxId,
+      params.newSandbox,
+      params.cwd,
+    );
+
+    const result = await adapter.createSession({
+      cwd: params.cwd,
+      mcpServers: params.mcpServers,
+      ...(sandboxId ? { sandboxId } : {}),
+    });
     // Index so subsequent operations route directly without iterating
     // every adapter's discoverSessions() (which would spawn subprocesses).
     this.sessionIndex.set(result.sessionId, provider);
@@ -824,6 +914,7 @@ export class SessionManager {
         provider,
         status: "idle",
         workingDirectory: params.cwd,
+        ...(sandboxId ? { sandboxId } : {}),
       }).catch((err) => {
         // Non-fatal: in-memory routing still works; surface on next write.
         process.stderr.write(
@@ -832,6 +923,34 @@ export class SessionManager {
       });
     }
     return result;
+  }
+
+  /**
+   * Resolve the sandbox a new session should run in. Returns the existing
+   * `sandboxId` if given, creates an ephemeral sandbox when `newSandbox` is
+   * requested, or `undefined` to run on the host (the default).
+   */
+  private async resolveSessionSandbox(
+    sandboxId: string | undefined,
+    newSandbox: NewSessionSandbox | undefined,
+    cwd: string,
+  ): Promise<string | undefined> {
+    if (sandboxId) return sandboxId;
+    if (!newSandbox) return undefined;
+    if (!this.sandboxManager) {
+      throw new Error("Cannot create a sandboxed session: no sandbox manager configured");
+    }
+    const providerId = this.sandboxManager.resolveProviderId(newSandbox.provider);
+    if (!providerId) {
+      throw new Error("No sandbox provider is available for an ephemeral session");
+    }
+    const sandbox = await this.sandboxManager.createSandbox(providerId, {
+      workspace: { mode: "mount", worktreePath: cwd },
+      ephemeral: true,
+      ...(newSandbox.image ? { image: newSandbox.image } : {}),
+      ...(newSandbox.resources ? { resources: newSandbox.resources } : {}),
+    });
+    return sandbox.id;
   }
 
   /**

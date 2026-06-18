@@ -15,12 +15,16 @@ import {
   GetEnvResponse,
   InfraStatusResponse,
   ListEnvsResponse,
+  ListSandboxesResponse,
   ListSessionsResponse,
   LogLine,
   PrepareRunResponse,
   PrepareStatusResponse,
   RegisterRepoResponse,
   RestoreDbResponse,
+  SandboxInfo,
+  SandboxLogLine,
+  SandboxProvidersResponse,
   SessionDetail,
   SessionEventPayload,
   StorageStatusResponse,
@@ -39,6 +43,7 @@ import type {
   ConfigSuggestRequest,
   ConfigTestRequest,
   CreateEnvRequest,
+  CreateSandboxRequest,
   CreateSessionRequest,
   DumpDbRequest,
   PrepareRunRequest,
@@ -405,6 +410,47 @@ export class ApiClient {
     }
 
     yield* parseSSE(response.body, SessionEventPayload);
+  }
+
+  // ─── Sandbox API ─────────────────────────────────────────────────────────
+
+  async listSandboxes() {
+    return this.request("/api/v1/sandboxes", { schema: ListSandboxesResponse });
+  }
+
+  async getSandboxProviders() {
+    return this.request("/api/v1/sandboxes/providers", { schema: SandboxProvidersResponse });
+  }
+
+  async createSandbox(body: CreateSandboxRequest) {
+    return this.request("/api/v1/sandboxes", { method: "POST", body, schema: SandboxInfo });
+  }
+
+  async getSandbox(id: string) {
+    return this.request(`/api/v1/sandboxes/${encodeURIComponent(id)}`, { schema: SandboxInfo });
+  }
+
+  async stopSandbox(id: string) {
+    return this.request(`/api/v1/sandboxes/${encodeURIComponent(id)}/stop`, { method: "POST" });
+  }
+
+  async restartSandbox(id: string) {
+    return this.request(`/api/v1/sandboxes/${encodeURIComponent(id)}/restart`, { method: "POST" });
+  }
+
+  async deleteSandbox(id: string) {
+    return this.request(`/api/v1/sandboxes/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async *streamSandboxLogs(id: string, signal?: AbortSignal): AsyncIterable<SandboxLogLine> {
+    const response = await this.fetchFn(
+      this.toUrl(`/api/v1/sandboxes/${encodeURIComponent(id)}/logs`),
+      { method: "GET", headers: { Accept: "text/event-stream" }, signal },
+    );
+    if (!response.ok || !response.body) {
+      throw await this.toClientError(response);
+    }
+    yield* parseSSE(response.body, SandboxLogLine);
   }
 
   getEventsUrl(since?: number) {

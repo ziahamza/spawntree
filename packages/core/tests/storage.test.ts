@@ -9,6 +9,7 @@ import {
   saveStorageConfig,
   type StorageContext,
 } from "../src/storage/index.ts";
+import { createRetryingFetch } from "../src/storage/sqlite.ts";
 
 describe("sqlite storage", () => {
   let tmp: string;
@@ -59,7 +60,7 @@ describe("sqlite storage", () => {
     const handle = await createSqliteStorage({}, ctx);
     try {
       const result = await handle.client.execute("PRAGMA busy_timeout");
-      expect(result.rows[0]?.busy_timeout).toBe(5000);
+      expect(result.rows[0]?.busy_timeout).toBe(15000);
     } finally {
       await handle.shutdown();
     }
@@ -275,5 +276,45 @@ describe("storage config persistence", () => {
     const path = resolve(tmp, "storage.json");
     writeFileSync(path, "{ not valid json");
     expect(loadStorageConfig(path)).toEqual({ syncMethod: "none" });
+  });
+});
+
+describe("createRetryingFetch", () => {
+  it("retries a transient throw, then returns the eventual success", async () => {
+    let calls = 0;
+    const flaky: typeof fetch = async () => {
+      calls += 1;
+      if (calls < 2) throw new Error("transient network blip");
+      return new Response("ok", { status: 200 });
+    };
+    const res = await createRetryingFetch(flaky)("http://example.test");
+    expect(res.status).toBe(200);
+    expect(calls).toBe(2);
+  });
+
+  it("retries a 5xx response, then returns the eventual success", async () => {
+    let calls = 0;
+    const flaky: typeof fetch = async () => {
+      calls += 1;
+      const ok = calls >= 3;
+      return new Response(ok ? "ok" : "busy", { status: ok ? 200 : 503 });
+    };
+    const res = await createRetryingFetch(flaky)("http://example.test");
+    expect(res.status).toBe(200);
+    expect(calls).toBe(3);
+  });
+
+  it("does not retry a caller-initiated abort (shutdown)", async () => {
+    let calls = 0;
+    const controller = new AbortController();
+    controller.abort();
+    const flaky: typeof fetch = async () => {
+      calls += 1;
+      throw new Error("aborted by caller");
+    };
+    await expect(
+      createRetryingFetch(flaky)("http://example.test", { signal: controller.signal }),
+    ).rejects.toThrow();
+    expect(calls).toBe(1);
   });
 });
