@@ -1,6 +1,6 @@
 {
   "name": "spawntree-daemon",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Native daemon resolver and build shim for spawntree",
   "license": "MIT",
   "repository": {

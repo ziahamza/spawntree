@@ -1,5 +1,12 @@
 # spawntree-browser
 
+## 0.0.7
+
+### Patch Changes
+
+- Updated dependencies []:
+  - spawntree-core@0.8.2
+
 ## 0.0.6
 
 ### Patch Changes

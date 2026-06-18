@@ -1,5 +1,13 @@
 # spawntree-core
 
+## 0.8.2
+
+### Patch Changes
+
+- Automated release from synced changes:
+  - Merge pull request [#64](https://github.com/ziahamza/spawntree/issues/64) from ziahamza/gitenv-upstream
+  - Sync from gitenv main: harden sqlite-sync storage (007 QA follow-ups)
+
 ## 0.8.1
 
 ## 0.8.0
