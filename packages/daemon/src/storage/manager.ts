@@ -63,15 +63,36 @@ export class StorageManager {
     this.config = validateStorageConfig(loadStorageConfig(this.configPath));
   }
 
+  // A stable handle to the current sqlite client. Consumers — notably the
+  // daemon's Drizzle catalog (DaemonService) — capture `storage.client` ONCE at
+  // construction. Without a stable wrapper, a later applyConfig() reconfiguration
+  // swaps in a fresh client and closes the old one, leaving every captured
+  // reference pointing at a closed connection until the daemon restarts (this
+  // fires on the common first-provisioning none -> turso swap). This proxy always
+  // routes to the live client, so a captured reference transparently follows
+  // reconfigurations.
+  private readonly clientProxy: SqliteStorageHandle["client"] = new Proxy(
+    {} as SqliteStorageHandle["client"],
+    {
+      get: (_target, prop) => {
+        if (!this.sqlite) {
+          throw new Error("StorageManager.start() must be called before accessing client");
+        }
+        if (this.reconfiguring) {
+          throw new Error("STORAGE_RECONFIGURING: sqlite sync reconfiguration in progress");
+        }
+        const live = this.sqlite.client as unknown as Record<string | symbol, unknown>;
+        const value = live[prop];
+        return typeof value === "function"
+          ? (value as (...args: unknown[]) => unknown).bind(this.sqlite.client)
+          : value;
+      },
+    },
+  );
+
   /** The active libSQL client. Throws if `start()` hasn't completed yet. */
-  get client() {
-    if (!this.sqlite) {
-      throw new Error("StorageManager.start() must be called before accessing client");
-    }
-    if (this.reconfiguring) {
-      throw new Error("STORAGE_RECONFIGURING: sqlite sync reconfiguration in progress");
-    }
-    return this.sqlite.client;
+  get client(): SqliteStorageHandle["client"] {
+    return this.clientProxy;
   }
 
   async start(): Promise<void> {

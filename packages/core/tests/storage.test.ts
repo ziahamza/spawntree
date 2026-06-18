@@ -52,6 +52,19 @@ describe("sqlite storage", () => {
     }
   });
 
+  it("sets a busy timeout so a sync frame-apply never surfaces as a locked error", async () => {
+    // The background sync loop applies WAL frames off the transactionMutex; a
+    // busy timeout makes a colliding local write retry internally instead of
+    // throwing "database is locked".
+    const handle = await createSqliteStorage({}, ctx);
+    try {
+      const result = await handle.client.execute("PRAGMA busy_timeout");
+      expect(result.rows[0]?.busy_timeout).toBe(5000);
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
   it("keeps local queries responsive while a network sync is waiting", async () => {
     const sockets = new Set<Socket>();
     const server = createServer((socket) => {
@@ -242,7 +255,7 @@ describe("storage config persistence", () => {
     });
   });
 
-  it("rejects legacy provider-shaped config", () => {
+  it("falls back to the default for a legacy provider-shaped config (no boot crash)", () => {
     const path = resolve(tmp, "storage.json");
     writeFileSync(
       path,
@@ -251,6 +264,16 @@ describe("storage config persistence", () => {
         replicators: [],
       }),
     );
-    expect(() => loadStorageConfig(path)).toThrow();
+    // A daemon upgraded from the old provider model has this shape on disk.
+    // loadStorageConfig runs in the StorageManager constructor, so it must not
+    // throw — it falls back to the local-only default and lets host-config-sync
+    // repopulate, instead of crash-looping the daemon.
+    expect(loadStorageConfig(path)).toEqual({ syncMethod: "none" });
+  });
+
+  it("falls back to the default for a corrupt (non-JSON) config file", () => {
+    const path = resolve(tmp, "storage.json");
+    writeFileSync(path, "{ not valid json");
+    expect(loadStorageConfig(path)).toEqual({ syncMethod: "none" });
   });
 });
