@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { SandboxStatus } from "../sandbox/types.ts";
 
 export const RepoId = Schema.String;
 export type RepoId = Schema.Schema.Type<typeof RepoId>;
@@ -695,10 +696,31 @@ export const ListSessionsResponse = Schema.Struct({
 });
 export type ListSessionsResponse = Schema.Schema.Type<typeof ListSessionsResponse>;
 
+/**
+ * Optional sandbox to spin up just for a session (torn down when it ends).
+ * The workspace is derived by the daemon from the session's `cwd`, so the
+ * composer only chooses provider/image/resources.
+ */
+export const NewSessionSandbox = Schema.Struct({
+  provider: Schema.optional(Schema.String),
+  image: Schema.optional(Schema.String),
+  resources: Schema.optional(
+    Schema.Struct({
+      cpus: Schema.optional(Schema.Number),
+      memoryMb: Schema.optional(Schema.Number),
+    }),
+  ),
+});
+export type NewSessionSandbox = Schema.Schema.Type<typeof NewSessionSandbox>;
+
 export const CreateSessionRequest = Schema.Struct({
   provider: SessionProvider,
   cwd: Schema.String,
   mcpServers: Schema.optional(Schema.Array(Schema.Unknown)),
+  /** Run the session inside this existing sandbox. */
+  sandboxId: Schema.optional(Schema.String),
+  /** Or create an ephemeral sandbox for this session. Ignored if `sandboxId` is set. */
+  newSandbox: Schema.optional(NewSessionSandbox),
 });
 export type CreateSessionRequest = Schema.Schema.Type<typeof CreateSessionRequest>;
 
@@ -712,6 +734,77 @@ export const SendSessionMessageRequest = Schema.Struct({
   content: Schema.String,
 });
 export type SendSessionMessageRequest = Schema.Schema.Type<typeof SendSessionMessageRequest>;
+
+// ─── Sandbox API ─────────────────────────────────────────────────────────
+
+export const SandboxWorkspaceSpec = Schema.Union([
+  Schema.Struct({ mode: Schema.Literal("mount"), worktreePath: Schema.String }),
+  Schema.Struct({
+    mode: Schema.Literal("clone"),
+    repoUrl: Schema.String,
+    ref: Schema.String,
+    containerPath: Schema.String,
+  }),
+]);
+export type SandboxWorkspaceSpec = Schema.Schema.Type<typeof SandboxWorkspaceSpec>;
+
+export const SandboxResources = Schema.Struct({
+  cpus: Schema.optional(Schema.Number),
+  memoryMb: Schema.optional(Schema.Number),
+});
+
+export const CreateSandboxRequest = Schema.Struct({
+  /** Provider id ("docker" | "apple-container"); falls back to the daemon default. */
+  provider: Schema.optional(Schema.String),
+  workspace: SandboxWorkspaceSpec,
+  image: Schema.optional(Schema.String),
+  env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  resources: Schema.optional(SandboxResources),
+  ephemeral: Schema.optional(Schema.Boolean),
+  repoId: Schema.optional(Schema.String),
+  labels: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+export type CreateSandboxRequest = Schema.Schema.Type<typeof CreateSandboxRequest>;
+
+export const SandboxInfo = Schema.Struct({
+  id: Schema.String,
+  providerId: Schema.String,
+  runtimeId: Schema.String,
+  name: Schema.NullOr(Schema.String),
+  managed: Schema.Boolean,
+  status: SandboxStatus,
+  image: Schema.String,
+  workspaceMode: Schema.Literals(["mount", "clone"]),
+  mounts: Schema.Array(
+    Schema.Struct({
+      host: Schema.String,
+      container: Schema.String,
+      mode: Schema.optional(Schema.String),
+    }),
+  ),
+  labels: Schema.Record(Schema.String, Schema.String),
+  ephemeral: Schema.Boolean,
+  repoId: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+});
+export type SandboxInfo = Schema.Schema.Type<typeof SandboxInfo>;
+
+export const ListSandboxesResponse = Schema.Struct({
+  sandboxes: Schema.Array(SandboxInfo),
+});
+export type ListSandboxesResponse = Schema.Schema.Type<typeof ListSandboxesResponse>;
+
+export const SandboxProvidersResponse = Schema.Struct({
+  providers: Schema.Array(Schema.Struct({ id: Schema.String, available: Schema.Boolean })),
+});
+export type SandboxProvidersResponse = Schema.Schema.Type<typeof SandboxProvidersResponse>;
+
+export const SandboxLogLine = Schema.Struct({
+  stream: Schema.Literals(["stdout", "stderr", "system"]),
+  line: Schema.String,
+});
+export type SandboxLogLine = Schema.Schema.Type<typeof SandboxLogLine>;
 
 /**
  * Permission option offered by the agent on a `request_permission` RPC.

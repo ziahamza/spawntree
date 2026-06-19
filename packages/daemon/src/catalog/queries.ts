@@ -1,9 +1,11 @@
 import type { Client } from "@libsql/client";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import {
+  BASELINE_ALTERS,
   BASELINE_DDL,
   type CatalogDb,
   clones,
+  isIdempotentDdlError,
   registeredRepos,
   repos,
   watchedPaths,
@@ -22,6 +24,15 @@ import type { Clone, RegisteredRepo, Repo, WatchedPath, Worktree } from "spawntr
 export async function applyCatalogSchema(client: Client): Promise<void> {
   for (const stmt of BASELINE_DDL) {
     await client.execute(stmt);
+  }
+  // Upgrade pre-existing DBs missing newer columns. Idempotent: duplicate-column
+  // errors (fresh DBs already have them from BASELINE_DDL) are swallowed.
+  for (const stmt of BASELINE_ALTERS) {
+    try {
+      await client.execute(stmt);
+    } catch (err) {
+      if (!isIdempotentDdlError(err)) throw err;
+    }
   }
 }
 

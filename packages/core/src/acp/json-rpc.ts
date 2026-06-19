@@ -1,7 +1,7 @@
-import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
+import { hostSpawner } from "../sandbox/host-spawner.ts";
+import type { ProcessSpawner, SpawnedProcess } from "../sandbox/types.ts";
 
 /**
  * JSON-RPC 2.0 transport over stdio. Used by adapters that wrap agents
@@ -16,6 +16,13 @@ export interface JsonRpcTransportOptions {
   env?: NodeJS.ProcessEnv;
   /** Callback for raw stderr lines; if omitted, lines are logged to console.error. */
   onStderr?: (line: string) => void;
+  /**
+   * Where to spawn the subprocess. Defaults to the host (today's behavior).
+   * Pass a sandbox-bound spawner to run the agent inside a container/VM.
+   */
+  spawner?: ProcessSpawner;
+  /** Working directory for the spawned process. Forwarded to the spawner. */
+  cwd?: string;
 }
 
 export class JsonRpcTransport extends EventEmitter {
@@ -24,8 +31,10 @@ export class JsonRpcTransport extends EventEmitter {
   private readonly label: string;
   private readonly extraEnv: NodeJS.ProcessEnv | undefined;
   private readonly onStderr: ((line: string) => void) | undefined;
+  private readonly spawner: ProcessSpawner;
+  private readonly cwd: string | undefined;
 
-  private proc: ChildProcess | null = null;
+  private proc: SpawnedProcess | null = null;
   private requestId = 0;
   private readonly pending = new Map<
     number,
@@ -44,12 +53,14 @@ export class JsonRpcTransport extends EventEmitter {
     this.label = options.label ?? command;
     this.extraEnv = options.env;
     this.onStderr = options.onStderr;
+    this.spawner = options.spawner ?? hostSpawner;
+    this.cwd = options.cwd;
   }
 
   async start(): Promise<void> {
-    this.proc = spawn(this.command, this.args as string[], {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...this.extraEnv },
+    this.proc = await this.spawner.spawn(this.command, this.args, {
+      env: this.extraEnv,
+      cwd: this.cwd,
     });
 
     if (!this.proc.stdout || !this.proc.stdin) {

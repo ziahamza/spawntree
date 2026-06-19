@@ -96,6 +96,8 @@ export function createSessionRoutes(manager: SessionManager) {
       const result = await manager.createSession(body.provider, {
         cwd: body.cwd,
         mcpServers: body.mcpServers as unknown[] | undefined,
+        ...(body.sandboxId ? { sandboxId: body.sandboxId } : {}),
+        ...(body.newSandbox ? { newSandbox: body.newSandbox } : {}),
       });
       return c.json({ sessionId: result.sessionId, provider: body.provider }, 201);
     } catch (error) {

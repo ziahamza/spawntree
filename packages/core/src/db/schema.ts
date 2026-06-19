@@ -119,6 +119,48 @@ export const registeredRepos = sqliteTable("registered_repos", {
   lastSeenAt: text("last_seen_at").notNull(),
 });
 
+// ─── Sandboxes ───────────────────────────────────────────────────────────
+//
+// Provider-managed containers/VMs the daemon runs sessions inside. The
+// runtime (Docker, Apple `container`) owns the live container; this row is
+// the durable mirror so sandboxes survive daemon restart (re-adopted by
+// `runtime_id`), ride along with the S3 snapshot replicator, and are
+// queryable by external Drizzle clients. `sessions.sandbox_id` links a
+// session to the sandbox it ran in (null = ran on the host).
+
+export const sandboxes = sqliteTable(
+  "sandboxes",
+  {
+    /** spawntree sandbox id, "sbx_<uuidv7>". */
+    id: text("id").primaryKey(),
+    /** "docker" | "apple-container". */
+    providerId: text("provider_id").notNull(),
+    /** Container id assigned by the runtime. Used to re-adopt after restart. */
+    runtimeId: text("runtime_id").notNull(),
+    /** Matches `SandboxStatus`. */
+    status: text("status").notNull(),
+    image: text("image").notNull(),
+    /** "mount" | "clone". */
+    workspaceMode: text("workspace_mode").notNull(),
+    /** Soft link to a spawntree repo; nullable, no FK (the row outlives repos). */
+    repoId: text("repo_id"),
+    /** 0/1 — torn down with its owning session when set. */
+    ephemeral: integer("ephemeral").notNull().default(0),
+    /** Serialised `BindMount[]`. */
+    mounts: text("mounts", { mode: "json" })
+      .$type<Array<{ host: string; container: string; mode?: string }>>()
+      .notNull(),
+    /** Serialised label bag (spawntree.* + user labels). */
+    labels: text("labels", { mode: "json" }).$type<Record<string, string>>().notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("sandboxes_provider_idx").on(table.providerId),
+    index("sandboxes_status_idx").on(table.status),
+  ],
+);
+
 // ─── ACP sessions ────────────────────────────────────────────────────────
 //
 // Persist ACP session metadata + turn log + tool-call log in the catalog so
@@ -146,6 +188,8 @@ export const sessions = sqliteTable(
     gitBranch: text("git_branch"),
     gitHeadCommit: text("git_head_commit"),
     gitRemoteUrl: text("git_remote_url"),
+    /** Sandbox the session runs in, or null if it runs on the host. */
+    sandboxId: text("sandbox_id"),
     totalTurns: integer("total_turns").notNull().default(0),
     startedAt: text("started_at"),
     updatedAt: text("updated_at").notNull(),
@@ -225,6 +269,7 @@ export const schema = {
   watchedPaths,
   registeredRepos,
   pickedFolders,
+  sandboxes,
   sessions,
   sessionTurns,
   sessionToolCalls,
@@ -243,6 +288,8 @@ export type WatchedPathRow = typeof watchedPaths.$inferSelect;
 export type NewWatchedPathRow = typeof watchedPaths.$inferInsert;
 export type RegisteredRepoRow = typeof registeredRepos.$inferSelect;
 export type NewRegisteredRepoRow = typeof registeredRepos.$inferInsert;
+export type SandboxRow = typeof sandboxes.$inferSelect;
+export type NewSandboxRow = typeof sandboxes.$inferInsert;
 export type PickedFolderRow = typeof pickedFolders.$inferSelect;
 export type NewPickedFolderRow = typeof pickedFolders.$inferInsert;
 export type SessionRow = typeof sessions.$inferSelect;
@@ -318,6 +365,22 @@ export const BASELINE_DDL: ReadonlyArray<string> = [
     config_path TEXT NOT NULL,
     last_seen_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS sandboxes (
+    id TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL,
+    runtime_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    image TEXT NOT NULL,
+    workspace_mode TEXT NOT NULL,
+    repo_id TEXT,
+    ephemeral INTEGER NOT NULL DEFAULT 0,
+    mounts TEXT NOT NULL,
+    labels TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS sandboxes_provider_idx ON sandboxes(provider_id)`,
+  `CREATE INDEX IF NOT EXISTS sandboxes_status_idx ON sandboxes(status)`,
   `CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
     provider TEXT NOT NULL,
@@ -327,6 +390,7 @@ export const BASELINE_DDL: ReadonlyArray<string> = [
     git_branch TEXT,
     git_head_commit TEXT,
     git_remote_url TEXT,
+    sandbox_id TEXT,
     total_turns INTEGER NOT NULL DEFAULT 0,
     started_at TEXT,
     updated_at TEXT NOT NULL
@@ -363,6 +427,28 @@ export const BASELINE_DDL: ReadonlyArray<string> = [
   `CREATE INDEX IF NOT EXISTS session_tool_calls_session_id_idx ON session_tool_calls(session_id)`,
   `CREATE INDEX IF NOT EXISTS session_tool_calls_turn_id_idx ON session_tool_calls(turn_id)`,
 ];
+
+/**
+ * Idempotent `ALTER TABLE … ADD COLUMN` statements layered on top of
+ * `BASELINE_DDL` to upgrade databases created before a column existed.
+ * SQLite has no `ADD COLUMN IF NOT EXISTS`, so these are run with
+ * duplicate-column errors swallowed (see `isIdempotentDdlError`). Fresh
+ * databases already get the column from the `CREATE TABLE` above, so the
+ * ALTER no-ops there too.
+ */
+export const BASELINE_ALTERS: ReadonlyArray<string> = [
+  "ALTER TABLE sessions ADD COLUMN sandbox_id TEXT",
+];
+
+/**
+ * True when a DDL error is the benign "this already exists" kind that makes a
+ * baseline ALTER safe to re-run. Used by the catalog bootstrap to keep
+ * `BASELINE_ALTERS` idempotent without a separate schema-version table.
+ */
+export function isIdempotentDdlError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /duplicate column name/i.test(msg) || /already exists/i.test(msg);
+}
 
 // Re-export `sql` so external consumers can build raw clauses without a
 // separate drizzle-orm import. `eq`, `and`, `or`, etc. can be imported from

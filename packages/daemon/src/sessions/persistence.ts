@@ -50,6 +50,8 @@ export async function upsertSession(
     gitBranch?: string | null;
     gitHeadCommit?: string | null;
     gitRemoteUrl?: string | null;
+    /** Sandbox the session runs in, or null/undefined if it runs on the host. */
+    sandboxId?: string | null;
     totalTurns?: number;
     startedAt?: string | null;
     /**
@@ -82,6 +84,10 @@ export async function upsertSession(
     gitBranch: input.gitBranch ?? null,
     gitHeadCommit: input.gitHeadCommit ?? null,
     gitRemoteUrl: input.gitRemoteUrl ?? null,
+    // Only overwrite sandbox_id when the caller explicitly provided it.
+    // The discovery loop upserts without it on every tick; clobbering to
+    // null there would detach a session from its sandbox.
+    ...(input.sandboxId !== undefined ? { sandboxId: input.sandboxId } : {}),
     updatedAt,
   };
   const conflictSet = input.overwriteMetrics
@@ -102,6 +108,7 @@ export async function upsertSession(
       gitBranch: input.gitBranch ?? null,
       gitHeadCommit: input.gitHeadCommit ?? null,
       gitRemoteUrl: input.gitRemoteUrl ?? null,
+      sandboxId: input.sandboxId ?? null,
       totalTurns: input.totalTurns ?? 0,
       startedAt: input.startedAt ?? updatedAt,
       updatedAt,

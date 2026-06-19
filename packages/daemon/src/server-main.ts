@@ -18,6 +18,7 @@ import {
   saveRuntimeMetadata,
   spawntreeHome,
 } from "./state/global-state.ts";
+import { SandboxManager } from "./sandbox/manager.ts";
 import { HostConfigSync } from "./storage/host-sync.ts";
 import { StorageManager } from "./storage/manager.ts";
 
@@ -48,6 +49,13 @@ async function main() {
   const storage = new StorageManager({ dataDir: spawntreeHome() });
   await storage.start();
 
+  // Sandbox providers (Docker / Apple `container`). Boot after storage (it
+  // owns the catalog client the manager persists into) and before the
+  // SessionManager (which is wired to spawn agents into sandboxes via the
+  // manager's `spawnerFor`). Re-adopts any sandboxes that survived a restart.
+  const sandboxManager = new SandboxManager({ storage, dataDir: spawntreeHome() });
+  await sandboxManager.start();
+
   // If a host binding is in effect, reconcile the managed sync config before
   // catalog DDL. Terminal host rejections abort startup; non-terminal missing
   // config leaves the current local sqlite catalog untouched while polling.
@@ -73,7 +81,7 @@ async function main() {
   const domainEvents = await runtime.runPromise(
     DaemonService.use((service) => service.domainEvents),
   );
-  const sessionManager = new SessionManager(domainEvents, { storage });
+  const sessionManager = new SessionManager(domainEvents, { storage, sandboxManager });
   await sessionManager.start();
   void storage.syncNow().catch((error) => {
     process.stderr.write(
@@ -102,7 +110,7 @@ async function main() {
     );
   }
 
-  const app = createApp(runtime, { storage, sessionManager, hostSync });
+  const app = createApp(runtime, { storage, sessionManager, hostSync, sandboxManager });
   const listener = getRequestListener(app.fetch);
   // Wrap the listener so node:http sees a void-returning callback. The
   // underlying `listener` returns Promise<void> (Hono's async fetch), which
@@ -151,6 +159,9 @@ async function main() {
         // Tear down the session manager first so ACP adapter subprocesses
         // release before the runtime disposes the services they might use.
         await sessionManager.shutdown().catch(() => undefined);
+        // Stop sandbox watchers (does NOT stop user containers — they
+        // outlive a daemon restart and are re-adopted on next boot).
+        await sandboxManager.stop().catch(() => undefined);
         await hostSync?.stop().catch(() => undefined);
         await runtime
           .runPromise(DaemonService.use((service) => service.shutdown))

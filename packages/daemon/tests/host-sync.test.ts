@@ -6,7 +6,11 @@ import { schema } from "spawntree-core";
 import { drizzle } from "drizzle-orm/libsql";
 import { eq } from "drizzle-orm";
 import { StorageManager } from "../src/storage/manager.ts";
-import { HostConfigSync } from "../src/storage/host-sync.ts";
+import {
+  HostConfigSync,
+  DAEMON_CONFIG_CONTRACT_VERSION,
+  CONFIG_VERSION_HEADER,
+} from "../src/storage/host-sync.ts";
 import { applyCatalogSchema } from "../src/catalog/queries.ts";
 
 /**
@@ -317,6 +321,102 @@ describe("HostConfigSync", () => {
     await expect(sync.refreshNow()).resolves.toBeUndefined();
     expect(sync.getStatus().state).toBe("error");
     await sync.stop();
+  });
+
+  // ── Config-contract version negotiation ────────────────────────────────
+  // The daemon advertises the config SHAPE it speaks and refuses to apply a
+  // shape it doesn't understand — turning the pre-v2 "applyConfig failed:
+  // reading 'id'" crash into a clear, actionable "update required".
+
+  it("sends X-Spawntree-Config-Version on the config poll", async () => {
+    const { fetch, calls } = makeStubFetch([jsonResponse(LOCAL_SYNC_CONFIG)]);
+    const sync = new HostConfigSync({
+      binding: { url: "http://controller:7777", key: TEST_KEY },
+      manager,
+      fetch,
+      pollIntervalMs: 60_000,
+      logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
+    });
+    await sync.refreshNow();
+    await sync.stop();
+
+    const ver =
+      calls[0]!.headers[CONFIG_VERSION_HEADER] ||
+      calls[0]!.headers[CONFIG_VERSION_HEADER.toLowerCase()];
+    expect(ver).toBe(String(DAEMON_CONFIG_CONTRACT_VERSION));
+  });
+
+  it("on 426: state=error 'update required', non-terminal, local config untouched", async () => {
+    const { fetch } = makeStubFetch([
+      new Response(JSON.stringify({ code: "DAEMON_TOO_OLD", error: "daemon too old" }), {
+        status: 426,
+        headers: { "content-type": "application/json" },
+      }),
+      // A second response the loop would consume on retry — present so the
+      // test can assert the retry stays scheduled (non-terminal) without
+      // the stub running dry.
+      jsonResponse(LOCAL_SYNC_CONFIG),
+    ]);
+    const sync = new HostConfigSync({
+      binding: { url: "http://controller:7777", key: TEST_KEY },
+      manager,
+      fetch,
+      pollIntervalMs: 60_000,
+      // Long backoff so the scheduled retry can't fire mid-test.
+      backoffSequenceMs: [10_000],
+      logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
+    });
+
+    await sync.refreshNow();
+    const status = sync.getStatus();
+    expect(status.state).toBe("error");
+    if (status.state === "error") {
+      expect(status.error).toMatch(/update required/i);
+      // Non-terminal: a 426 self-resolves once the app updates (which
+      // restarts the daemon), so we keep polling rather than going terminal.
+      expect(status.terminal).toBeFalsy();
+    }
+    await sync.stop();
+
+    // The local sqlite config must be untouched (still the default `none`).
+    const managerStatus = await manager.status();
+    expect(managerStatus.sync.method).toBe("none");
+  });
+
+  it("refuses a host response whose contractVersion is newer than the daemon supports", async () => {
+    // Self-defense: even without a 426, a host that DECLARES a newer config
+    // shape must not have that shape blindly applied. The daemon surfaces
+    // "update required" and leaves its local config untouched.
+    const { fetch } = makeStubFetch([
+      jsonResponse({
+        config: { syncMethod: "turso", turso: { url: "libsql://x.turso.io", authToken: "t" } },
+        contractVersion: DAEMON_CONFIG_CONTRACT_VERSION + 1,
+      }),
+    ]);
+    const sync = new HostConfigSync({
+      binding: { url: "http://controller:7777", key: TEST_KEY },
+      manager,
+      fetch,
+      pollIntervalMs: 60_000,
+      backoffSequenceMs: [10_000],
+      logger: () => undefined,
+      fingerprintOverride: TEST_FINGERPRINT,
+    });
+
+    await sync.refreshNow();
+    const status = sync.getStatus();
+    expect(status.state).toBe("error");
+    if (status.state === "error") {
+      expect(status.error).toMatch(/update required/i);
+    }
+    await sync.stop();
+
+    // Must NOT have switched to turso — the too-new config was rejected
+    // before applyConfig ran.
+    const managerStatus = await manager.status();
+    expect(managerStatus.sync.method).toBe("none");
   });
 
   it("on 410 GONE from the presence pulse: error status is surfaced, not just the terminal flag", async () => {

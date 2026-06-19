@@ -7,6 +7,26 @@ import type { HostBinding } from "../state/global-state.ts";
 import type { StorageManager } from "./manager.ts";
 
 /**
+ * Config-contract version this daemon speaks — the SHAPE of the
+ * StorageConfig the host returns from `GET /api/daemons/me/config`.
+ * Bumped ONLY on an incompatible shape change:
+ *   v1 — legacy provider-registry (`{ primary, replicators }`)
+ *   v2 — collapsed sqlite-sync (`{ syncMethod, turso?/s3? }`, current)
+ *
+ * Sent to the host as `X-Spawntree-Config-Version` so the host can reply
+ * `426 DAEMON_TOO_OLD` rather than hand back a shape this daemon would
+ * crash applying, and compared against the host response's
+ * `contractVersion` so a too-new host surfaces a clear "update required"
+ * error instead of an opaque `applyConfig failed` — the exact footgun
+ * that silently bricked pre-v2 daemons when the host moved to the
+ * collapsed shape.
+ */
+export const DAEMON_CONFIG_CONTRACT_VERSION = 2;
+
+/** Request header carrying `DAEMON_CONFIG_CONTRACT_VERSION`. */
+export const CONFIG_VERSION_HEADER = "X-Spawntree-Config-Version";
+
+/**
  * Pulls the daemon's storage config from a `spawntree-host` server and
  * applies it via `StorageManager.applyConfig`. Designed for daemons that
  * want their upstream sync setup centrally managed: the host owns the
@@ -288,6 +308,7 @@ export class HostConfigSync {
           Authorization: `Bearer ${this.binding.key}`,
           Accept: "application/json",
           "X-Spawntree-Fingerprint": fingerprint,
+          [CONFIG_VERSION_HEADER]: String(DAEMON_CONFIG_CONTRACT_VERSION),
         },
       });
     } catch (err) {
@@ -368,17 +389,59 @@ export class HostConfigSync {
       return;
     }
 
+    if (response.status === 426) {
+      // The host requires a newer config-contract version than this daemon
+      // speaks (it gated on our `X-Spawntree-Config-Version`). Surface a
+      // clear "update required" rather than receiving a shape we'd crash
+      // applying. NON-terminal on purpose: the daemon keeps running and
+      // reporting this via /api/v1/storage so Studio can prompt an update,
+      // and an app update restarts the daemon with a compatible version.
+      let detail = "";
+      try {
+        const body = (await response.json()) as { error?: string; code?: string };
+        detail = body.error ?? body.code ?? "DAEMON_TOO_OLD";
+      } catch {
+        detail = "DAEMON_TOO_OLD";
+      }
+      this.recordError(
+        `Update required: this spawntree daemon speaks storage-config v${DAEMON_CONFIG_CONTRACT_VERSION}, older than the host requires. Update the app to continue. (host: ${detail})`,
+      );
+      this.logger("error", "host rejected daemon as too old for the config contract", { url });
+      return;
+    }
+
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       this.recordError(`host returned ${response.status}: ${body.slice(0, 200)}`);
       return;
     }
 
-    let payload: { config?: StorageConfig; daemon?: { label?: string } };
+    let payload: { config?: StorageConfig; daemon?: { label?: string }; contractVersion?: number };
     try {
       payload = (await response.json()) as typeof payload;
     } catch (err) {
       this.recordError(`host response was not JSON: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+
+    // Self-defense: if the host declares its config shape is NEWER than we
+    // understand, refuse to apply it. Schema validation would reject an
+    // unknown shape anyway, but checking the declared version first yields a
+    // precise, actionable "update required" instead of a cryptic decode
+    // error — and protects against a future host that changes the shape
+    // without the daemon having been gated by a 426.
+    if (
+      typeof payload.contractVersion === "number" &&
+      payload.contractVersion > DAEMON_CONFIG_CONTRACT_VERSION
+    ) {
+      this.recordError(
+        `Update required: host sent storage-config v${payload.contractVersion} but this daemon only understands v${DAEMON_CONFIG_CONTRACT_VERSION}. Update the app to continue.`,
+      );
+      this.logger("error", "host config contract newer than daemon supports", {
+        url,
+        hostContractVersion: payload.contractVersion,
+        daemonContractVersion: DAEMON_CONFIG_CONTRACT_VERSION,
+      });
       return;
     }
 

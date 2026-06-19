@@ -1,6 +1,12 @@
 import { createClient, type Client, type Config as LibSqlConfig } from "@libsql/client";
 import { drizzle, type LibSQLDatabase } from "drizzle-orm/libsql";
-import { BASELINE_DDL, schema, type Schema } from "./schema.ts";
+import {
+  BASELINE_ALTERS,
+  BASELINE_DDL,
+  isIdempotentDdlError,
+  schema,
+  type Schema,
+} from "./schema.ts";
 
 /**
  * Drizzle database typed with the spawntree catalog schema. Hands you the
@@ -118,6 +124,13 @@ export async function createCatalogClientAsync(
   if (options.bootstrap !== false) {
     for (const stmt of BASELINE_DDL) {
       await client.execute(stmt);
+    }
+    for (const stmt of BASELINE_ALTERS) {
+      try {
+        await client.execute(stmt);
+      } catch (err) {
+        if (!isIdempotentDdlError(err)) throw err;
+      }
     }
   }
   const db = drizzle(client, { schema });
