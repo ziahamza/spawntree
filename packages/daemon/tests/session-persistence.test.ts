@@ -12,7 +12,11 @@ import {
 } from "spawntree-core";
 import { DomainEvents } from "../src/events/domain-events.ts";
 import { SessionManager } from "../src/sessions/session-manager.ts";
-import { replaceSessionTurns, upsertSession } from "../src/sessions/persistence.ts";
+import {
+  abortOrphanedToolCallsOnRestart,
+  replaceSessionTurns,
+  upsertSession,
+} from "../src/sessions/persistence.ts";
 import { StorageManager } from "../src/storage/manager.ts";
 
 /**
@@ -115,6 +119,50 @@ describe("SessionManager persistence", () => {
     expect(persisted?.provider).toBe("fake");
     expect(persisted?.workingDirectory).toBe("/tmp/x");
     expect(persisted?.status).toBe("idle");
+  });
+
+  it("abortOrphanedToolCallsOnRestart errors non-terminal tool calls, keeps terminal ones", async () => {
+    const { sessionId } = await manager.createSession("fake", { cwd: "/tmp/x" });
+
+    const { drizzle } = await import("drizzle-orm/libsql");
+    const { eq } = await import("drizzle-orm");
+    const db = drizzle(storage.client, { schema });
+
+    const now = new Date().toISOString();
+    const base = {
+      sessionId,
+      turnId: null,
+      toolName: "Read",
+      toolKind: "other",
+      arguments: {},
+      result: {},
+      durationMs: null,
+      createdAt: now,
+    };
+    await db.insert(schema.sessionToolCalls).values([
+      { ...base, id: "tc-await", status: "awaiting_approval" },
+      { ...base, id: "tc-pending", status: "pending" },
+      { ...base, id: "tc-running", status: "in_progress" },
+      { ...base, id: "tc-done", status: "completed" },
+    ]);
+
+    await abortOrphanedToolCallsOnRestart(db);
+
+    const rows = await db
+      .select()
+      .from(schema.sessionToolCalls)
+      .where(eq(schema.sessionToolCalls.sessionId, sessionId));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+
+    // Every non-terminal status gets errored — not just awaiting_approval.
+    expect(byId.get("tc-await")?.status).toBe("error");
+    expect(byId.get("tc-pending")?.status).toBe("error");
+    expect(byId.get("tc-running")?.status).toBe("error");
+    // Terminal tool calls are left untouched.
+    expect(byId.get("tc-done")?.status).toBe("completed");
+    expect((byId.get("tc-pending")?.result as { error?: string } | null)?.error).toContain(
+      "daemon restarted",
+    );
   });
 
   it("session event stream writes to session_turns + session_tool_calls", async () => {

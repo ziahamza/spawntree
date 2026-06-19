@@ -1,4 +1,4 @@
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type {
   AdoptedSession,
   CatalogDb,
@@ -516,19 +516,22 @@ export async function hydrateTurnContent(db: CatalogDb, turn: SessionTurnData): 
 }
 
 /**
- * Mark every tool call left in `awaiting_approval` as `error` with a
- * "daemon restarted" hint. The agent that requested permission died
- * with the previous daemon process, so its Promise will never resolve;
- * showing the tool call as forever-pending in the UI would be a lie.
+ * Mark every tool call left in a non-terminal state (`awaiting_approval`,
+ * `pending`, or `in_progress`) as `error` with a "daemon restarted" hint.
+ * The agent driving these died with the previous daemon process, so their
+ * Promises will never resolve. Leaving them non-terminal makes the UI show a
+ * forever-spinning "running" tool call AND keeps the session looking live —
+ * which drove a render→refetch loop in the chat panel. Only `awaiting_approval`
+ * used to be cleared; `pending`/`in_progress` were left as orphaned zombies.
  */
-export async function abortPendingApprovalsOnRestart(db: CatalogDb): Promise<void> {
+export async function abortOrphanedToolCallsOnRestart(db: CatalogDb): Promise<void> {
   await db
     .update(sessionToolCalls)
     .set({
       status: "error",
-      result: { error: "daemon restarted while awaiting approval" },
+      result: { error: "daemon restarted before this tool call finished" },
     })
-    .where(eq(sessionToolCalls.status, "awaiting_approval"));
+    .where(inArray(sessionToolCalls.status, ["awaiting_approval", "pending", "in_progress"]));
 }
 
 function rowToSessionInfo(row: typeof sessions.$inferSelect): SessionInfo {
