@@ -29,7 +29,7 @@ import { applyCatalogSchema } from "../catalog/queries.ts";
 import type { SandboxManager } from "../sandbox/manager.ts";
 import type { StorageManager } from "../storage/manager.ts";
 import {
-  abortPendingApprovalsOnRestart,
+  abortOrphanedToolCallsOnRestart,
   deletePersistedSession,
   getPersistedSession,
   hydrateTurnContent,
@@ -207,13 +207,15 @@ export class SessionManager {
   async start(): Promise<void> {
     if (this.storage) {
       await applyCatalogSchema(this.storage.client);
-      // Anything left in `awaiting_approval` is orphaned — the agent that
-      // was waiting on the resolver died with the previous daemon process.
-      // Mark them as error so the UI doesn't show a forever-pending row.
+      // Any tool call left non-terminal (awaiting_approval / pending /
+      // in_progress) is orphaned — the agent driving it died with the previous
+      // daemon process. Mark them error so the UI doesn't show forever-spinning
+      // "running" rows (and so the session stops looking live, which drove a
+      // refetch loop in the chat panel).
       if (this.catalog) {
-        await abortPendingApprovalsOnRestart(this.catalog).catch((err) => {
+        await abortOrphanedToolCallsOnRestart(this.catalog).catch((err) => {
           process.stderr.write(
-            `[spawntree-daemon] failed to clear pending approvals on startup: ${String(err)}\n`,
+            `[spawntree-daemon] failed to clear orphaned tool calls on startup: ${String(err)}\n`,
           );
         });
         // Re-introduce persisted Claude Code sessions into the adapter's
